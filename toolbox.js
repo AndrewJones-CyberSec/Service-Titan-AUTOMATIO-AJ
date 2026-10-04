@@ -14,8 +14,9 @@
   Each person's edited notes are saved in their own browser, so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.0';
+  const VERSION = '1.0.1';
   const WHATS_NEW = {
+    '1.0.1': 'Test update',
     '1.0': 'First version: Quick Notes and Job Notifications in one toolbox.'
   };
 
