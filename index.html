@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ServiceTitan Toolbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400&display=swap">
+<style>
+/* Layout: one narrow column; the draggable bookmark is the single bold element. */
+:root {
+  --bg: #f5f6f8; --surface: #ffffff; --fg: #1b2230; --muted: #5a6475;
+  --line: #d9dde4; --accent: #1f5fbf; --accent-fg: #ffffff; --ok: #1f7a4a;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #12161d; --surface: #1a2029; --fg: #e6e9ee; --muted: #9aa4b4;
+  --line: #2c3442; --accent: #5b9bf0; --accent-fg: #0d1420; --ok: #5fcf8f; color-scheme: dark } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--sans); }
+.wrap { max-width: 660px; margin: 0 auto; padding-inline: 16px; padding-block: 32px 48px; display: grid; gap: 20px; }
+header { display: grid; gap: 6px; }
+.top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+h1 { font-size: 1.7rem; margin: 0; text-wrap: balance; }
+.ver { font: 600 .8rem var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 2px 9px; }
+.lead { margin: 0; color: var(--muted); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 12px; min-width: 0; }
+h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0; }
+.tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.tool { border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: grid; gap: 4px; }
+.tool strong { font-size: 1rem; }
+.tool p { margin: 0; color: var(--muted); font-size: .92rem; }
+.drag-zone { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.bm { display: inline-flex; align-items: center; gap: 8px; padding: 12px 18px; border-radius: 8px;
+  background: var(--accent); color: var(--accent-fg); font-weight: 700; text-decoration: none; cursor: grab; font-size: 1rem; }
+.bm:active { cursor: grabbing; }
+.bm:focus-visible, button:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
+.hint { color: var(--muted); font-size: .9rem; }
+ol, ul { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+kbd { font-family: var(--mono); font-size: .85em; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--bg); }
+code { font-family: var(--mono); font-size: .9em; }
+textarea { width: 100%; height: 90px; font: 12px/1.4 var(--mono); color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px; resize: vertical; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+button { font: 600 .9rem var(--sans); padding: 8px 14px; border-radius: 6px; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; }
+.status { font-size: .9rem; color: var(--ok); min-height: 1.4em; }
+.note { margin: 0; font-size: .9rem; color: var(--muted); }
+footer { font-size: .85rem; color: var(--muted); display: grid; gap: 4px; }
+footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="top">
+      <h1>ServiceTitan Toolbox</h1>
+      <span class="ver" id="ver">version …</span>
+    </div>
+    <p class="lead">A small panel of time-savers for the ServiceTitan Dispatch board. Install it once and you always get the newest version.</p>
+  </header>
+
+  <section class="card" aria-labelledby="what">
+    <h2 id="what">What's inside</h2>
+    <div class="tools">
+      <div class="tool">
+        <strong>📝 Quick Notes</strong>
+        <p>Click a job, then a note (or the other way round). It opens the customer, clicks Add Note and types the note for you. You check it and save.</p>
+      </div>
+      <div class="tool">
+        <strong>🔕 Job Notifications</strong>
+        <p>Pick a tech from the list, then check their jobs' notification switches or turn them all off, with live progress. Checking never changes anything.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="install">
+    <h2 id="install">Install: drag it to your bookmarks bar</h2>
+    <ol>
+      <li>Show your bookmarks bar if it's hidden. In Chrome, Edge or Firefox press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>B</kbd> (on a Mac, <kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>B</kbd>). In Safari, choose View, then Show Favorites Bar.</li>
+      <li>Click and hold the blue button, drag it onto the bookmarks bar, and let go.</li>
+      <li>Open the ServiceTitan Dispatch board and click the new <strong>🧰 Toolbox</strong> bookmark.</li>
+    </ol>
+    <div class="drag-zone">
+      <a class="bm" id="bm" href="#" title="Drag me to your bookmarks bar">🧰 Toolbox</a>
+      <span class="hint" id="clickHint">Drag this, don't click it.</span>
+    </div>
+    <p class="note">Had the older Quick Notes bookmark? You can delete it. Your edited notes carry over to the Toolbox.</p>
+  </section>
+
+  <section class="card" aria-labelledby="manual">
+    <h2 id="manual">If dragging doesn't work: copy and paste</h2>
+    <ol>
+      <li>Click <strong>Copy bookmark code</strong>.</li>
+      <li>Make a new bookmark named Toolbox:
+        <ul>
+          <li><strong>Chrome or Edge:</strong> right-click the bookmarks bar and choose <strong>Add page</strong> (Edge: <strong>Add favorite</strong>).</li>
+          <li><strong>Firefox:</strong> right-click the bookmarks toolbar and choose <strong>Add Bookmark</strong>.</li>
+          <li><strong>Safari:</strong> bookmark any page into the Favorites bar, then right-click it and choose <strong>Edit Address</strong>.</li>
+        </ul>
+      </li>
+      <li>In the <strong>URL</strong> (or Address) box, delete what's there and paste. It should start with <code>javascript:</code>. Then save.</li>
+    </ol>
+    <div class="row">
+      <button type="button" id="copyBtn">Copy bookmark code</button>
+      <span class="status" id="status" role="status"></span>
+    </div>
+    <label for="code" class="hint">Bookmark code:</label>
+    <textarea id="code" readonly spellcheck="false"></textarea>
+    <p class="note">Pasting this into the address bar won't work, because browsers remove the <code>javascript:</code> part. It has to go in a bookmark.</p>
+  </section>
+
+  <section class="card" aria-labelledby="updates">
+    <h2 id="updates">Updates</h2>
+    <p class="note">The bookmark loads the newest Toolbox every time you click it, so there's nothing to reinstall. When a new version comes out, the Toolbox shows what changed the first time you open it.</p>
+  </section>
+
+  <footer>
+    <span id="src"></span>
+    <span>Open source under the MIT License. Not affiliated with or endorsed by ServiceTitan.</span>
+  </footer>
+</div>
+
+<script>
+  // Everything is worked out from this page's own address, so the page works
+  // no matter what the GitHub account or project is called.
+  const base = new URL('.', location.href).href;            // e.g. https://name.github.io/project/
+  const scriptUrl = base + 'toolbox.js';
+  const loader = "javascript:(function(){if(window.__stToolbox){window.__stToolbox.close();return;}" +
+    "var s=document.createElement('script');s.src='" + scriptUrl + "?t='+Date.now();s.charset='utf-8';" +
+    "s.onerror=function(){alert('Could not load the Toolbox. Check your internet connection and try again.');};" +
+    "document.head.appendChild(s);})();";
+
+  const bm = document.getElementById('bm');
+  const hint = document.getElementById('clickHint');
+  const code = document.getElementById('code');
+  const status = document.getElementById('status');
+  bm.href = loader;
+  code.value = loader;
+  bm.addEventListener('click', e => {
+    e.preventDefault();
+    hint.textContent = 'Drag it up to your bookmarks bar instead of clicking. It only works from there.';
+  });
+  document.getElementById('copyBtn').addEventListener('click', () => {
+    const fallback = () => { code.focus(); code.select(); status.textContent = 'Selected. Press Ctrl + C (Cmd + C on a Mac) to copy.'; };
+    try {
+      navigator.clipboard.writeText(code.value).then(
+        () => { status.textContent = 'Copied. Now paste it into a bookmark’s URL box.'; },
+        fallback);
+    } catch (e) { fallback(); }
+  });
+
+  // Show the current version, read straight from toolbox.js.
+  fetch(scriptUrl + '?t=' + Date.now()).then(r => r.ok ? r.text() : Promise.reject())
+    .then(t => { const m = t.match(/VERSION\s*=\s*'([^']+)'/); document.getElementById('ver').textContent = m ? 'v' + m[1] : 'version unknown'; })
+    .catch(() => { document.getElementById('ver').textContent = 'version unknown'; });
+
+  // Link to the source code on GitHub when hosted on GitHub Pages.
+  const gh = location.hostname.match(/^([^.]+)\.github\.io$/i);
+  if (gh) {
+    const project = location.pathname.split('/').filter(Boolean)[0];
+    const repoUrl = 'https://github.com/' + gh[1] + (project ? '/' + project : '');
+    const a = document.createElement('a');
+    a.href = repoUrl; a.textContent = 'Source code on GitHub';
+    document.getElementById('src').appendChild(a);
+  }
+</script>
+</body>
+</html>
