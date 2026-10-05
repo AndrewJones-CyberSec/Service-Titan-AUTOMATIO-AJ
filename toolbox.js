@@ -16,7 +16,7 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.3';
+  const VERSION = '1.4-test';
   const WHATS_NEW = {
     '1.3': 'Quick Notes is now 📝 Notes, with folders: Updates, Techs and Reschedule. Your notes are in Updates. Add your own folders with ✏️ Edit folders, and move notes between folders with ✏️ Edit notes.',
     '1.2.5': 'Safer closing: closing the Toolbox during a run now asks to stop the run first. Tech Messages is lighter on the board, and Quick Notes rests while you use other tools.',
@@ -284,9 +284,10 @@
   const menuMsg = el('div', 'font-size:12px;color:#444;margin-bottom:4px;min-height:16px', 'Pick a tool.');
   const notesPane = el('div', 'display:none');
   const jobsPane = el('div', 'display:none');
+  const movePane = el('div', 'display:none');
   const msgsPane = el('div', 'display:none');
-  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane };
-  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages' };
+  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, move: movePane, msgs: msgsPane };
+  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', move: '🔀 Move Jobs (test)', msgs: '💬 Tech Messages' };
   const showView = name => {
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
     titleText.textContent = TITLES[name];
@@ -294,18 +295,20 @@
     if (name !== 'notes' && typeof notes !== 'undefined') notes.leave();
     if (name === 'jobs' && typeof notify !== 'undefined') notify.refresh();
     if (name === 'msgs' && typeof msgs !== 'undefined') msgs.refresh();
+    if (name === 'move' && typeof mover !== 'undefined') mover.refresh();
   };
 
   menuPane.append(
     menuMsg,
     menuBtn('📝 Notes', () => showView('notes')),
     menuBtn('🔕 Job Notifications', () => showView('jobs')),
-    menuBtn('💬 Tech Messages', () => showView('msgs'))
+    menuBtn('💬 Tech Messages', () => showView('msgs')),
+    menuBtn('🔀 Move Jobs (test)', () => showView('move'))
   );
   const checkRow = el('div', 'display:flex;justify-content:flex-end;margin-top:4px');
   checkRow.append(smallBtn('🩺 Check', () => health.checkBoard(true)));
   menuPane.appendChild(checkRow);
-  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane);
+  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, movePane, msgsPane);
 
   // ===================================================================
   // Tool 1: Notes
@@ -996,6 +999,318 @@
   })();
 
   // ===================================================================
+  // Tool 4: Move Jobs (test version)
+  // Moves the jobs you pick from one tech to another by dragging them on the Dispatch
+  // board, the same way a person would. ServiceTitan asks "Are you sure...?" for each
+  // one and YOU answer it, so nothing moves without your OK. It remembers each move so
+  // "Put back" can undo them, and keeps a details log of what ServiceTitan replied.
+  // ===================================================================
+  const mover = (() => {
+    const MAX_PER_RUN = 20;
+    const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
+    const fmt = d => { try { return new Date(d).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); } catch (e) { return '?'; } };
+    // Appointments ServiceTitan won't let you reassign.
+    const LOCKED = /^(Dispatched|Working|Done|Completed|Canceled|Cancelled|Hold)$/i;
+    const techName = id => { const t = document.querySelector('.technician[data-technician-id="' + id + '"]'); const n = t && t.querySelector('.name'); return n ? norm(n.textContent) : 'tech ' + id; };
+    const allTechs = () => {
+      const seen = new Map();
+      document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
+        const id = t.getAttribute('data-technician-id');
+        const n = t.querySelector('.name');
+        if (!seen.has(id) && n && norm(n.textContent)) seen.set(id, norm(n.textContent));
+      });
+      return seen;
+    };
+    // Every job appointment on the board, read from the board's own data (no clicking).
+    const boardAppts = () => {
+      const out = new Map();
+      if (!window.ko) return out;
+      document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
+        let d = null;
+        try { d = window.ko.dataFor(t); } catch (e) {}
+        if (!d || !d.Assignments) return;
+        const u = window.ko.unwrap;
+        const tid = String(u(d.Id));
+        (u(d.Assignments) || []).forEach(x => {
+          const jobId = u(x.JobId);
+          if (!jobId) return;
+          const id = String(u(x.Id));
+          const rec = out.get(id) || { id, jobId: String(jobId), type: u(x.Type) || 'Job', status: String(u(x.Status) || ''), start: u(x.Start), end: u(x.End), winStart: u(x.ArrivalWindowStart), winEnd: u(x.ArrivalWindowEnd), techIds: [] };
+          if (rec.techIds.indexOf(tid) < 0) rec.techIds.push(tid);
+          out.set(id, rec);
+        });
+      });
+      return out;
+    };
+    const outsideWindow = a => { try { return a.winStart && a.winEnd && (new Date(a.start) < new Date(a.winStart) || new Date(a.start) > new Date(a.winEnd)); } catch (e) { return false; } };
+    const label = a => fmt(a.start) + '–' + fmt(a.end) + ' · ' + a.type;
+
+    // ---- Watching ServiceTitan's save calls during a move (for the details log) ----
+    let net = null;
+    const watchStart = () => {
+      net = [];
+      const rec = (method, url) => {
+        const path = String(url || '').split('?')[0];
+        if (/^GET$/i.test(method) || /\/Log\/|datadog|launchdarkly|help-center/i.test(path)) return null;
+        const r = { method: String(method).toUpperCase(), path, at: Date.now() };
+        net.push(r);
+        return r;
+      };
+      const X = XMLHttpRequest.prototype;
+      const saved = { open: X.open, send: X.send, fetch: window.fetch };
+      X.open = function (m, u) { this.__stMv = [m, u]; return saved.open.apply(this, arguments); };
+      X.send = function (body) {
+        const r = this.__stMv ? rec(this.__stMv[0], this.__stMv[1]) : null;
+        if (r) {
+          r.sent = String(body == null ? '' : body).slice(0, 300);
+          this.addEventListener('loadend', () => { r.status = this.status; r.reply = String(this.responseText || '').slice(0, 300); });
+        }
+        return saved.send.apply(this, arguments);
+      };
+      window.fetch = function (u, o) {
+        const r = rec((o && o.method) || 'GET', (u && u.url) || u);
+        const p = saved.fetch.apply(this, arguments);
+        if (r) {
+          r.sent = String((o && o.body) || '').slice(0, 300);
+          p.then(res => { r.status = res.status; return res.clone().text().then(t => { r.reply = t.slice(0, 300); }); }).catch(e => { r.status = 'error'; r.reply = String(e); });
+        }
+        return p;
+      };
+      return () => { X.open = saved.open; X.send = saved.send; window.fetch = saved.fetch; net = null; };
+    };
+
+    // ---- UI ----
+    const wrap = el('div', 'padding:8px 10px 10px;display:grid;gap:8px');
+    const msg = el('div', 'font-size:12px;color:#444;min-height:16px;white-space:pre-wrap');
+    const say = s => { msg.textContent = s; };
+    const test = el('div', 'font-size:11px;padding:5px 7px;background:#fff4e5;color:#6b3f00;border:1px solid #f0d3a6;border-radius:6px', 'Test version. Try it on quotes a few days out first.');
+    const selCss = 'flex:1;min-width:0;padding:6px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff';
+    const fromRow = el('div', 'display:flex;gap:6px;align-items:center;font-size:12px');
+    const fromSel = el('select', selCss);
+    fromRow.append(el('span', 'width:34px', 'From'), fromSel, smallBtn('↻', () => refresh(), ''));
+    const jobList = el('div', 'max-height:calc(100vh - 380px);overflow:auto;border:1px solid #ddd;border-radius:6px;padding:4px 6px;background:#fafafa;font-size:12px');
+    const toRow = el('div', 'display:flex;gap:6px;align-items:center;font-size:12px');
+    const toSel = el('select', selCss);
+    toRow.append(el('span', 'width:34px', 'To'), toSel);
+    const reviewBtn = smallBtn('Review move…', () => review(), PRIMARY);
+    const reviewBox = el('div', 'display:none;padding:8px;border:1px solid #1a6ed8;background:#e3eefc;border-radius:6px;font-size:12px;white-space:pre-wrap');
+    const reviewText = el('div', 'margin-bottom:6px');
+    const reviewBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    reviewBox.append(reviewText, reviewBtns);
+    const progress = el('div', 'display:none;gap:6px');
+    const log = el('pre', 'max-height:180px;overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
+    const details = el('pre', 'display:none;max-height:180px;overflow:auto;margin:0;padding:6px;background:#fff;border:1px dashed #bbb;border-radius:6px;white-space:pre-wrap;font:11px/1.3 ui-monospace,Consolas,monospace');
+    const progRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    let stop = false, running = false;
+    const requestStop = () => { stop = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping after this job...'; };
+    const stopBtn = smallBtn('Stop', () => requestStop());
+    const copyBtn = smallBtn('Copy results + details', async () => { if (await copy(log.textContent + '\n--- details ---\n' + details.textContent)) copyBtn.textContent = 'Copied'; });
+    const detailsBtn = smallBtn('Show details', () => { const on = details.style.display === 'none'; details.style.display = on ? 'block' : 'none'; detailsBtn.textContent = on ? 'Hide details' : 'Show details'; });
+    const undoBtn = smallBtn('↩ Put back', () => askUndo(), 'display:none;color:#c62828;border-color:#e0a0a8');
+    progRow.append(stopBtn, copyBtn, detailsBtn, undoBtn);
+    progress.append(log, details, progRow);
+    const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    navRow.append(smallBtn('← Menu', () => { if (!running) showView('menu'); }));
+    wrap.append(test, msg, fromRow, jobList, toRow, reviewBtn, reviewBox, progress, navRow);
+    movePane.appendChild(wrap);
+    const add = s => { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
+    const addDetail = s => { details.textContent += s + '\n'; };
+    const setEnabled = on => { [fromSel, toSel, reviewBtn].forEach(x => { x.disabled = !on; x.style.opacity = on ? '1' : '.5'; }); };
+
+    let picked = new Set();
+    let undoList = [];   // [{ id, from, to, label }]
+
+    const refresh = () => {
+      if (running) return;
+      reviewBox.style.display = 'none';
+      if (!onBoard()) { setEnabled(false); fromSel.textContent = ''; toSel.textContent = ''; jobList.textContent = ''; say('Open the Dispatch board to use this.'); return; }
+      if (!window.ko) { setEnabled(false); say('⚠️ Can\'t read the board\'s job data.' + CHANGED); health.flag('Move Jobs', 'can\'t read the board\'s job data', 'window.ko'); return; }
+      const appts = boardAppts();
+      const techs = allTechs();
+      const withJobs = new Map();
+      appts.forEach(a => a.techIds.forEach(t => withJobs.set(t, (withJobs.get(t) || 0) + 1)));
+      const prevFrom = fromSel.value, prevTo = toSel.value;
+      fromSel.textContent = '';
+      Array.from(withJobs.keys()).sort((a, b) => techName(a).localeCompare(techName(b))).forEach(id => {
+        const o = el('option', '', techName(id) + '  (' + withJobs.get(id) + ' job' + (withJobs.get(id) === 1 ? '' : 's') + ')');
+        o.value = id; fromSel.appendChild(o);
+      });
+      if (withJobs.has(prevFrom)) fromSel.value = prevFrom;
+      toSel.textContent = '';
+      const blank = el('option', '', 'Pick a tech…'); blank.value = ''; toSel.appendChild(blank);
+      Array.from(techs.keys()).sort((a, b) => techs.get(a).localeCompare(techs.get(b))).forEach(id => { const o = el('option', '', techs.get(id)); o.value = id; toSel.appendChild(o); });
+      if (techs.has(prevTo)) toSel.value = prevTo;
+      setEnabled(withJobs.size > 0);
+      renderJobs();
+      say(withJobs.size ? 'Pick the jobs to move, then who gets them.' : 'No jobs on the board for this day. Press ↻ after it finishes loading.');
+    };
+    const renderJobs = () => {
+      jobList.textContent = '';
+      const from = fromSel.value;
+      const mine = Array.from(boardAppts().values()).filter(a => a.techIds.indexOf(from) > -1).sort((a, b) => new Date(a.start) - new Date(b.start));
+      Array.from(picked).forEach(id => { if (!mine.some(a => a.id === id)) picked.delete(id); });
+      mine.forEach(a => {
+        const locked = LOCKED.test(a.status);
+        const l = el('label', 'display:flex;gap:6px;align-items:flex-start;padding:3px 0;cursor:' + (locked ? 'not-allowed' : 'pointer') + (locked ? ';color:#999' : ''));
+        const c = el('input'); c.type = 'checkbox'; c.checked = picked.has(a.id); c.disabled = locked;
+        c.onchange = () => { c.checked ? picked.add(a.id) : picked.delete(a.id); };
+        const others = a.techIds.filter(t => t !== from).map(techName);
+        l.append(c, document.createTextNode(label(a) + ' · ' + a.status +
+          (locked ? ' (can\'t move)' : '') +
+          (others.length ? ' · also on: ' + others.join(', ') : '') +
+          (!locked && outsideWindow(a) ? ' · ⚠️ outside its arrival window' : '')));
+        jobList.appendChild(l);
+      });
+      if (!mine.length) jobList.appendChild(el('div', 'color:#666;padding:4px 0', 'No jobs for this tech on the day shown.'));
+    };
+    fromSel.onchange = () => { picked.clear(); renderJobs(); reviewBox.style.display = 'none'; };
+
+    const showReview = (text, buttons) => {
+      reviewText.textContent = text;
+      reviewBtns.textContent = '';
+      buttons.forEach(b => reviewBtns.appendChild(b));
+      reviewBox.style.display = 'block';
+    };
+    const review = () => {
+      if (lock) return say('Wait for ' + lock + ' to finish first.');
+      const from = fromSel.value, to = toSel.value;
+      if (!to) return say('Pick who gets the jobs (To).');
+      if (to === from) return say('From and To are the same tech.');
+      const appts = boardAppts();
+      const jobs = Array.from(picked).map(id => appts.get(id)).filter(Boolean);
+      if (!jobs.length) return say('Tick at least one job.');
+      if (jobs.length > MAX_PER_RUN) return say('⚠️ ' + jobs.length + ' jobs picked. For safety the limit is ' + MAX_PER_RUN + ' per run.');
+      const warn = jobs.some(outsideWindow) ? '\n⚠️ Some are outside their arrival window, so ServiceTitan will ask about that too.' : '';
+      showReview('Move ' + jobs.length + ' job' + (jobs.length === 1 ? '' : 's') + ' from ' + techName(from) + ' to ' + techName(to) + ' (same times):\n' +
+        jobs.map(a => '• ' + label(a)).join('\n') +
+        '\n\nFor each one, ServiceTitan will ask "Are you sure…?". Click OK to move it, or Cancel to skip it.' + warn,
+        [smallBtn('Start', () => run(jobs.map(a => ({ id: a.id, jobId: a.jobId, from, to, label: label(a) }))), PRIMARY), smallBtn('Cancel', () => { reviewBox.style.display = 'none'; })]);
+    };
+    const askUndo = () => {
+      if (!undoList.length || running) return;
+      showReview('Put back ' + undoList.length + ' job' + (undoList.length === 1 ? '' : 's') + ':\n' + undoList.map(u => '• ' + u.label + ': ' + techName(u.to) + ' → ' + techName(u.from)).join('\n') +
+        '\n\nServiceTitan will ask again for each one. Click OK.',
+        [smallBtn('Put them back', () => run(undoList.slice().reverse().map(u => ({ id: u.id, jobId: u.jobId, from: u.to, to: u.from, label: u.label })), true), DANGER), smallBtn('Cancel', () => { reviewBox.style.display = 'none'; })]);
+    };
+
+    // Waits for the board to draw a job's bubble on a tech's row (it only draws rows near the screen).
+    const findBubble = async (apptId, techId) => {
+      const q = () => document.querySelector('a.appointment[data-id="' + apptId + '"][data-technician-id="' + techId + '"]');
+      if (!q()) { const row = document.getElementById('team-timeline-row-' + techId); if (row) row.scrollIntoView({ block: 'center' }); }
+      const b = await until(q, 4000, 200);
+      if (!b) return null;
+      b.scrollIntoView({ block: 'center', inline: 'center' });
+      await wait(500);
+      return q();
+    };
+
+    // Moves one appointment by dragging it from one tech's row to another's at the same time.
+    const moveOne = async job => {
+      const a = boardAppts().get(job.id);
+      if (!a) return { kind: 'problem', text: 'not on the board any more' };
+      if (a.techIds.indexOf(job.from) < 0) return { kind: 'skipped', text: 'not on ' + techName(job.from) + ' any more' };
+      if (LOCKED.test(a.status)) return { kind: 'skipped', text: 'skipped: it\'s ' + a.status };
+      if (a.techIds.indexOf(job.to) > -1) return { kind: 'skipped', text: 'already on ' + techName(job.to) };
+      const bubble = await findBubble(job.id, job.from);
+      if (!bubble) return { kind: 'problem', text: 'couldn\'t find it on ' + techName(job.from) + '\'s row' };
+      const fromRow = document.getElementById('team-timeline-row-' + job.from);
+      const toRow = document.getElementById('team-timeline-row-' + job.to);
+      if (!fromRow || !toRow) return { kind: 'problem', text: 'can\'t find the tech rows on the timeline', changed: true };
+      const br = bubble.getBoundingClientRect();
+      const grabX = br.left + 6, grabY = br.top + br.height / 2;
+      const offsetX = grabX - fromRow.getBoundingClientRect().left;   // same time on the other row
+      const dt = new DataTransfer();
+      const ev = (type, node, x, y) => node.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt, clientX: x, clientY: y, screenX: x, screenY: y, view: window }));
+      ev('dragstart', bubble, grabX, grabY);
+      await wait(150);
+      ev('drag', bubble, grabX, grabY);
+      toRow.scrollIntoView({ block: 'center' });
+      await wait(500);
+      const rr = toRow.getBoundingClientRect();
+      const dropX = rr.left + offsetX, dropY = rr.top + rr.height / 2;
+      // Keep the Toolbox from being the thing under the drop spot.
+      const vis0 = panel.style.visibility;
+      panel.style.visibility = 'hidden';
+      const stopWatch = watchStart();
+      try {
+        const target = document.elementFromPoint(dropX, dropY);
+        let targetTech = null;
+        try { const d = target && window.ko.dataFor(target); targetTech = d && d.Id != null ? String(window.ko.unwrap(d.Id)) : null; } catch (e) {}
+        addDetail(job.jobId + ': drop spot ' + Math.round(dropX) + ',' + Math.round(dropY) + ' on ' + (target ? target.tagName.toLowerCase() + '.' + String(target.className || '').split(' ')[0] : 'nothing') +
+          ' · board says row = ' + (targetTech ? techName(targetTech) + ' (' + targetTech + ')' : 'unknown') + ' · wanted ' + techName(job.to) + ' (' + job.to + ')');
+        if (!target || !toRow.contains(target)) {
+          ev('dragend', bubble, grabX, grabY);
+          return { kind: 'problem', text: 'something was covering ' + techName(job.to) + '\'s row, not moved' };
+        }
+        ev('dragenter', target, dropX, dropY);
+        await wait(80);
+        for (let i = 0; i < 3; i++) { ev('dragover', target, dropX, dropY); await wait(80); }
+        // ServiceTitan's "Are you sure…?" appears during this drop and waits for your answer.
+        ev('drop', target, dropX, dropY);
+        ev('dragend', bubble, dropX, dropY);
+        const saves = () => (net || []).filter(r => /Reschedule|Assign|Dispatch/i.test(r.path));
+        const sent = await until(() => saves().length, 4000, 200);
+        if (!sent) { addDetail('   no save sent'); return { kind: 'skipped', text: 'not moved (Cancel in ServiceTitan, or it ignored the drop)' }; }
+        await until(() => saves().every(r => r.status != null), 15000, 250);
+        saves().forEach(r => addDetail('   ' + r.method + ' ' + r.path + ' → ' + r.status + '\n   sent: ' + (r.sent || '(empty)') + '\n   reply: ' + (r.reply || '(empty)')));
+        const bad = saves().find(r => !(r.status >= 200 && r.status < 300));
+        if (bad) return { kind: 'problem', text: 'ServiceTitan refused the save (' + bad.status + ')' };
+        const moved = await until(() => { const x = boardAppts().get(job.id); return x && x.techIds.indexOf(job.to) > -1 && x.techIds.indexOf(job.from) < 0; }, 10000, 300);
+        if (moved) return { kind: 'moved', text: 'moved to ' + techName(job.to) };
+        return { kind: 'check', text: 'saved, but the board still shows ' + techName(job.from) + '. Reload the board to check (see details).' };
+      } finally {
+        panel.style.visibility = vis0;
+        stopWatch();
+      }
+    };
+
+    const run = async (jobs, undoing) => {
+      if (running) return;
+      if (lock) return say('Wait for ' + lock + ' to finish first.');
+      running = true; stop = false; lock = 'Move Jobs';
+      setEnabled(false);
+      reviewBox.style.display = 'none';
+      progress.style.display = 'grid';
+      log.textContent = ''; details.textContent = '';
+      stopBtn.disabled = false; stopBtn.textContent = 'Stop'; stopBtn.style.display = 'inline-block';
+      copyBtn.textContent = 'Copy results + details';
+      undoBtn.style.display = 'none';
+      const home = location.hash;
+      if (!undoing) undoList = [];
+      const tally = {};
+      add((undoing ? 'Putting back ' : 'Moving ') + jobs.length + ' job' + (jobs.length === 1 ? '' : 's') + ' (' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + ')');
+      try {
+        for (let n = 0; n < jobs.length; n++) {
+          if (stop) { add('Stopped. ' + (jobs.length - n) + ' not done.'); break; }
+          if (location.hash !== home || !onBoard()) { add('Stopped: the page changed.'); break; }
+          const j = jobs[n];
+          say((undoing ? 'Putting back ' : 'Moving ') + (n + 1) + ' of ' + jobs.length + ': ' + j.label + '\nAnswer ServiceTitan\'s "Are you sure…?" when it appears.');
+          let r;
+          try { r = await moveOne(j); } catch (e) { r = { kind: 'problem', text: 'error: ' + (e && e.message ? e.message : e) }; }
+          tally[r.kind] = (tally[r.kind] || 0) + 1;
+          add(j.label + ' (' + techName(j.from) + ' → ' + techName(j.to) + '): ' + r.text);
+          if (r.changed) { health.flag('Move Jobs', r.text, 'team-timeline-row'); add('Stopped the run.' + CHANGED); break; }
+          if (r.kind === 'moved' || r.kind === 'check') {
+            if (undoing) undoList = undoList.filter(u => u.id !== j.id);
+            else undoList.push({ id: j.id, jobId: j.jobId, from: j.from, to: j.to, label: j.label });
+          }
+          await wait(800);
+        }
+        say('Done: ' + (Object.keys(tally).map(k => tally[k] + ' ' + k).join(', ') || 'nothing done') + '.' + (undoList.length ? ' "Put back" can undo the moves.' : ''));
+      } finally {
+        running = false; lock = null;
+        stopBtn.style.display = 'none';
+        undoBtn.style.display = undoList.length ? 'inline-block' : 'none';
+        picked.clear();
+        setEnabled(true);
+        renderJobs();
+      }
+    };
+
+    return { refresh, isRunning: () => running, stop: requestStop };
+  })();
+
+  // ===================================================================
   // Tool 3: Tech Messages
   // Sends a saved message (Good Morning, ETA, ...) to the techs you pick, one at a time,
   // through each tech's "Send Message" panel. Built with guard rails:
@@ -1574,10 +1889,10 @@
     delete window.__stToolbox;
   };
   const close = () => {
-    const runner = notify.isRunning() ? notify : msgs.isRunning() ? msgs : null;
+    const runner = notify.isRunning() ? notify : mover.isRunning() ? mover : msgs.isRunning() ? msgs : null;
     if (!runner) return finishClose();
     if (closing) return;
-    closeText.textContent = (runner === notify ? 'Job Notifications' : 'Tech Messages') + ' is still running. Closing now would leave it running out of sight.';
+    closeText.textContent = (runner === notify ? 'Job Notifications' : runner === mover ? 'Move Jobs' : 'Tech Messages') + ' is still running. Closing now would leave it running out of sight.';
     closeBtns.textContent = '';
     closeBtns.append(
       smallBtn('Stop it and close', async () => {
@@ -1585,7 +1900,7 @@
         closeBtns.textContent = '';
         closeText.textContent = 'Stopping, then closing...';
         runner.stop();
-        await until(() => !notify.isRunning() && !msgs.isRunning(), 30000, 250);
+        await until(() => !notify.isRunning() && !mover.isRunning() && !msgs.isRunning(), 30000, 250);
         finishClose();
       }, DANGER),
       smallBtn('Keep running', () => { closeBar.style.display = 'none'; })
@@ -1597,6 +1912,6 @@
 
   document.body.appendChild(panel);
   const startView = get('stView');
-  showView(['notes', 'jobs', 'msgs'].indexOf(startView) > -1 ? startView : 'menu');
+  showView(['notes', 'jobs', 'move', 'msgs'].indexOf(startView) > -1 ? startView : 'menu');
   health.checkBoard(false);
 })();
