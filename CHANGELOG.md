@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1
+
+- **Tech Messages** (new): send a saved message such as Good Morning or ETA to the techs you pick, one at a time through each tech's Send Message panel.
+  - Editable messages, with `{first}` for the tech's first name.
+  - Pick techs by team, search, or "only techs with jobs today".
+  - **Type only** mode (you press Send for each person) or **Auto-send** mode (you confirm by typing how many people it will message).
+  - Safety: only teams you approve can ever be messaged (new teams start blocked), a never-message list for individual people, a check that the panel shows the right person and nothing is covering it before typing, a 50-person limit per run, and it stops if a send can't be confirmed.
+
+## 1.0.1
+
+- Test update.
+
 ## 1.0
 
 First version.

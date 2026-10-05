@@ -19,6 +19,15 @@ On the Dispatch board, pick a tech from the list (it only shows techs with jobs 
 
 Shows progress as it goes, with a Stop button and a copyable list of results.
 
+**💬 Tech Messages**
+Send a saved message (for example Good Morning or ETA) to the techs you pick. It opens each tech's Send Message panel, types the message, and either waits for you to press Send (**Type only**) or sends it for you (**Auto-send**).
+
+- **✏️ Edit messages** to change or add messages. Use `{first}` for the tech's first name.
+- **👥 Choose techs** by team, by name, or only techs with jobs on the board.
+- **🛡️ Who can be messaged**: tick the teams that are OK to message and add anyone to a never-message list (for example the owner). Nothing can be sent until this is set up, and any new team starts blocked.
+
+Safety checks on every send: it re-checks your 🛡️ settings, closes any open job panel, confirms the message panel shows the right person and nothing is covering it, skips anyone whose message box already has text, and stops the whole run if a send can't be confirmed. Auto-send asks you to type how many people it will message, and there's a limit of 50 per run.
+
 ## Install
 
 Open the project's install page (the GitHub Pages address for this project) and drag the **🧰 Toolbox** button onto your bookmarks bar. The page also has copy-and-paste steps for each browser.
@@ -46,6 +55,7 @@ GitHub Pages usually publishes the change within a few minutes. Nobody needs to 
 
 - The Toolbox only works in your own browser while you're signed in to ServiceTitan. It doesn't collect or send any data anywhere.
 - Quick Notes never saves a note by itself; you always click **Add Note** in ServiceTitan.
+- Tech Messages only sends on its own in Auto-send mode, after you confirm.
 - Not affiliated with or endorsed by ServiceTitan.
 
 ## License

@@ -1,9 +1,10 @@
 /*
   ServiceTitan Toolbox
   ====================
-  One panel with two tools for the ServiceTitan Dispatch board:
+  One panel with three tools for the ServiceTitan Dispatch board:
     - Quick Notes: adds a ready-made note to a job's customer in one click.
     - Job Notifications: checks or turns off job notifications for one tech's jobs.
+    - Tech Messages: sends a saved message (Good Morning, ETA, ...) to the techs you pick.
 
   HOW TO RELEASE AN UPDATE
     1. Edit this file on GitHub.
@@ -11,11 +12,13 @@
     3. Commit. Everyone gets the new version the next time they click the bookmark
        (GitHub can take a few minutes to publish it).
 
-  Each person's edited notes are saved in their own browser, so updates never wipe them.
+  Each person's edited notes, messages and safety settings are saved in their own browser,
+  so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.0.1';
+  const VERSION = '1.1';
   const WHATS_NEW = {
+    '1.1': 'New: 💬 Tech Messages. Send your Good Morning or ETA message to the techs you pick, with safety checks so it never messages blocked teams or people.',
     '1.0.1': 'Test update',
     '1.0': 'First version: Quick Notes and Job Notifications in one toolbox.'
   };
@@ -126,21 +129,24 @@
   const menuMsg = el('div', 'font-size:12px;color:#444;margin-bottom:4px;min-height:16px', 'Pick a tool.');
   const notesPane = el('div', 'display:none');
   const jobsPane = el('div', 'display:none');
-  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane };
-  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Quick Notes', jobs: '🔕 Job Notifications' };
+  const msgsPane = el('div', 'display:none');
+  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane };
+  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Quick Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages' };
   const showView = name => {
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
     titleText.textContent = TITLES[name];
     set('stView', name);
     if (name === 'jobs' && typeof notify !== 'undefined') notify.refresh();
+    if (name === 'msgs' && typeof msgs !== 'undefined') msgs.refresh();
   };
 
   menuPane.append(
     menuMsg,
     menuBtn('📝 Quick Notes', () => showView('notes')),
-    menuBtn('🔕 Job Notifications', () => showView('jobs'))
+    menuBtn('🔕 Job Notifications', () => showView('jobs')),
+    menuBtn('💬 Tech Messages', () => showView('msgs'))
   );
-  panel.append(header, news, menuPane, notesPane, jobsPane);
+  panel.append(header, news, menuPane, notesPane, jobsPane, msgsPane);
 
   // ===================================================================
   // Tool 1: Quick Notes
@@ -661,6 +667,499 @@
   })();
 
   // ===================================================================
+  // Tool 3: Tech Messages
+  // Sends a saved message (Good Morning, ETA, ...) to the techs you pick, one at a time,
+  // through each tech's "Send Message" panel. Built with guard rails:
+  //   - Only teams you've marked "OK to message" can ever be picked (new teams start blocked).
+  //   - A "Never message" list for individual people, checked again right before each send.
+  //   - Before typing, it checks the panel shows the right person, nothing is covering it,
+  //     and the box is empty. If anything looks wrong it skips that person.
+  //   - In auto-send mode you confirm by typing how many people it will message.
+  //   - It stops the whole run if a send can't be confirmed.
+  // ===================================================================
+  const msgs = (() => {
+    const DEFAULT_MSGS = [
+      ['☀️ Good Morning', 'Good morning {first}! Hope you have a great day today.'],
+      ['⏱️ ETA', 'ETA']
+    ];
+    // Teams that start out blocked. Every other team must still be approved once in
+    // "Who can be messaged" before anyone on it can be picked.
+    const SUGGEST_BLOCK = /^(leadership team|executive leadership)$|human resources|accounts (payable|receivable)|compliance|^dispatch$|client care|account executive|concierge|client benefits/i;
+    const MAX_PER_RUN = 50;
+    const K = { msgs: 'stMsgs', teams: 'stMsgTeams', never: 'stMsgNever', sel: 'stMsgSel', mode: 'stMsgMode', jobsOnly: 'stMsgJobsOnly', pick: 'stMsgPick' };
+    const loadJSON = (k, d) => { try { const v = JSON.parse(get(k)); return v == null ? d : v; } catch (e) { return d; } };
+    const validMsgs = v => Array.isArray(v) && v.length > 0 && v.every(n => Array.isArray(n) && n.length === 2 && typeof n[0] === 'string' && typeof n[1] === 'string');
+    let list = (() => { const v = loadJSON(K.msgs, null); return validMsgs(v) ? v : DEFAULT_MSGS.map(n => n.slice()); })();
+    // teamRules: { teamName: true (OK) | false (blocked) }, or null if never set up.
+    // never: { techId: name }. selected: tech IDs picked last time.
+    let teamRules = loadJSON(K.teams, null);
+    let never = loadJSON(K.never, {});
+    let selected = new Set(loadJSON(K.sel, []));
+    let pickIdx = Math.min(parseInt(get(K.pick) || '0', 10) || 0, list.length - 1);
+
+    // ---- Reading the board ----
+    const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
+    const teamOf = id => {
+      const row = document.getElementById('team-timeline-row-' + id);
+      const tc = row && row.closest('.team-container');
+      let h = tc && tc.previousElementSibling;
+      while (h && !h.querySelector('.team-name')) h = h.previousElementSibling;
+      const tn = h && h.querySelector('.team-name');
+      return tn ? norm(tn.textContent) : null;
+    };
+    const boardTechs = () => {
+      const out = new Map();
+      document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
+        const id = t.getAttribute('data-technician-id');
+        if (out.has(id)) return;
+        const n = t.querySelector('.name');
+        const name = norm(n ? n.textContent : '');
+        if (!name) return;
+        const jobs = document.querySelectorAll('a.appointment[data-technician-id="' + id + '"][data-job-id]').length;
+        out.set(id, { id, name, team: teamOf(id), jobs });
+      });
+      return out;
+    };
+    const teamsOnBoard = () => Array.from(new Set(Array.from(boardTechs().values()).map(t => t.team || '(no team)')));
+    const teamAllowed = team => !!(teamRules && team && teamRules[team] === true);
+    const canMessage = t => !!t && teamAllowed(t.team) && !never[t.id];
+    const firstName = name => norm(name).split(' ')[0] || '';
+
+    // ---- The Send Message panel (lives inside ServiceTitan's Activity Center) ----
+    const acHost = () => Array.from(document.querySelectorAll('*')).find(e => /^SERVICETITAN-ACTIVITY-CENTER/i.test(e.tagName)) || null;
+    const acRoot = () => { const h = acHost(); return h && h.shadowRoot; };
+    const q = sel => { const r = acRoot(); const x = r && r.querySelector(sel); return x && visible(x) ? x : null; };
+    const chatBox = () => q('[data-cy=technician-chat-input]');
+    const sendBtn = () => q('[data-cy=send-chat-message]');
+    const panelName = () => { const r = acRoot(); const h = r && Array.from(r.querySelectorAll('h3')).find(visible); return h ? norm(h.textContent) : ''; };
+    const jobDrawer = () => Array.from(document.querySelectorAll('.Drawer--open')).find(d => d.querySelector('a[href^="#/Customer/"], a[href^="#/customer/"]')) || null;
+    const closeJobDrawer = async () => {
+      const d = jobDrawer();
+      if (!d) return true;
+      const b = d.querySelector('[aria-label="close drawer"], .Drawer__header-close');
+      if (b) b.click();
+      return !!(await until(() => !jobDrawer(), 3000));
+    };
+    // True only if the message box is the thing actually showing on screen at that spot.
+    const boxOnTop = () => {
+      const box = chatBox(), host = acHost();
+      if (!box || !host) return false;
+      const r = box.getBoundingClientRect();
+      if (r.width < 20 || r.bottom > innerHeight || r.top < 0) return false;
+      const topEl = document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2).find(e => !panel.contains(e));
+      return topEl === host;
+    };
+    // Moves the Toolbox panel to the left of the message panel so it doesn't cover it.
+    const dodge = () => {
+      const h = acHost();
+      if (!h) return;
+      const hr = h.getBoundingClientRect(), pr = panel.getBoundingClientRect();
+      if (hr.width && pr.right > hr.left && pr.left < hr.right) {
+        panel.style.left = Math.max(0, hr.left - pr.width - 16) + 'px';
+        panel.style.right = 'auto';
+      }
+    };
+    const openChatFor = async t => {
+      const el2 = document.getElementById('team-technician-' + t.id);
+      if (!el2) return 'not on the board';
+      el2.scrollIntoView({ block: 'center' });
+      await wait(250);
+      (el2.querySelector('.name') || el2).click();
+      const menu = await until(() => Array.from(document.querySelectorAll('.technician-menu.dropdown-menu')).find(visible), 3000);
+      if (!menu) return 'menu did not open';
+      // Only ever click the link whose text is exactly "Send Message" (never the memo "Send" button).
+      const link = Array.from(menu.querySelectorAll('a')).find(a => norm(a.textContent) === 'Send Message');
+      if (!link) return 'no Send Message option';
+      link.click();
+      const ok = await until(() => chatBox() && panelName().toLowerCase() === t.name.toLowerCase(), 8000);
+      if (!ok) return 'panel showed "' + (panelName() || 'nothing') + '" instead';
+      return null;
+    };
+    const typeInto = (box, text) => {
+      box.focus();
+      try { box.setSelectionRange(box.value.length, box.value.length); } catch (e) {}
+      if (!(document.execCommand && document.execCommand('insertText', false, text) && box.value === text)) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(box, text);
+        box.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        box.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      }
+      return box.value === text;
+    };
+    const clearBox = box => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(box, '');
+      box.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    };
+    const attachBox = () => q('[data-cy=attach-message-to-job]');
+
+    // ---- UI pieces ----
+    const pane = el('div', 'padding:8px 10px 10px');
+    const views = {};
+    const sub = name => { Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; }); };
+    const mkView = name => { views[name] = el('div', 'display:none'); pane.appendChild(views[name]); return views[name]; };
+    const msgLine = () => el('div', 'font-size:12px;color:#444;margin-bottom:6px;min-height:16px;white-space:pre-wrap');
+    const head = text => el('div', 'font-weight:700;margin-bottom:4px', text);
+    const row = () => el('div', 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px');
+    const scrollBox = css => el('div', 'max-height:calc(100vh - 300px);overflow:auto;border:1px solid #ddd;border-radius:6px;padding:4px 6px;background:#fafafa;' + (css || ''));
+    const check = (label, checked, onChange, disabled) => {
+      const l = el('label', 'display:flex;gap:6px;align-items:center;padding:3px 0;cursor:' + (disabled ? 'not-allowed' : 'pointer') + ';font-size:12px;' + (disabled ? 'color:#999' : ''));
+      const c = el('input'); c.type = 'checkbox'; c.checked = !!checked; c.disabled = !!disabled;
+      c.onchange = () => onChange(c.checked);
+      l.append(c, document.createTextNode(label));
+      return l;
+    };
+
+    // ===== Main view =====
+    const vMain = mkView('main');
+    const mainMsg = msgLine();
+    const msgList = el('div', '');
+    const toLine = el('div', 'font-size:12px;margin-top:8px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;background:#fafafa');
+    const modeRow = el('div', 'margin-top:8px;font-size:12px;display:grid;gap:2px');
+    let mode = get(K.mode) === 'auto' ? 'auto' : 'type';
+    const mkRadio = (val, label) => {
+      const l = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer');
+      const r = el('input'); r.type = 'radio'; r.name = 'st-msg-mode'; r.checked = mode === val;
+      r.onchange = () => { mode = val; set(K.mode, val); renderMain(); };
+      l.append(r, document.createTextNode(label));
+      return l;
+    };
+    modeRow.append(mkRadio('type', 'Type only: I press Send for each person'), mkRadio('auto', 'Auto-send: sends to everyone picked'));
+    const startBtn = smallBtn('Start', () => openConfirm(), PRIMARY + 'margin-top:8px;' + FULL + 'padding:8px');
+    const mainNav = row();
+    mainNav.append(
+      smallBtn('← Menu', () => showView('menu')),
+      smallBtn('👥 Choose techs', () => openPicker()),
+      smallBtn('✏️ Edit messages', () => openEditor()),
+      smallBtn('🛡️ Who can be messaged', () => openSafety())
+    );
+    vMain.append(mainMsg, msgList, toLine, modeRow, startBtn, mainNav);
+
+    const recipients = () => {
+      const techs = boardTechs();
+      return Array.from(selected).map(id => techs.get(id)).filter(t => canMessage(t));
+    };
+    const renderMain = () => {
+      msgList.textContent = '';
+      list.forEach(([name, text], i) => {
+        const on = i === pickIdx;
+        const b = el('button', FULL + 'margin:5px 0;padding:8px 9px;cursor:pointer;border:1px solid ' + (on ? '#1a6ed8' : '#aaa') + ';border-radius:6px;background:' + (on ? '#e3eefc' : '#f5f5f5') + ';color:#111;text-align:left;font:inherit' + (on ? ';box-shadow:inset 3px 0 0 #1a6ed8' : ''), (on ? '✔ ' : '') + (name || '(no name)'));
+        b.type = 'button';
+        b.title = text;
+        b.addEventListener('mousedown', e => e.preventDefault());
+        b.onclick = () => { pickIdx = i; set(K.pick, String(i)); renderMain(); };
+        msgList.appendChild(b);
+      });
+      if (!onBoard()) { say('Open the Dispatch board to send messages.'); startBtn.disabled = true; startBtn.style.opacity = '.5'; toLine.textContent = ''; return; }
+      if (!teamRules) { say('First, set up who can be messaged (🛡️ below). Nothing can be sent until you do.'); startBtn.disabled = true; startBtn.style.opacity = '.5'; toLine.textContent = 'To: nobody yet'; return; }
+      const r = recipients();
+      toLine.textContent = 'To: ' + (r.length ? r.length + ' tech' + (r.length === 1 ? '' : 's') + ' (' + r.slice(0, 4).map(t => t.name).join(', ') + (r.length > 4 ? ', …' : '') + ')' : 'nobody picked yet. Click 👥 Choose techs.');
+      startBtn.disabled = !r.length; startBtn.style.opacity = r.length ? '1' : '.5';
+      startBtn.textContent = mode === 'auto' ? 'Review and send…' : 'Start (type only)';
+      if (!mainMsg.textContent || /^(Open the Dispatch|First, set up)/.test(mainMsg.textContent)) say('Pick a message, choose techs, then Start.');
+    };
+    const say = s => { mainMsg.textContent = s; };
+
+    // ===== Choose techs =====
+    const vPick = mkView('pick');
+    const pickMsg = msgLine();
+    const search = el('input', FULL + 'padding:6px 7px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff;margin-bottom:6px');
+    search.type = 'text'; search.placeholder = 'Search names'; search.id = 'st-msg-search';
+    let jobsOnly = get(K.jobsOnly) !== '0';
+    const jobsOnlyRow = check('Only show techs with jobs on the board', jobsOnly, v => { jobsOnly = v; set(K.jobsOnly, v ? '1' : '0'); renderPicker(); });
+    const pickList = scrollBox();
+    const pickNav = row();
+    pickNav.append(
+      smallBtn('Select all shown', () => { shown.forEach(t => selected.add(t.id)); saveSel(); renderPicker(); }),
+      smallBtn('Clear', () => { selected.clear(); saveSel(); renderPicker(); }),
+      smallBtn('Done', () => { sub('main'); renderMain(); }, PRIMARY)
+    );
+    vPick.append(head('👥 Choose techs'), pickMsg, search, jobsOnlyRow, pickList, pickNav);
+    search.oninput = () => renderPicker();
+    let shown = [];
+    const saveSel = () => set(K.sel, JSON.stringify(Array.from(selected)));
+    const openPicker = () => { if (!teamRules) return openSafety(); sub('pick'); renderPicker(); };
+    const renderPicker = () => {
+      const techs = Array.from(boardTechs().values());
+      const qtext = search.value.trim().toLowerCase();
+      // Drop anyone no longer allowed from the selection.
+      Array.from(selected).forEach(id => { const t = techs.find(x => x.id === id); if (t && !canMessage(t)) selected.delete(id); });
+      saveSel();
+      shown = techs.filter(t => canMessage(t) && (!jobsOnly || t.jobs > 0) && (!qtext || t.name.toLowerCase().indexOf(qtext) > -1));
+      pickList.textContent = '';
+      const byTeam = new Map();
+      shown.forEach(t => { const k = t.team || '(no team)'; if (!byTeam.has(k)) byTeam.set(k, []); byTeam.get(k).push(t); });
+      byTeam.forEach((ts, team) => {
+        const allOn = ts.every(t => selected.has(t.id));
+        const th = check(team + ' (' + ts.length + ')', allOn, v => { ts.forEach(t => v ? selected.add(t.id) : selected.delete(t.id)); saveSel(); renderPicker(); });
+        th.style.fontWeight = '700'; th.style.marginTop = '4px';
+        pickList.appendChild(th);
+        ts.forEach(t => {
+          const c = check(t.name + (t.jobs ? '  · ' + t.jobs + ' job' + (t.jobs === 1 ? '' : 's') : ''), selected.has(t.id), v => { v ? selected.add(t.id) : selected.delete(t.id); saveSel(); renderPicker(); });
+          c.style.paddingLeft = '16px';
+          pickList.appendChild(c);
+        });
+      });
+      if (!shown.length) pickList.appendChild(el('div', 'font-size:12px;color:#666;padding:6px 0', jobsOnly ? 'No allowed techs with jobs on the board. Untick "Only show techs with jobs" or check 🛡️ Who can be messaged.' : 'No allowed techs found. Check 🛡️ Who can be messaged.'));
+      const blockedCount = techs.filter(t => !canMessage(t)).length;
+      pickMsg.textContent = selected.size + ' picked. ' + blockedCount + ' people are hidden because their team is blocked or they\'re on the never-message list.';
+    };
+
+    // ===== Who can be messaged (safety settings) =====
+    const vSafe = mkView('safe');
+    const safeMsg = msgLine();
+    const teamList = scrollBox('max-height:calc(50vh - 120px)');
+    const neverHead = el('div', 'font-weight:700;margin-top:10px', '🚫 Never message these people');
+    const neverList = el('div', 'font-size:12px;margin:4px 0');
+    const neverAdd = el('input', FULL + 'padding:6px 7px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff');
+    neverAdd.type = 'text'; neverAdd.placeholder = 'Type a name to block (e.g. the owner)'; neverAdd.id = 'st-msg-never';
+    const neverResults = el('div', 'font-size:12px');
+    let draftRules = {}, draftNever = {};
+    const safeNav = row();
+    safeNav.append(
+      smallBtn('Save', () => saveSafety(), PRIMARY),
+      smallBtn('Cancel', () => { sub('main'); renderMain(); })
+    );
+    vSafe.append(head('🛡️ Who can be messaged'), safeMsg, teamList, neverHead, neverList, neverAdd, neverResults, safeNav);
+    const openSafety = () => {
+      if (!onBoard()) { sub('main'); say('Open the Dispatch board first, so the Toolbox can see the teams.'); return; }
+      const teams = teamsOnBoard();
+      draftRules = Object.assign({}, teamRules || {});
+      // First time: suggest. Later: any team we haven't seen before starts blocked.
+      teams.forEach(t => { if (!(t in draftRules)) draftRules[t] = teamRules ? false : !SUGGEST_BLOCK.test(t) && t !== '(no team)'; });
+      draftNever = Object.assign({}, never);
+      sub('safe');
+      renderSafety();
+    };
+    const renderSafety = () => {
+      const techs = Array.from(boardTechs().values());
+      const counts = {};
+      techs.forEach(t => { const k = t.team || '(no team)'; counts[k] = (counts[k] || 0) + 1; });
+      const isNew = t => teamRules && !(t in teamRules);
+      safeMsg.textContent = (teamRules ? 'Ticked teams can be messaged. Anything unticked can never be picked.' : 'First-time setup: these are suggestions. Untick any team that isn\'t field techs (leadership, office, owner\'s team), then Save.');
+      teamList.textContent = '';
+      Object.keys(counts).sort((a, b) => a.localeCompare(b)).forEach(team => {
+        const c = check((isNew(team) ? '🆕 ' : '') + team + ' (' + counts[team] + ')', draftRules[team] === true, v => { draftRules[team] = v; });
+        teamList.appendChild(c);
+      });
+      neverList.textContent = '';
+      const ids = Object.keys(draftNever);
+      if (!ids.length) neverList.appendChild(el('div', 'color:#666', 'Nobody yet.'));
+      ids.forEach(id => {
+        const r = el('div', 'display:flex;gap:6px;align-items:center;padding:2px 0');
+        r.append(el('span', 'flex:1', '🚫 ' + draftNever[id]), smallBtn('Remove', () => { delete draftNever[id]; renderSafety(); }, 'padding:2px 6px'));
+        neverList.appendChild(r);
+      });
+      renderNeverSearch();
+    };
+    const renderNeverSearch = () => {
+      neverResults.textContent = '';
+      const qtext = neverAdd.value.trim().toLowerCase();
+      if (!qtext) return;
+      Array.from(boardTechs().values()).filter(t => t.name.toLowerCase().indexOf(qtext) > -1 && !draftNever[t.id]).slice(0, 6).forEach(t => {
+        const r = el('div', 'display:flex;gap:6px;align-items:center;padding:2px 0');
+        r.append(el('span', 'flex:1', t.name + ' · ' + (t.team || 'no team')), smallBtn('Block', () => { draftNever[t.id] = t.name; neverAdd.value = ''; renderSafety(); }, 'padding:2px 6px;color:#c62828'));
+        neverResults.appendChild(r);
+      });
+    };
+    neverAdd.oninput = renderNeverSearch;
+    const saveSafety = () => {
+      teamRules = draftRules; never = draftNever;
+      set(K.teams, JSON.stringify(teamRules));
+      set(K.never, JSON.stringify(never));
+      sub('main');
+      say('🛡️ Saved. ' + Object.values(teamRules).filter(v => v).length + ' teams can be messaged, ' + Object.keys(never).length + ' people are blocked.');
+      renderMain();
+    };
+
+    // ===== Edit messages =====
+    const vEdit = mkView('edit');
+    const editMsg = msgLine();
+    editMsg.textContent = 'Use {first} for the tech\'s first name. Saved in this browser.';
+    const editList = el('div', 'max-height:calc(100vh - 300px);overflow:auto;margin:0 -4px;padding:0 4px');
+    let draft = [];
+    const renderEditor = () => {
+      editList.textContent = '';
+      draft.forEach((n, i) => {
+        const r = el('div', 'border:1px solid #ccc;border-radius:8px;padding:7px;margin-bottom:8px;background:#fafafa');
+        const name = el('input', FULL + 'padding:5px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-weight:600;color:#111;background:#fff');
+        name.type = 'text'; name.value = n[0]; name.placeholder = 'Button name (e.g. ☀️ Good Morning)';
+        name.oninput = () => { n[0] = name.value; };
+        const text = el('textarea', FULL + 'margin-top:5px;padding:5px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-size:12px;color:#111;background:#fff;resize:vertical');
+        text.rows = 3; text.value = n[1]; text.placeholder = 'Message text';
+        text.oninput = () => { n[1] = text.value; };
+        const tools = el('div', 'display:flex;gap:4px;margin-top:5px');
+        const moveBy = d => () => { const j = i + d; if (j < 0 || j >= draft.length) return; const t = draft[i]; draft[i] = draft[j]; draft[j] = t; renderEditor(); };
+        tools.append(
+          smallBtn('↑', moveBy(-1), i === 0 ? 'opacity:.4' : ''),
+          smallBtn('↓', moveBy(1), i === draft.length - 1 ? 'opacity:.4' : ''),
+          smallBtn('Delete', () => { draft.splice(i, 1); renderEditor(); }, 'margin-left:auto;color:#b00020;border-color:#e0a0a8')
+        );
+        r.append(name, text, tools);
+        editList.appendChild(r);
+      });
+    };
+    const openEditor = () => { draft = list.map(n => n.slice()); renderEditor(); sub('edit'); };
+    const editNav = row();
+    editNav.append(
+      smallBtn('Save', () => {
+        const cleaned = draft.map(n => [n[0].trim(), n[1].trim()]).filter(n => n[0] || n[1]);
+        if (!cleaned.length) { editMsg.textContent = '⚠️ Keep at least one message.'; return; }
+        const missing = cleaned.findIndex(n => !n[1]);
+        if (missing > -1) { editMsg.textContent = '⚠️ Message ' + (missing + 1) + ' has no text.'; return; }
+        cleaned.forEach((n, i) => { if (!n[0]) n[0] = 'Message ' + (i + 1); });
+        list = cleaned; set(K.msgs, JSON.stringify(list));
+        pickIdx = Math.min(pickIdx, list.length - 1); set(K.pick, String(pickIdx));
+        sub('main'); say('✅ Messages saved.'); renderMain();
+      }, PRIMARY),
+      smallBtn('Cancel', () => { sub('main'); renderMain(); }),
+      smallBtn('+ Add a message', () => { draft.push(['', '']); renderEditor(); editList.scrollTop = editList.scrollHeight; })
+    );
+    vEdit.append(head('✏️ Edit messages'), editMsg, editList, editNav);
+
+    // ===== Confirm =====
+    const vConfirm = mkView('confirm');
+    const confText = el('div', 'font-size:12px;white-space:pre-wrap;max-height:calc(100vh - 330px);overflow:auto;border:1px solid #ddd;border-radius:6px;padding:6px;background:#fafafa');
+    const confAsk = el('div', 'font-size:12px;margin-top:8px');
+    const confInput = el('input', 'width:70px;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff;margin-left:6px');
+    confInput.type = 'text'; confInput.id = 'st-msg-confirm-count'; confInput.inputMode = 'numeric';
+    const confGo = smallBtn('Send', () => go(), DANGER);
+    const confNav = row();
+    confNav.append(confGo, smallBtn('Cancel', () => { sub('main'); renderMain(); }));
+    vConfirm.append(head('Check before sending'), confText, confAsk, confNav);
+    let pending = [];
+    const openConfirm = () => {
+      if (lock) return say('Wait for ' + lock + ' to finish first.');
+      pending = recipients();
+      if (!pending.length) return say('Nobody picked. Click 👥 Choose techs.');
+      if (pending.length > MAX_PER_RUN) return say('⚠️ ' + pending.length + ' people picked. For safety the limit is ' + MAX_PER_RUN + ' per run.');
+      const tmpl = list[pickIdx][1];
+      confText.textContent = 'Message: "' + tmpl + '"\n\nTo ' + pending.length + ' tech' + (pending.length === 1 ? '' : 's') + ':\n' + pending.map(t => '• ' + t.name + '  (' + (t.team || 'no team') + ')').join('\n');
+      confAsk.textContent = '';
+      confInput.value = '';
+      if (mode === 'auto') {
+        confAsk.append(document.createTextNode('Auto-send is on. To confirm, type how many people this sends to (' + pending.length + '):'), confInput);
+        confGo.textContent = 'Send to ' + pending.length;
+        setTimeout(() => confInput.focus(), 0);
+      } else {
+        confAsk.textContent = 'Type-only mode: it types the message for each person and waits for you to press Send.';
+        confGo.textContent = 'Start';
+      }
+      sub('confirm');
+    };
+    confInput.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); go(); } };
+
+    // ===== Run =====
+    const vRun = mkView('run');
+    const runMsg = el('div', 'font-size:12px;color:#444;margin-bottom:6px;min-height:16px');
+    const runLog = el('pre', 'max-height:220px;overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
+    const runStep = el('div', 'display:none;margin-top:8px;padding:8px;border:1px solid #1a6ed8;background:#e3eefc;border-radius:6px;font-size:12px');
+    const stepText = el('div', 'margin-bottom:6px');
+    const stepBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    runStep.append(stepText, stepBtns);
+    const runNav = row();
+    let stopRun = false, running = false;
+    const stopBtn = smallBtn('Stop', () => { stopRun = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping...'; if (stepResolve) stepResolve('stop'); });
+    const doneBtn = smallBtn('← Back', () => { sub('main'); renderMain(); });
+    const copyBtn = smallBtn('Copy results', async () => { if (await copy(runLog.textContent)) copyBtn.textContent = 'Copied'; });
+    runNav.append(stopBtn, copyBtn, doneBtn);
+    vRun.append(head('Sending'), runMsg, runLog, runStep, runNav);
+    const add = s => { runLog.textContent += s + '\n'; runLog.scrollTop = runLog.scrollHeight; };
+    let stepResolve = null;
+    const askStep = (text, buttons) => new Promise(resolve => {
+      stepResolve = v => { stepResolve = null; runStep.style.display = 'none'; resolve(v); };
+      stepText.textContent = text;
+      stepBtns.textContent = '';
+      buttons.forEach(([label, val, style]) => stepBtns.appendChild(smallBtn(label, () => stepResolve(val), style)));
+      runStep.style.display = 'block';
+    });
+
+    const go = async () => {
+      if (running) return;
+      if (mode === 'auto' && confInput.value.trim() !== String(pending.length)) {
+        confAsk.firstChild && (confAsk.firstChild.textContent = '⚠️ That number doesn\'t match. Type ' + pending.length + ' to send to ' + pending.length + (pending.length === 1 ? ' person:' : ' people:'));
+        return;
+      }
+      if (lock) { sub('main'); return say('Wait for ' + lock + ' to finish first.'); }
+      running = true; stopRun = false; lock = 'Tech Messages';
+      const auto = mode === 'auto';
+      const tmpl = list[pickIdx][1];
+      const people = pending.slice();
+      runLog.textContent = ''; runMsg.textContent = '';
+      stopBtn.disabled = false; stopBtn.textContent = 'Stop'; stopBtn.style.display = 'inline-block';
+      doneBtn.style.display = 'none'; copyBtn.textContent = 'Copy results';
+      sub('run');
+      add((auto ? 'Auto-send' : 'Type only') + ': "' + tmpl + '" to ' + people.length);
+      const tally = {};
+      const out = (t, s, k) => { tally[k] = (tally[k] || 0) + 1; add(t.name + ': ' + s); };
+      try {
+        for (let n = 0; n < people.length; n++) {
+          if (stopRun) { add('Stopped. ' + (people.length - n) + ' not messaged.'); break; }
+          const planned = people[n];
+          runMsg.textContent = (auto ? 'Sending ' : 'Typing ') + (n + 1) + ' of ' + people.length + ': ' + planned.name;
+          if (!onBoard()) { out(planned, 'stopped: not on the Dispatch board', 'problem'); break; }
+          // Re-check the live board right before each person.
+          const t = boardTechs().get(planned.id);
+          if (!t) { out(planned, 'skipped: not on the board any more', 'skipped'); continue; }
+          if (!canMessage(t)) { out(t, 'skipped: blocked by your 🛡️ settings', 'skipped'); continue; }
+          if (!(await closeJobDrawer())) { out(t, 'skipped: a job panel would not close', 'problem'); continue; }
+          const err = await openChatFor(t);
+          if (err) { out(t, 'skipped: ' + err, 'problem'); continue; }
+          await wait(400);
+          dodge();
+          if (!boxOnTop()) { await closeJobDrawer(); await wait(300); dodge(); }
+          if (!boxOnTop()) { out(t, 'skipped: something is covering the message box', 'problem'); continue; }
+          const box = chatBox();
+          if (box.value.trim()) { out(t, 'skipped: their message box already had unsent text', 'problem'); continue; }
+          const ab = attachBox();
+          // Keep it a plain message, not attached to a job.
+          if (ab && ab.checked && !ab.disabled) ab.click();
+          const text = tmpl.replace(/\{first\}/g, firstName(t.name));
+          if (panelName().toLowerCase() !== t.name.toLowerCase()) { out(t, 'skipped: panel changed to someone else', 'problem'); continue; }
+          if (!typeInto(box, text)) { clearBox(box); out(t, 'skipped: could not type the message', 'problem'); continue; }
+
+          if (!auto) {
+            const ans = await askStep('Typed to ' + t.name + '. Press Send in the message box, then click Next.', [['Next', 'next', PRIMARY], ['Skip', 'skip'], ['Stop', 'stop']]);
+            if (ans === 'stop') { if (chatBox() && chatBox().value === text) clearBox(chatBox()); add('Stopped. ' + (people.length - n) + ' not messaged.'); break; }
+            if (ans === 'skip') { if (chatBox() && chatBox().value === text) clearBox(chatBox()); out(t, 'skipped by you (text cleared)', 'skipped'); continue; }
+            const b2 = chatBox();
+            if (b2 && b2.value.trim()) { out(t, 'not sent? the text is still in the box', 'problem'); continue; }
+            out(t, 'sent by you', 'sent');
+            continue;
+          }
+
+          // Auto-send: last checks, then click the send arrow and confirm it went.
+          const sb = sendBtn();
+          if (!sb || sb.disabled || panelName().toLowerCase() !== t.name.toLowerCase() || chatBox() !== box || box.value !== text) {
+            if (chatBox() && chatBox().value === text) clearBox(chatBox());
+            out(t, 'skipped: final check failed, nothing sent', 'problem');
+            continue;
+          }
+          sb.click();
+          const went = await until(() => { const b3 = chatBox(); return b3 && b3.value === '' ? b3 : null; }, 8000);
+          if (!went) { out(t, 'NOT CONFIRMED: the message may not have sent. Stopping to be safe.', 'problem'); break; }
+          const r0 = acRoot();
+          const seen = await until(() => r0 && Array.from(r0.querySelectorAll('p')).filter(visible).slice(-5).some(p => norm(p.textContent) === norm(text)), 4000);
+          out(t, seen ? 'sent' : 'sent (not showing in the chat yet)', 'sent');
+          await wait(1200);
+        }
+        const summary = Object.keys(tally).map(k => tally[k] + ' ' + k).join(', ') || 'nothing done';
+        runMsg.textContent = 'Done: ' + summary + '.';
+      } catch (e) {
+        runMsg.textContent = '⚠️ Stopped by an error: ' + (e && e.message ? e.message : e);
+      } finally {
+        running = false; lock = null;
+        stopBtn.style.display = 'none'; doneBtn.style.display = 'inline-block';
+        if (stepResolve) stepResolve('stop');
+      }
+    };
+
+    msgsPane.appendChild(pane);
+    sub('main');
+    return {
+      refresh: () => { if (!running) { sub('main'); renderMain(); } }
+    };
+  })();
+
+  // ===================================================================
   // Dragging, closing, and starting up
   // ===================================================================
   header.addEventListener('mousedown', e => {
@@ -691,5 +1190,5 @@
 
   document.body.appendChild(panel);
   const startView = get('stView');
-  showView(startView === 'notes' || startView === 'jobs' ? startView : 'menu');
+  showView(['notes', 'jobs', 'msgs'].indexOf(startView) > -1 ? startView : 'menu');
 })();
