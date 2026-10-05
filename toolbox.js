@@ -16,8 +16,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.2.3';
+  const VERSION = '1.2.4';
   const WHATS_NEW = {
+    '1.2.4': 'Job Notifications now retries any job that had a problem, once, after the rest of the run is done.',
     '1.2.3': 'Fix: Tech Messages works with the board filtered. It remembers each tech\'s team from the unfiltered board, so a filter no longer shows the "ServiceTitan may have changed" warning.',
     '1.2.2': 'Fix: Tech Messages works with the board filtered by team or people. Pick techs the same way as before; anyone the filter hides is skipped instead of stopping the run.',
     '1.2': 'New: a yellow warning bar if ServiceTitan changes something a tool needs, plus a 🩺 Check button in the menu.',
@@ -730,45 +731,71 @@
       const techName = techsOnBoard().get(techId) || 'Tech';
       const date = boardDate();
       const home = location.hash;
-      const tally = {};
-      const out = (j, s, k) => { tally[k] = (tally[k] || 0) + 1; add(j + ': ' + s); };
+      const NO_SWITCH = 'COULD NOT FIND SWITCH';
+      const results = new Map();   // job -> { text, kind }; a retry replaces the first result
+      const record = (j, r, retry) => { results.set(j, r); add(j + ': ' + (retry ? 'retry: ' : '') + r.text); };
+      // Opens one job and checks (or turns off) its switch. Returns { text, kind }.
+      const doJob = async j => {
+        const res = (text, kind) => ({ text, kind });
+        try {
+          location.hash = '#/Job/Index/' + j;
+          const found = await until(() => { const x = first(IN); return x && document.body.innerText.indexOf(j) > -1 ? x : null; }, 12000, 300);
+          if (!found) return res(NO_SWITCH, 'problem');
+          let st = !!(first(IN) || {}).checked, calm = 0;
+          for (let w = 0; calm < 3 && w < 3000; w += 250) {
+            await wait(250);
+            const c = !!(first(IN) || {}).checked;
+            if (c === st) calm++; else { st = c; calm = 0; }
+          }
+          const inp = first(IN);
+          if (!inp) return res(NO_SWITCH, 'problem');
+          if (!inp.checked) return res('already off', 'already off');
+          if (!real) return res('ON (left alone)', 'on');
+          (first(LB) || inp).click();
+          const off = await until(() => { const x = first(IN); return x && !x.checked; }, 4000, 250);
+          if (!off) return res('FAILED, still on', 'problem');
+          await wait(1500);
+          const x = first(IN);
+          if (x && x.checked) return res('FLIPPED BACK ON (save may have failed)', 'problem');
+          return res('turned off', 'turned off');
+        } catch (e) {
+          return res('ERROR: ' + (e && e.message ? e.message : e), 'problem');
+        }
+      };
       try {
         say('Finding ' + techName + '\'s jobs...');
         const list = await collectJobs(techId);
         if (!list.length) { say('No jobs found for ' + techName + ' on ' + date + '.'); return; }
-        let noSwitch = 0;
         add(date + ' - ' + techName + (real ? '' : ' (checking only, nothing changed)'));
         for (let n = 0; n < list.length; n++) {
           if (stop) { add('Stopped. ' + (list.length - n) + ' job(s) not checked.'); break; }
           const j = list[n];
           say((real ? 'Turning off ' : 'Checking ') + (n + 1) + ' of ' + list.length + ' (job ' + j + ')');
-          try {
-            location.hash = '#/Job/Index/' + j;
-            const found = await until(() => { const x = first(IN); return x && document.body.innerText.indexOf(j) > -1 ? x : null; }, 12000, 300);
-            if (!found) { noSwitch++; out(j, 'COULD NOT FIND SWITCH', 'problem'); continue; }
-            let st = !!(first(IN) || {}).checked, calm = 0;
-            for (let w = 0; calm < 3 && w < 3000; w += 250) {
-              await wait(250);
-              const c = !!(first(IN) || {}).checked;
-              if (c === st) calm++; else { st = c; calm = 0; }
-            }
-            const inp = first(IN);
-            if (!inp) { noSwitch++; out(j, 'COULD NOT FIND SWITCH', 'problem'); continue; }
-            if (!inp.checked) { out(j, 'already off', 'already off'); continue; }
-            if (!real) { out(j, 'ON (left alone)', 'on'); continue; }
-            (first(LB) || inp).click();
-            const off = await until(() => { const x = first(IN); return x && !x.checked; }, 4000, 250);
-            if (!off) { out(j, 'FAILED, still on', 'problem'); continue; }
-            await wait(1500);
-            const x = first(IN);
-            if (x && x.checked) out(j, 'FLIPPED BACK ON (save may have failed)', 'problem');
-            else out(j, 'turned off', 'turned off');
-          } catch (e) {
-            out(j, 'ERROR: ' + (e && e.message ? e.message : e), 'problem');
-          }
+          record(j, await doJob(j));
         }
+        // Second chance: once the run is done, try each job that had a problem one more time.
+        const failed = list.filter(j => results.has(j) && results.get(j).kind === 'problem');
+        if (failed.length && !stop) {
+          add('');
+          add('Retrying ' + failed.length + ' job' + (failed.length === 1 ? '' : 's') + ' that had a problem...');
+          say('Retrying ' + failed.length + ' job' + (failed.length === 1 ? '' : 's') + '...');
+          // Back to the board for a moment so each retry opens a fresh job page.
+          if (location.hash !== home) location.hash = home;
+          await wait(2000);
+          for (let n = 0; n < failed.length; n++) {
+            if (stop) { add('Stopped. ' + (failed.length - n) + ' retry(s) not done.'); break; }
+            const j = failed[n];
+            say('Retrying ' + (n + 1) + ' of ' + failed.length + ' (job ' + j + ')');
+            record(j, await doJob(j), true);
+          }
+          const still = failed.filter(j => results.get(j).kind === 'problem');
+          add(still.length ? 'Still a problem after retry: ' + still.join(', ') : 'All retried jobs worked.');
+        }
+        const tally = {};
+        let noSwitch = 0;
+        results.forEach(r => { tally[r.kind] = (tally[r.kind] || 0) + 1; if (r.text === NO_SWITCH) noSwitch++; });
         const summary = Object.keys(tally).map(k => tally[k] + ' ' + k).join(', ') || 'nothing done';
-        const checked = Object.keys(tally).reduce((s, k) => s + tally[k], 0);
+        const checked = results.size;
         if (checked && noSwitch === checked) {
           health.flag('Job Notifications', 'can\'t find the Job Notifications switch on job pages', '.qa-job-notification-toggle input');
           say('Done: ' + summary + '.' + CHANGED);

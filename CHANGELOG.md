@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.4
+
+- **Job Notifications retries problem jobs**: if a job fails during a run (switch not found, didn't turn off, flipped back on, or an error), the tool goes back to it once after the rest of the run is done.
+- Retry lines show in the results as "retry:", and the final count uses each job's latest result. Anything that still fails is listed at the end.
+- Pressing Stop skips the retries.
+
 ## 1.2.3
 
 - **Fix for board filters**: a team or people filter hides the team headers, which made Tech Messages warn "can't find team names" / "can't tell which team each tech is on". Tech Messages now remembers each tech's team whenever the board is unfiltered and uses that while a filter is on, so the warning doesn't appear and picking works the same as always.

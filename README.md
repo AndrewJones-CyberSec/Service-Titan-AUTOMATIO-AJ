@@ -17,7 +17,7 @@ On the Dispatch board, pick a tech from the list (it only shows techs with jobs 
 - **Check jobs**: shows whether each of their jobs has notifications on. Changes nothing.
 - **Turn off notifications**: switches them off on each job, after you confirm.
 
-Shows progress as it goes, with a Stop button and a copyable list of results.
+Any job that has a problem gets one more try after the rest of the run is done. Shows progress as it goes, with a Stop button and a copyable list of results.
 
 **💬 Tech Messages**
 Send a saved message (for example Good Morning or ETA) to the techs you pick. It opens each tech's Send Message panel, types the message, and either waits for you to press Send (**Type only**) or sends it for you (**Auto-send**).
