@@ -16,8 +16,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.2.4';
+  const VERSION = '1.2.5';
   const WHATS_NEW = {
+    '1.2.5': 'Safer closing: closing the Toolbox during a run now asks to stop the run first. Tech Messages is lighter on the board, and Quick Notes rests while you use other tools.',
     '1.2.4': 'Job Notifications now retries any job that had a problem, once, after the rest of the run is done.',
     '1.2.3': 'Fix: Tech Messages works with the board filtered. It remembers each tech\'s team from the unfiltered board, so a filter no longer shows the "ServiceTitan may have changed" warning.',
     '1.2.2': 'Fix: Tech Messages works with the board filtered by team or people. Pick techs the same way as before; anyone the filter hides is skipped instead of stopping the run.',
@@ -58,6 +59,56 @@
   };
   const PRIMARY = 'background:#1a6ed8;color:#fff;border-color:#1a6ed8;font-weight:600;';
   const DANGER = 'background:#c62828;color:#fff;border-color:#c62828;font-weight:600;';
+
+  // The editable list used by ✏️ Edit notes and ✏️ Edit messages: a name and a text per item,
+  // with ↑ ↓ to reorder and Delete. `word` is 'note' or 'message' (used in warnings).
+  const listEditor = (word, namePlaceholder, textPlaceholder, maxHeight) => {
+    const box = el('div', 'max-height:' + maxHeight + ';overflow:auto;margin:0 -4px;padding:0 4px');
+    let draft = [];
+    const render = () => {
+      box.textContent = '';
+      draft.forEach((n, i) => {
+        const row = el('div', 'border:1px solid #ccc;border-radius:8px;padding:7px;margin-bottom:8px;background:#fafafa');
+        const name = el('input', FULL + 'padding:5px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-weight:600;color:#111;background:#fff');
+        name.type = 'text'; name.value = n[0]; name.placeholder = namePlaceholder;
+        name.oninput = () => { n[0] = name.value; };
+        const text = el('textarea', FULL + 'margin-top:5px;padding:5px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-size:12px;color:#111;background:#fff;resize:vertical');
+        text.rows = 3; text.value = n[1]; text.placeholder = textPlaceholder;
+        text.oninput = () => { n[1] = text.value; };
+        const tools = el('div', 'display:flex;gap:4px;margin-top:5px');
+        const moveBy = d => () => { const j = i + d; if (j < 0 || j >= draft.length) return; const t = draft[i]; draft[i] = draft[j]; draft[j] = t; render(); };
+        tools.append(
+          smallBtn('↑', moveBy(-1), i === 0 ? 'opacity:.4' : ''),
+          smallBtn('↓', moveBy(1), i === draft.length - 1 ? 'opacity:.4' : ''),
+          smallBtn('Delete', () => { draft.splice(i, 1); render(); }, 'margin-left:auto;color:#b00020;border-color:#e0a0a8')
+        );
+        row.append(name, text, tools);
+        box.appendChild(row);
+      });
+    };
+    const Word = word.charAt(0).toUpperCase() + word.slice(1);
+    return {
+      box,
+      get: () => draft,
+      load: items => { draft = items.map(n => n.slice()); render(); },
+      add: () => {
+        draft.push(['', '']);
+        render();
+        box.scrollTop = box.scrollHeight;
+        const inputs = box.querySelectorAll('input');
+        if (inputs.length) inputs[inputs.length - 1].focus();
+      },
+      // Trims and checks the list. Returns { list } if it's OK to save, or { error }.
+      clean: () => {
+        const cleaned = draft.map(n => [n[0].trim(), n[1].trim()]).filter(n => n[0] || n[1]);
+        if (!cleaned.length) return { error: '⚠️ Keep at least one ' + word + '.' };
+        const missing = cleaned.findIndex(n => !n[1]);
+        if (missing > -1) return { error: '⚠️ ' + Word + ' ' + (missing + 1) + ' has no text.' };
+        cleaned.forEach((n, i) => { if (!n[0]) n[0] = Word + ' ' + (i + 1); });
+        return { list: cleaned };
+      }
+    };
+  };
 
   // Only one tool can drive the page at a time (both of them navigate around).
   let lock = null;
@@ -234,6 +285,7 @@
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
     titleText.textContent = TITLES[name];
     set('stView', name);
+    if (name !== 'notes' && typeof notes !== 'undefined') notes.leave();
     if (name === 'jobs' && typeof notify !== 'undefined') notify.refresh();
     if (name === 'msgs' && typeof msgs !== 'undefined') msgs.refresh();
   };
@@ -463,8 +515,9 @@
       }
     };
 
+    const showing = () => notesPane.style.display !== 'none';
     const idleHint = () => {
-      if (busy) return;
+      if (busy || !showing()) return;
       if (armed) {
         if (onBoard()) say('👉 Now click a job. The highlighted note will be added. (Esc to cancel)');
         else { armed = null; renderList(); }
@@ -480,42 +533,16 @@
     };
 
     // ---- Edit notes screen ----
-    let editing = false, draft = [];
+    let editing = false;
     const editor = el('div', 'display:none;padding:8px 10px 10px');
     const editHead = el('div', 'font-weight:700;margin-bottom:4px', '✏️ Edit notes');
     const editMsg = el('div', 'font-size:12px;color:#444;margin-bottom:6px', 'Change the button name and the note text. Saved in this browser.');
-    const editList = el('div', 'max-height:calc(100vh - 290px);overflow:auto;margin:0 -4px;padding:0 4px');
-    const renderEditor = () => {
-      editList.textContent = '';
-      draft.forEach((n, i) => {
-        const row = el('div', 'border:1px solid #ccc;border-radius:8px;padding:7px;margin-bottom:8px;background:#fafafa');
-        const name = el('input', FULL + 'padding:5px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-weight:600;color:#111;background:#fff');
-        name.type = 'text';
-        name.value = n[0];
-        name.placeholder = 'Button name (e.g. 📞 No Answer)';
-        name.oninput = () => { n[0] = name.value; };
-        const text = el('textarea', FULL + 'margin-top:5px;padding:5px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-size:12px;color:#111;background:#fff;resize:vertical');
-        text.value = n[1];
-        text.rows = 3;
-        text.placeholder = 'Note text that gets typed in';
-        text.oninput = () => { n[1] = text.value; };
-        const tools = el('div', 'display:flex;gap:4px;margin-top:5px');
-        const moveBy = d => () => { const j = i + d; if (j < 0 || j >= draft.length) return; const t = draft[i]; draft[i] = draft[j]; draft[j] = t; renderEditor(); };
-        tools.append(
-          smallBtn('↑', moveBy(-1), i === 0 ? 'opacity:.4' : ''),
-          smallBtn('↓', moveBy(1), i === draft.length - 1 ? 'opacity:.4' : ''),
-          smallBtn('Delete', () => { draft.splice(i, 1); renderEditor(); }, 'margin-left:auto;color:#b00020;border-color:#e0a0a8')
-        );
-        row.append(name, text, tools);
-        editList.appendChild(row);
-      });
-    };
+    const ed = listEditor('note', 'Button name (e.g. 📞 No Answer)', 'Note text that gets typed in', 'calc(100vh - 290px)');
     const openEditor = () => {
       editing = true;
       armed = null;
-      draft = list.map(n => n.slice());
+      ed.load(list);
       editMsg.textContent = 'Change the button name and the note text. Saved in this browser.';
-      renderEditor();
       main.style.display = 'none';
       editor.style.display = 'block';
     };
@@ -526,12 +553,9 @@
       renderList();
     };
     const saveEditor = () => {
-      const cleaned = draft.map(n => [n[0].trim(), n[1].trim()]).filter(n => n[0] || n[1]);
-      if (!cleaned.length) { editMsg.textContent = '⚠️ Keep at least one note.'; return; }
-      const missing = cleaned.findIndex(n => !n[1]);
-      if (missing > -1) { editMsg.textContent = '⚠️ Note ' + (missing + 1) + ' has no text.'; return; }
-      cleaned.forEach((n, i) => { if (!n[0]) n[0] = 'Note ' + (i + 1); });
-      list = cleaned;
+      const r = ed.clean();
+      if (r.error) { editMsg.textContent = r.error; return; }
+      list = r.list;
       const ok = set(KEY_NOTES, JSON.stringify(list));
       closeEditor();
       say(ok ? '✅ Notes saved.' : '⚠️ Notes updated for now, but this browser wouldn\'t save them for next time.');
@@ -540,7 +564,7 @@
     const resetRow = el('div', 'display:none;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;font-size:12px');
     resetRow.append(
       document.createTextNode('Put back the original 5 notes?'),
-      smallBtn('Yes, reset', () => { draft = DEFAULT_NOTES.map(n => n.slice()); renderEditor(); resetRow.style.display = 'none'; editMsg.textContent = 'Original notes loaded. Click Save to keep them.'; }),
+      smallBtn('Yes, reset', () => { ed.load(DEFAULT_NOTES); resetRow.style.display = 'none'; editMsg.textContent = 'Original notes loaded. Click Save to keep them.'; }),
       smallBtn('No', () => { resetRow.style.display = 'none'; })
     );
     const editButtons = el('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-top:4px');
@@ -549,7 +573,7 @@
       smallBtn('Cancel', closeEditor),
       smallBtn('Reset to original', () => { resetRow.style.display = 'flex'; }),
       smallBtn('Copy list', async () => {
-        const s = JSON.stringify(draft);
+        const s = JSON.stringify(ed.get());
         try { await navigator.clipboard.writeText(s); editMsg.textContent = 'List copied. Use "Paste list" in another browser to load it.'; }
         catch (e) { prompt('Copy this list:', s); }
       }),
@@ -559,19 +583,13 @@
         try {
           const v = JSON.parse(s);
           if (!validNotes(v)) throw new Error('bad');
-          draft = v; renderEditor();
+          ed.load(v);
           editMsg.textContent = 'List loaded. Click Save to keep it.';
         } catch (e) { editMsg.textContent = '⚠️ That didn\'t look like a copied notes list.'; }
       })
     );
-    const addBtn = smallBtn('+ Add a note', () => {
-      draft.push(['', '']);
-      renderEditor();
-      editList.scrollTop = editList.scrollHeight;
-      const inputs = editList.querySelectorAll('input');
-      if (inputs.length) inputs[inputs.length - 1].focus();
-    }, FULL + 'margin-bottom:2px');
-    editor.append(editHead, editMsg, editList, addBtn, editButtons, resetRow);
+    const addBtn = smallBtn('+ Add a note', () => ed.add(), FULL + 'margin-bottom:2px');
+    editor.append(editHead, editMsg, ed.box, addBtn, editButtons, resetRow);
 
     notesPane.append(main, editor);
     renderList();
@@ -580,7 +598,7 @@
 
     // When a note is waiting, add it as soon as a job is clicked.
     const armTimer = setInterval(() => {
-      if (armed && !busy && !lock && jobCustomerLink()) {
+      if (armed && showing() && !busy && !lock && jobCustomerLink()) {
         const t = armed;
         armed = null;
         renderList();
@@ -597,13 +615,17 @@
       const n = m ? parseInt(m[1], 10) : parseInt(e.key, 10);
       if (n >= 1 && n <= Math.min(9, list.length)) {
         e.preventDefault();
+        if (lock && lock !== 'Quick Notes') return;   // another tool is running
         if (isField(document.activeElement)) lastField = document.activeElement;
+        if (!showing()) showView('notes');   // so you can see what the shortcut is doing
         run(list[n - 1][1]);
       }
     };
     document.addEventListener('keydown', onKey, true);
 
     return {
+      // Leaving Quick Notes cancels a note that's waiting for a job click.
+      leave: () => { if (armed) { armed = null; renderList(); say(''); } },
       cleanup: () => {
         document.removeEventListener('focusin', onFocus, true);
         document.removeEventListener('keydown', onKey, true);
@@ -658,7 +680,8 @@
     const progress = el('div', 'display:none;gap:6px');
     const log = el('pre', 'max-height:200px;overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
     const progRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
-    const stopBtn = smallBtn('Stop', () => { stop = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping after this job...'; });
+    const requestStop = () => { stop = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping after this job...'; };
+    const stopBtn = smallBtn('Stop', () => requestStop());
     const copyBtn = smallBtn('Copy results', async () => { if (await copy(log.textContent)) copyBtn.textContent = 'Copied'; });
     progRow.append(stopBtn, copyBtn);
     progress.append(log, progRow);
@@ -812,7 +835,7 @@
         refresh(true);
       }
     };
-    return { refresh };
+    return { refresh, isRunning: () => running, stop: requestStop };
   })();
 
   // ===================================================================
@@ -844,7 +867,7 @@
     let teamRules = loadJSON(K.teams, null);
     let never = loadJSON(K.never, {});
     let selected = new Set(loadJSON(K.sel, []));
-    let pickIdx = Math.min(parseInt(get(K.pick) || '0', 10) || 0, list.length - 1);
+    let pickIdx = Math.max(0, Math.min(parseInt(get(K.pick) || '0', 10) || 0, list.length - 1));
 
     // ---- Reading the board ----
     const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
@@ -896,7 +919,17 @@
     const firstName = name => norm(name).split(' ')[0] || '';
 
     // ---- The Send Message panel (lives inside ServiceTitan's Activity Center) ----
-    const acHost = () => Array.from(document.querySelectorAll('*')).find(e => /^SERVICETITAN-ACTIVITY-CENTER/i.test(e.tagName)) || null;
+    // Finding it means looking through every element on the page, so remember it once found,
+    // and while it's missing, look again at most twice a second.
+    let acCache = null, acLastMiss = 0;
+    const acHost = fresh => {
+      if (acCache && acCache.isConnected) return acCache;
+      acCache = null;
+      if (!fresh && Date.now() - acLastMiss < 500) return null;
+      acCache = Array.from(document.querySelectorAll('*')).find(e => /^SERVICETITAN-ACTIVITY-CENTER/i.test(e.tagName)) || null;
+      if (!acCache) acLastMiss = Date.now();
+      return acCache;
+    };
     const acRoot = () => { const h = acHost(); return h && h.shadowRoot; };
     const q = sel => { const r = acRoot(); const x = r && r.querySelector(sel); return x && visible(x) ? x : null; };
     const chatBox = () => q('[data-cy=technician-chat-input]');
@@ -954,7 +987,7 @@
       link.click();
       const ok = await until(() => chatBox() && panelName().toLowerCase() === t.name.toLowerCase(), 8000);
       if (!ok) {
-        if (!acHost()) return changed('can\'t find the message panel', 'SERVICETITAN-ACTIVITY-CENTER-*');
+        if (!acHost(true)) return changed('can\'t find the message panel', 'SERVICETITAN-ACTIVITY-CENTER-*');
         if (!chatBox()) return changed('can\'t find the message box', '[data-cy=technician-chat-input]');
         if (!panelName()) return changed('can\'t read whose messages are open', 'Activity Center h3');
         return 'panel showed "' + panelName() + '" instead';
@@ -1164,47 +1197,24 @@
     // ===== Edit messages =====
     const vEdit = mkView('edit');
     const editMsg = msgLine();
-    editMsg.textContent = 'Use {first} for the tech\'s first name. Saved in this browser.';
-    const editList = el('div', 'max-height:calc(100vh - 300px);overflow:auto;margin:0 -4px;padding:0 4px');
-    let draft = [];
-    const renderEditor = () => {
-      editList.textContent = '';
-      draft.forEach((n, i) => {
-        const r = el('div', 'border:1px solid #ccc;border-radius:8px;padding:7px;margin-bottom:8px;background:#fafafa');
-        const name = el('input', FULL + 'padding:5px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-weight:600;color:#111;background:#fff');
-        name.type = 'text'; name.value = n[0]; name.placeholder = 'Button name (e.g. ☀️ Good Morning)';
-        name.oninput = () => { n[0] = name.value; };
-        const text = el('textarea', FULL + 'margin-top:5px;padding:5px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-size:12px;color:#111;background:#fff;resize:vertical');
-        text.rows = 3; text.value = n[1]; text.placeholder = 'Message text';
-        text.oninput = () => { n[1] = text.value; };
-        const tools = el('div', 'display:flex;gap:4px;margin-top:5px');
-        const moveBy = d => () => { const j = i + d; if (j < 0 || j >= draft.length) return; const t = draft[i]; draft[i] = draft[j]; draft[j] = t; renderEditor(); };
-        tools.append(
-          smallBtn('↑', moveBy(-1), i === 0 ? 'opacity:.4' : ''),
-          smallBtn('↓', moveBy(1), i === draft.length - 1 ? 'opacity:.4' : ''),
-          smallBtn('Delete', () => { draft.splice(i, 1); renderEditor(); }, 'margin-left:auto;color:#b00020;border-color:#e0a0a8')
-        );
-        r.append(name, text, tools);
-        editList.appendChild(r);
-      });
-    };
-    const openEditor = () => { draft = list.map(n => n.slice()); renderEditor(); sub('edit'); };
+    const EDIT_HINT = 'Use {first} for the tech\'s first name. Saved in this browser.';
+    editMsg.textContent = EDIT_HINT;
+    const ed = listEditor('message', 'Button name (e.g. ☀️ Good Morning)', 'Message text', 'calc(100vh - 300px)');
+    const openEditor = () => { ed.load(list); sub('edit'); };
     const editNav = row();
     editNav.append(
       smallBtn('Save', () => {
-        const cleaned = draft.map(n => [n[0].trim(), n[1].trim()]).filter(n => n[0] || n[1]);
-        if (!cleaned.length) { editMsg.textContent = '⚠️ Keep at least one message.'; return; }
-        const missing = cleaned.findIndex(n => !n[1]);
-        if (missing > -1) { editMsg.textContent = '⚠️ Message ' + (missing + 1) + ' has no text.'; return; }
-        cleaned.forEach((n, i) => { if (!n[0]) n[0] = 'Message ' + (i + 1); });
-        list = cleaned; set(K.msgs, JSON.stringify(list));
+        const r = ed.clean();
+        if (r.error) { editMsg.textContent = r.error; return; }
+        list = r.list; set(K.msgs, JSON.stringify(list));
         pickIdx = Math.min(pickIdx, list.length - 1); set(K.pick, String(pickIdx));
+        editMsg.textContent = EDIT_HINT;
         sub('main'); say('✅ Messages saved.'); renderMain();
       }, PRIMARY),
-      smallBtn('Cancel', () => { sub('main'); renderMain(); }),
-      smallBtn('+ Add a message', () => { draft.push(['', '']); renderEditor(); editList.scrollTop = editList.scrollHeight; })
+      smallBtn('Cancel', () => { editMsg.textContent = EDIT_HINT; sub('main'); renderMain(); }),
+      smallBtn('+ Add a message', () => ed.add())
     );
-    vEdit.append(head('✏️ Edit messages'), editMsg, editList, editNav);
+    vEdit.append(head('✏️ Edit messages'), editMsg, ed.box, editNav);
 
     // ===== Confirm =====
     const vConfirm = mkView('confirm');
@@ -1248,7 +1258,8 @@
     runStep.append(stepText, stepBtns);
     const runNav = row();
     let stopRun = false, running = false;
-    const stopBtn = smallBtn('Stop', () => { stopRun = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping...'; if (stepResolve) stepResolve('stop'); });
+    const requestStop = () => { stopRun = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping...'; if (stepResolve) stepResolve('stop'); };
+    const stopBtn = smallBtn('Stop', () => requestStop());
     const doneBtn = smallBtn('← Back', () => { sub('main'); renderMain(); });
     const copyBtn = smallBtn('Copy results', async () => { if (await copy(runLog.textContent)) copyBtn.textContent = 'Copied'; });
     runNav.append(stopBtn, copyBtn, doneBtn);
@@ -1365,7 +1376,9 @@
     msgsPane.appendChild(pane);
     sub('main');
     return {
-      refresh: () => { if (!running) { sub('main'); renderMain(); } }
+      refresh: () => { if (!running) { sub('main'); renderMain(); } },
+      isRunning: () => running,
+      stop: requestStop
     };
   })();
 
@@ -1390,10 +1403,37 @@
     document.addEventListener('mouseup', up);
   });
 
-  const close = () => {
+  // Closing while Job Notifications or Tech Messages is running would hide the panel but
+  // leave the run going in the background. So ask first, stop the run, then close.
+  const closeBar = el('div', 'display:none;padding:8px 12px;background:#fdecec;color:#7a1010;font-size:12px;border-bottom:1px solid #e0a0a8');
+  const closeText = el('div', 'margin-bottom:6px');
+  const closeBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+  closeBar.append(closeText, closeBtns);
+  header.after(closeBar);
+  let closing = false;
+  const finishClose = () => {
     notes.cleanup();
     panel.remove();
     delete window.__stToolbox;
+  };
+  const close = () => {
+    const runner = notify.isRunning() ? notify : msgs.isRunning() ? msgs : null;
+    if (!runner) return finishClose();
+    if (closing) return;
+    closeText.textContent = (runner === notify ? 'Job Notifications' : 'Tech Messages') + ' is still running. Closing now would leave it running out of sight.';
+    closeBtns.textContent = '';
+    closeBtns.append(
+      smallBtn('Stop it and close', async () => {
+        closing = true;
+        closeBtns.textContent = '';
+        closeText.textContent = 'Stopping, then closing...';
+        runner.stop();
+        await until(() => !notify.isRunning() && !msgs.isRunning(), 30000, 250);
+        finishClose();
+      }, DANGER),
+      smallBtn('Keep running', () => { closeBar.style.display = 'none'; })
+    );
+    closeBar.style.display = 'block';
   };
   closeX.onclick = close;
   window.__stToolbox = { version: VERSION, close };

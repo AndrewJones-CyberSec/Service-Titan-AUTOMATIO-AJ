@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.5
+
+- **Safer closing**: closing the Toolbox (✕ or the bookmark) while Job Notifications or Tech Messages is running now asks first. **Stop it and close** stops the run cleanly, then closes. Before, the panel closed but the run kept going out of sight.
+- **Tech Messages is lighter on the board**: it remembers where ServiceTitan's message panel is instead of searching the whole page over and over.
+- **Quick Notes rests while you use other tools**: leaving Quick Notes cancels a note that was waiting for a job click. Using an Alt/Option + number shortcut from another tool opens Quick Notes so you can see what it's doing (ignored while another tool is running).
+- ✏️ Edit notes and ✏️ Edit messages now share the same editor behind the scenes. They look and work the same.
+- Small fix: a damaged saved setting can no longer stop Tech Messages from starting.
+
 ## 1.2.4
 
 - **Job Notifications retries problem jobs**: if a job fails during a run (switch not found, didn't turn off, flipped back on, or an error), the tool goes back to it once after the rest of the run is done.
