@@ -16,9 +16,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.2.1';
+  const VERSION = '1.2.2';
   const WHATS_NEW = {
-    '1.2.1': 'Fix: Tech Messages no longer says "ServiceTitan may have changed" when the board is filtered by team or people. It only messages techs that are showing.',
+    '1.2.2': 'Fix: Tech Messages works with the board filtered by team or people. Pick techs the same way as before; anyone the filter hides is skipped instead of stopping the run.',
     '1.2': 'New: a yellow warning bar if ServiceTitan changes something a tool needs, plus a 🩺 Check button in the menu.',
     '1.1': 'New: 💬 Tech Messages. Send your Good Morning or ETA message to the techs you pick, with safety checks so it never messages blocked teams or people.',
     '1.0.1': 'Test update',
@@ -41,10 +41,8 @@
     return fn() || null;
   };
   const visible = el => !!(el && el.getClientRects().length);
-  // Board filters (teams / people) can leave hidden copies of a tech on the page, so when
-  // an id shows up more than once, use the copy that's actually showing.
-  const byId = id => { const all = Array.from(document.querySelectorAll('[id="' + id + '"]')); return all.find(visible) || all[0] || null; };
-  const shownById = id => Array.from(document.querySelectorAll('[id="' + id + '"]')).find(visible) || null;
+  // True if a tech's name is actually showing on the board (a team or people filter hides the rest).
+  const techShowing = t => visible((t && t.querySelector('.name')) || t);
   const onBoard = () => /dispatchboard/i.test(location.hash);
   const isMac = /Mac|iPhone|iPad/i.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || '');
   const ALT = isMac ? 'Option' : 'Alt';
@@ -172,15 +170,14 @@
         const BOARD = 'Job Notifications & Tech Messages';
         if (!techEls) {
           flag(BOARD, 'can\'t find the techs on the Dispatch board', '.technician[data-technician-id]', 'board');
-        } else if (Array.from(techEls).some(visible)) {
-          // Check a tech that's actually showing. With a filter on, hidden techs can be
-          // missing pieces, and that's normal, not a ServiceTitan change.
-          const first = Array.from(techEls).find(visible);
+        } else {
+          // Check a tech that's showing: with a board filter on, hidden techs can be missing pieces.
+          const first = Array.from(techEls).find(techShowing) || techEls[0];
           const id = first.getAttribute('data-technician-id');
           const nameEl = first.querySelector('.name');
           if (!nameEl || !nameEl.textContent.trim()) flag(BOARD, 'can\'t read tech names', '.technician .name', 'board');
           if (!document.querySelector('.team-name')) flag('Tech Messages', 'can\'t find team names', '.team-name', 'board');
-          const row = byId('team-timeline-row-' + id);
+          const row = document.getElementById('team-timeline-row-' + id);
           if (!row) flag(BOARD, 'can\'t find the tech\'s row on the timeline', '#team-timeline-row-<id>', 'board');
           else {
             const tc = row.closest('.team-container');
@@ -819,25 +816,28 @@
     // ---- Reading the board ----
     const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
     const teamOf = id => {
-      const row = byId('team-timeline-row-' + id);
+      const row = document.getElementById('team-timeline-row-' + id);
       const tc = row && row.closest('.team-container');
       let h = tc && tc.previousElementSibling;
       while (h && !h.querySelector('.team-name')) h = h.previousElementSibling;
       const tn = h && h.querySelector('.team-name');
       return tn ? norm(tn.textContent) : null;
     };
-    // Only techs showing on the board right now. If a team or people filter is on,
-    // the filtered-out techs are left alone (they stay picked for when the filter's cleared).
     const boardTechs = () => {
       const out = new Map();
       document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
         const id = t.getAttribute('data-technician-id');
-        if (out.has(id) || !visible(t)) return;
+        if (out.has(id)) return;
         const n = t.querySelector('.name');
         const name = norm(n ? n.textContent : '');
         if (!name) return;
         const jobs = document.querySelectorAll('a.appointment[data-technician-id="' + id + '"][data-job-id]').length;
-        out.set(id, { id, name, team: teamOf(id), jobs });
+        out.set(id, { id, name, team: teamOf(id), jobs, hidden: true });
+      });
+      // Everyone stays in the list. "hidden" just notes who a board filter is hiding right now.
+      document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
+        const x = out.get(t.getAttribute('data-technician-id'));
+        if (x && x.hidden && techShowing(t)) x.hidden = false;
       });
       return out;
     };
@@ -883,12 +883,21 @@
     // A missing ServiceTitan piece (not a one-off glitch): flag it and stop the whole run.
     const changed = (what, detail) => { health.flag('Tech Messages', what, detail); return { changed: true, what }; };
     const openChatFor = async t => {
-      const el2 = shownById('team-technician-' + t.id);
-      if (!el2) return 'not showing on the board (a filter may be hiding them)';
-      el2.scrollIntoView({ block: 'center' });
-      await wait(250);
-      (el2.querySelector('.name') || el2).click();
-      const menu = await until(() => Array.from(document.querySelectorAll('.technician-menu.dropdown-menu')).find(visible), 3000);
+      // A board filter can leave a hidden copy of a tech on the page, so use the copy that's showing.
+      const copies = Array.from(document.querySelectorAll('[id="team-technician-' + t.id + '"]'));
+      const el2 = copies.find(techShowing) || copies[0];
+      if (!el2) return 'not on the board';
+      const openMenu = async () => {
+        el2.scrollIntoView({ block: 'center' });
+        await wait(250);
+        (el2.querySelector('.name') || el2).click();
+        return until(() => Array.from(document.querySelectorAll('.technician-menu.dropdown-menu')).find(visible), 3000);
+      };
+      let menu = await openMenu();
+      // Hidden by a team/people filter: skip just this person. That's not a ServiceTitan change.
+      if (!menu && !techShowing(el2)) return 'hidden by the board filter right now (clear the filter to message them)';
+      if (!menu) { await wait(500); menu = await openMenu(); }   // one retry for a slow board
+      if (!menu && !techShowing(el2)) return 'hidden by the board filter right now (clear the filter to message them)';
       if (!menu) return changed('the tech menu didn\'t open when clicking a tech\'s name', '.technician-menu.dropdown-menu');
       // Only ever click the link whose text is exactly "Send Message" (never the memo "Send" button).
       const link = Array.from(menu.querySelectorAll('a')).find(a => norm(a.textContent) === 'Send Message');
@@ -979,11 +988,9 @@
       if (!onBoard()) { say('Open the Dispatch board to send messages.'); startBtn.disabled = true; startBtn.style.opacity = '.5'; toLine.textContent = ''; return; }
       if (!teamRules) { say('First, set up who can be messaged (🛡️ below). Nothing can be sent until you do.'); startBtn.disabled = true; startBtn.style.opacity = '.5'; toLine.textContent = 'To: nobody yet'; return; }
       const r = recipients();
-      const techsNow = boardTechs();
-      const offBoard = Array.from(selected).filter(id => !techsNow.has(id)).length;
-      toLine.textContent = 'To: ' + (r.length ? r.length + ' tech' + (r.length === 1 ? '' : 's') + ' (' + r.slice(0, 4).map(t => t.name).join(', ') + (r.length > 4 ? ', …' : '') + ')' : 'nobody picked yet. Click 👥 Choose techs.') +
-        (offBoard ? '\n' + offBoard + ' other picked tech' + (offBoard === 1 ? ' isn\'t' : 's aren\'t') + ' showing on the board (filter?) and will be left out.' : '');
-      toLine.style.whiteSpace = 'pre-wrap';
+      toLine.textContent = 'To: ' + (r.length ? r.length + ' tech' + (r.length === 1 ? '' : 's') + ' (' + r.slice(0, 4).map(t => t.name).join(', ') + (r.length > 4 ? ', …' : '') + ')' : 'nobody picked yet. Click 👥 Choose techs.');
+      const hiddenPicked = r.filter(t => t.hidden).length;
+      if (hiddenPicked) toLine.textContent += ' · ' + hiddenPicked + ' hidden by the board filter will be skipped';
       startBtn.disabled = !r.length; startBtn.style.opacity = r.length ? '1' : '.5';
       startBtn.textContent = mode === 'auto' ? 'Review and send…' : 'Start (type only)';
       if (!mainMsg.textContent || /^(Open the Dispatch|First, set up)/.test(mainMsg.textContent)) say('Pick a message, choose techs, then Start.');
@@ -1025,7 +1032,7 @@
         th.style.fontWeight = '700'; th.style.marginTop = '4px';
         pickList.appendChild(th);
         ts.forEach(t => {
-          const c = check(t.name + (t.jobs ? '  · ' + t.jobs + ' job' + (t.jobs === 1 ? '' : 's') : ''), selected.has(t.id), v => { v ? selected.add(t.id) : selected.delete(t.id); saveSel(); renderPicker(); });
+          const c = check(t.name + (t.jobs ? '  · ' + t.jobs + ' job' + (t.jobs === 1 ? '' : 's') : '') + (t.hidden ? '  · hidden by board filter' : ''), selected.has(t.id), v => { v ? selected.add(t.id) : selected.delete(t.id); saveSel(); renderPicker(); });
           c.style.paddingLeft = '16px';
           pickList.appendChild(c);
         });
@@ -1230,7 +1237,7 @@
           if (!onBoard()) { out(planned, 'stopped: not on the Dispatch board', 'problem'); break; }
           // Re-check the live board right before each person.
           const t = boardTechs().get(planned.id);
-          if (!t) { out(planned, 'skipped: not showing on the board (filtered out?)', 'skipped'); continue; }
+          if (!t) { out(planned, 'skipped: not on the board any more', 'skipped'); continue; }
           if (!canMessage(t)) { out(t, 'skipped: blocked by your 🛡️ settings', 'skipped'); continue; }
           if (!(await closeJobDrawer())) { out(t, 'skipped: a job panel would not close', 'problem'); continue; }
           const err = await openChatFor(t);

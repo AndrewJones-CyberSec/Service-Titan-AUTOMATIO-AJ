@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.2
+
+- **Back to the 1.2 picker**: choose techs one by one or by team, exactly like before. 1.2.1's change to the picker is undone.
+- **Board filters work**: with the Dispatch board filtered by team or people, anyone the filter hides is labeled "hidden by board filter" in the picker and skipped during a run. It no longer stops the run or shows the "ServiceTitan may have changed" warning.
+- If a tech's menu is slow to open, it tries once more before warning.
+- The health check looks at a tech who is showing on the board.
+
 ## 1.2.1
 
 - **Fix**: filtering the Dispatch board by team or people no longer sets off the "ServiceTitan may have changed" warning or stops a Tech Messages run.
