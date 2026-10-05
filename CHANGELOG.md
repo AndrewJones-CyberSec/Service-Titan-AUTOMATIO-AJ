@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1
+
+- **Fix**: filtering the Dispatch board by team or people no longer sets off the "ServiceTitan may have changed" warning or stops a Tech Messages run.
+- Tech Messages only lists and messages techs that are showing on the board. Techs you picked who are filtered out stay picked, and the "To:" line says how many are being left out.
+- The health check now looks at a tech who is showing, and skips its checks if a filter is hiding everyone.
+
 ## 1.2
 
 - **Health check**: when the Toolbox opens on the Dispatch board it quietly checks that the things each tool relies on are still there. If ServiceTitan has changed something, a yellow bar says which tool is affected and what's missing, with a **Copy report** button.
