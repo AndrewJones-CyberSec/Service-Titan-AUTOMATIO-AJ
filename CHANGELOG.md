@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3
+
+- **Quick Notes is now 📝 Notes, with folders.** Opening Notes shows the folders first: **📞 Updates** (no answer, left a voicemail and so on), **🚚 Techs** (tech on the way, arrived, running late, finished) and **📅 Reschedule**. Open a folder to see its notes; adding a note to a job works the same as before.
+- **Your notes carried over**: the notes you already had are in **Updates**. Techs and Reschedule start with a few notes you can change.
+- **✏️ Edit folders** (on the folder list): add your own folder with its own name, rename, reorder or delete folders. Deleting a folder that has notes in it asks first. Also has **Reset to original**, and **Copy all** / **Paste all** to move everything to another browser (an old Quick Notes "Copy list" can be pasted too; it becomes its own folder).
+- **✏️ Edit notes** (inside a folder): same as before, plus **Move to** on each note to put it in another folder.
+- **Shortcuts follow the screen**: on the folder list, Alt/Option + 1–9 opens that folder; inside a folder, it adds that note.
+- Notes reopens the folder you were last in.
+
 ## 1.2.5
 
 - **Safer closing**: closing the Toolbox (✕ or the bookmark) while Job Notifications or Tech Messages is running now asks first. **Stop it and close** stops the run cleanly, then closes. Before, the panel closed but the run kept going out of sight.

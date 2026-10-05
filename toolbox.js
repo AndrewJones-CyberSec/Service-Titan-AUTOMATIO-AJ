@@ -2,7 +2,7 @@
   ServiceTitan Toolbox
   ====================
   One panel with three tools for the ServiceTitan Dispatch board:
-    - Quick Notes: adds a ready-made note to a job's customer in one click.
+    - Notes: adds a ready-made note (sorted into folders) to a job's customer in one click.
     - Job Notifications: checks or turns off job notifications for one tech's jobs.
     - Tech Messages: sends a saved message (Good Morning, ETA, ...) to the techs you pick.
 
@@ -16,8 +16,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.2.5';
+  const VERSION = '1.3';
   const WHATS_NEW = {
+    '1.3': 'Quick Notes is now 📝 Notes, with folders: Updates, Techs and Reschedule. Your notes are in Updates. Add your own folders with ✏️ Edit folders, and move notes between folders with ✏️ Edit notes.',
     '1.2.5': 'Safer closing: closing the Toolbox during a run now asks to stop the run first. Tech Messages is lighter on the board, and Quick Notes rests while you use other tools.',
     '1.2.4': 'Job Notifications now retries any job that had a problem, once, after the rest of the run is done.',
     '1.2.3': 'Fix: Tech Messages works with the board filtered. It remembers each tech\'s team from the unfiltered board, so a filter no longer shows the "ServiceTitan may have changed" warning.',
@@ -62,7 +63,11 @@
 
   // The editable list used by ✏️ Edit notes and ✏️ Edit messages: a name and a text per item,
   // with ↑ ↓ to reorder and Delete. `word` is 'note' or 'message' (used in warnings).
-  const listEditor = (word, namePlaceholder, textPlaceholder, maxHeight) => {
+  // opts.allowEmpty: an empty list is OK to save. opts.rowExtra(item): extra control for a row.
+  // An item can carry a `to` value (Notes uses it for "Move to folder"); it's kept through edits.
+  const listEditor = (word, namePlaceholder, textPlaceholder, maxHeight, opts) => {
+    opts = opts || {};
+    const keep = (from, to) => { if (from.to != null) to.to = from.to; return to; };
     const box = el('div', 'max-height:' + maxHeight + ';overflow:auto;margin:0 -4px;padding:0 4px');
     let draft = [];
     const render = () => {
@@ -82,6 +87,7 @@
           smallBtn('↓', moveBy(1), i === draft.length - 1 ? 'opacity:.4' : ''),
           smallBtn('Delete', () => { draft.splice(i, 1); render(); }, 'margin-left:auto;color:#b00020;border-color:#e0a0a8')
         );
+        if (opts.rowExtra) tools.insertBefore(opts.rowExtra(n), tools.lastChild);
         row.append(name, text, tools);
         box.appendChild(row);
       });
@@ -90,7 +96,7 @@
     return {
       box,
       get: () => draft,
-      load: items => { draft = items.map(n => n.slice()); render(); },
+      load: items => { draft = items.map(n => keep(n, n.slice())); render(); },
       add: () => {
         draft.push(['', '']);
         render();
@@ -100,8 +106,8 @@
       },
       // Trims and checks the list. Returns { list } if it's OK to save, or { error }.
       clean: () => {
-        const cleaned = draft.map(n => [n[0].trim(), n[1].trim()]).filter(n => n[0] || n[1]);
-        if (!cleaned.length) return { error: '⚠️ Keep at least one ' + word + '.' };
+        const cleaned = draft.map(n => keep(n, [n[0].trim(), n[1].trim()])).filter(n => n[0] || n[1]);
+        if (!cleaned.length && !opts.allowEmpty) return { error: '⚠️ Keep at least one ' + word + '.' };
         const missing = cleaned.findIndex(n => !n[1]);
         if (missing > -1) return { error: '⚠️ ' + Word + ' ' + (missing + 1) + ' has no text.' };
         cleaned.forEach((n, i) => { if (!n[0]) n[0] = Word + ' ' + (i + 1); });
@@ -280,7 +286,7 @@
   const jobsPane = el('div', 'display:none');
   const msgsPane = el('div', 'display:none');
   const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane };
-  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Quick Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages' };
+  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages' };
   const showView = name => {
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
     titleText.textContent = TITLES[name];
@@ -292,7 +298,7 @@
 
   menuPane.append(
     menuMsg,
-    menuBtn('📝 Quick Notes', () => showView('notes')),
+    menuBtn('📝 Notes', () => showView('notes')),
     menuBtn('🔕 Job Notifications', () => showView('jobs')),
     menuBtn('💬 Tech Messages', () => showView('msgs'))
   );
@@ -302,7 +308,9 @@
   panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane);
 
   // ===================================================================
-  // Tool 1: Quick Notes
+  // Tool 1: Notes
+  // Ready-made notes, sorted into folders (Updates, Techs, Reschedule, plus any you add).
+  // Pick a folder, then a note, and it's added to the clicked job's customer.
   // ===================================================================
   const notes = (() => {
     const DEFAULT_NOTES = [
@@ -312,15 +320,42 @@
       ['🔁 Follow Up', 'Customer requires follow-up. Please review notes and contact customer.'],
       ['🚫 Cancelled', 'Customer requested cancellation of appointment.']
     ];
-    // Same storage keys as the old Quick Notes bookmark, so existing edits carry over.
-    const KEY_NOTES = 'qnNotes', KEY_STAMP = 'qnStamp';
-    const validNotes = v => Array.isArray(v) && v.length > 0 &&
+    const DEFAULT_FOLDERS = [
+      { name: '📞 Updates', notes: DEFAULT_NOTES },
+      { name: '🚚 Techs', notes: [
+        ['🚗 Tech On The Way', 'Contacted customer to let them know the technician is on the way.'],
+        ['📍 Tech Arrived', 'Technician has arrived at the customer\'s home.'],
+        ['⏰ Tech Running Late', 'Contacted customer to let them know the technician is running behind schedule.'],
+        ['🏁 Tech Finished', 'Technician has completed the visit.']
+      ] },
+      { name: '📅 Reschedule', notes: [
+        ['📅 Customer Request', 'Appointment rescheduled at the customer\'s request.'],
+        ['👷 Tech Availability', 'Appointment rescheduled due to technician availability. Customer has been notified.'],
+        ['🌧️ Weather', 'Appointment rescheduled due to weather. Customer has been notified.'],
+        ['📞 Couldn\'t Reach Customer', 'Attempted to contact customer to reschedule. No answer. Left voicemail.']
+      ] }
+    ];
+    // qnNotes/qnStamp are the old Quick Notes keys. qnNotes is only read once, to fill the
+    // Updates folder the first time someone opens a version with folders. It's left alone.
+    const KEY_NOTES = 'qnNotes', KEY_STAMP = 'qnStamp', KEY_FOLDERS = 'stNoteFolders', KEY_OPEN = 'stNoteFolder';
+    const validPairs = v => Array.isArray(v) &&
       v.every(n => Array.isArray(n) && n.length === 2 && typeof n[0] === 'string' && typeof n[1] === 'string');
-    const loadNotes = () => {
-      try { const v = JSON.parse(get(KEY_NOTES)); if (validNotes(v)) return v; } catch (e) {}
-      return DEFAULT_NOTES.map(n => n.slice());
-    };
-    let list = loadNotes();
+    const validNotes = v => validPairs(v) && v.length > 0;
+    const validFolders = v => Array.isArray(v) && v.length > 0 && v.every(f => f && typeof f.name === 'string' && validPairs(f.notes));
+    const copyFolders = fs => fs.map(f => ({ name: f.name, notes: f.notes.map(n => n.slice()) }));
+    let folders = (() => {
+      try { const v = JSON.parse(get(KEY_FOLDERS)); if (validFolders(v)) return v; } catch (e) {}
+      // First time with folders: the notes this person already had become the Updates folder.
+      const fs = copyFolders(DEFAULT_FOLDERS);
+      try { const old = JSON.parse(get(KEY_NOTES)); if (validNotes(old)) fs[0].notes = old.map(n => n.slice()); } catch (e) {}
+      set(KEY_FOLDERS, JSON.stringify(fs));
+      return fs;
+    })();
+    const saveFolders = () => set(KEY_FOLDERS, JSON.stringify(folders));
+    // The open folder (-1 = the folder list). Remembered for next time.
+    let open = parseInt(get(KEY_OPEN), 10);
+    if (!(open >= -1 && open < folders.length)) open = -1;
+    const cur = () => (open >= 0 && folders[open] ? folders[open].notes : []);
 
     // Where things are in ServiceTitan.
     const openDrawers = () => Array.from(document.querySelectorAll('.Drawer--open'));
@@ -355,7 +390,10 @@
     const main = el('div', 'padding:8px 10px 10px');
     const msg = el('div', 'font-size:12px;color:#444;margin-bottom:4px;min-height:16px');
     const say = s => { msg.textContent = s; };
-    const btnList = el('div', 'max-height:calc(100vh - 260px);overflow:auto');
+    const crumb = el('div', 'display:none;align-items:center;gap:8px;margin-bottom:2px');
+    const crumbName = el('span', 'font-weight:700');
+    crumb.append(smallBtn('← Folders', () => openFolder(-1)), crumbName);
+    const btnList = el('div', 'max-height:calc(100vh - 290px);overflow:auto');
     const stampRow = el('label', 'display:flex;gap:6px;align-items:center;margin-top:6px;font-size:12px;cursor:pointer');
     stampRow.addEventListener('mousedown', e => e.preventDefault());
     const stamp = el('input');
@@ -369,27 +407,58 @@
     stampRow.append(stamp, document.createTextNode('Add time stamp (e.g. ' + stampText() + ')'));
     const backBtn = smallBtn('← Back to Dispatch board', () => { if (boardHash) location.hash = boardHash; backBtn.style.display = 'none'; }, 'display:none');
     const bottomRow = el('div', 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px');
-    bottomRow.append(smallBtn('← Menu', () => showView('menu')), smallBtn('✏️ Edit notes', () => openEditor()), backBtn);
-    main.append(msg, btnList, stampRow, bottomRow);
+    main.append(msg, crumb, btnList, stampRow, bottomRow);
 
     let busy = false, boardHash = null, armed = null;
 
+    // A list button in the same style everywhere in Notes.
+    const listBtn = (label, title, onClick, highlight) => {
+      const bg = highlight ? '#e3eefc' : '#f5f5f5';
+      const b = el('button', FULL + 'margin:5px 0;padding:8px 9px;cursor:pointer;border:1px solid ' + (highlight ? '#1a6ed8' : '#aaa') + ';' +
+        'border-radius:6px;background:' + bg + ';color:#111;text-align:left;font:inherit' + (highlight ? ';box-shadow:inset 3px 0 0 #1a6ed8' : ''), label);
+      b.type = 'button';
+      b.title = title;
+      b.addEventListener('mousedown', e => e.preventDefault());
+      b.onmouseenter = () => { b.style.background = '#e8e8e8'; };
+      b.onmouseleave = () => { b.style.background = bg; };
+      b.onclick = onClick;
+      return b;
+    };
+    const keyHint = i => (i < 9 ? '\n(' + ALT + '+' + (i + 1) + ')' : '');
+    const num = i => (i < 9 ? (i + 1) + '. ' : '');
+
     const renderList = () => {
       btnList.textContent = '';
+      bottomRow.textContent = '';
+      if (open < 0) {
+        // The folder list.
+        crumb.style.display = 'none';
+        stampRow.style.display = 'none';
+        folders.forEach((f, i) => {
+          const n = f.notes.length;
+          btnList.appendChild(listBtn(num(i) + (f.name || '(no name)') + '  (' + n + ')', 'Open this folder' + keyHint(i), () => openFolder(i)));
+        });
+        bottomRow.append(smallBtn('← Menu', () => showView('menu')), smallBtn('✏️ Edit folders', () => openFolderEditor()), backBtn);
+        return;
+      }
+      // Inside a folder.
+      crumbName.textContent = folders[open].name || '(no name)';
+      crumb.style.display = 'flex';
+      stampRow.style.display = 'flex';
+      const list = cur();
       list.forEach(([name, text], i) => {
         const isArmed = armed !== null && armed === text;
-        const bg = isArmed ? '#e3eefc' : '#f5f5f5';
-        const b = el('button', FULL + 'margin:5px 0;padding:8px 9px;cursor:pointer;border:1px solid ' + (isArmed ? '#1a6ed8' : '#aaa') + ';' +
-          'border-radius:6px;background:' + bg + ';color:#111;text-align:left;font:inherit' + (isArmed ? ';box-shadow:inset 3px 0 0 #1a6ed8' : ''),
-          (isArmed ? '👉 ' : '') + (i < 9 ? (i + 1) + '. ' : '') + (name || '(no name)'));
-        b.type = 'button';
-        b.title = text + (i < 9 ? '\n(' + ALT + '+' + (i + 1) + ')' : '');
-        b.addEventListener('mousedown', e => e.preventDefault());
-        b.onmouseenter = () => { b.style.background = '#e8e8e8'; };
-        b.onmouseleave = () => { b.style.background = bg; };
-        b.onclick = () => run(text);
-        btnList.appendChild(b);
+        btnList.appendChild(listBtn((isArmed ? '👉 ' : '') + num(i) + (name || '(no name)'), text + keyHint(i), () => run(text), isArmed));
       });
+      if (!list.length) btnList.appendChild(el('div', 'font-size:12px;color:#666;padding:6px 0', 'No notes in this folder yet. Click ✏️ Edit notes to add some.'));
+      bottomRow.append(smallBtn('← Menu', () => showView('menu')), smallBtn('✏️ Edit notes', () => openEditor()), backBtn);
+    };
+    const openFolder = i => {
+      open = i;
+      set(KEY_OPEN, String(i));
+      if (!/^(✅|⚠️|👉)/.test(msg.textContent)) say('');
+      renderList();
+      idleHint();
     };
 
     const build = text => (stamp.checked ? stampText() + ' - ' : '') + text;
@@ -414,7 +483,7 @@
         const b = await steadyAddNoteBtn(attempt === 1 ? 20000 : 5000);
         if (!b) {
           if (noteBox()) return true;
-          health.flag('Quick Notes', 'can\'t find the Add Note button on the customer page', 'button[data-tracking-id="crm-notes-add-note-button"]');
+          health.flag('Notes', 'can\'t find the Add Note button on the customer page', 'button[data-tracking-id="crm-notes-add-note-button"]');
           return false;
         }
         b.scrollIntoView({ block: 'center' });
@@ -423,7 +492,7 @@
         if (attempt < 4) say('Add Note didn\'t open yet, trying again (' + (attempt + 1) + ' of 4)...');
       }
       if (noteBox()) return true;
-      health.flag('Quick Notes', 'Add Note doesn\'t open the note box', '.Drawer--open [data-tracking-id="add-note-button"] + textarea');
+      health.flag('Notes', 'Add Note doesn\'t open the note box', '.Drawer--open [data-tracking-id="add-note-button"] + textarea');
       return false;
     };
 
@@ -460,7 +529,7 @@
                            : '⚠️ Text is in the box, but the Add Note button still looks greyed out. Type a space in the box if it won\'t save.');
         }
       }
-      health.flag('Quick Notes', 'the note box won\'t keep the typed note', '.Drawer--open textarea');
+      health.flag('Notes', 'the note box won\'t keep the typed note', '.Drawer--open textarea');
       say('⚠️ Couldn\'t type into the note box. Pick the note again.' + CHANGED);
     };
 
@@ -468,7 +537,7 @@
       if (busy) return;
       if (lock) return say('Wait for ' + lock + ' to finish first.');
       busy = true;
-      lock = 'Quick Notes';
+      lock = 'Notes';
       try {
         if (armed && (noteBox() || onCustomerPage() || jobCustomerLink())) { armed = null; renderList(); }
         const note = build(text);
@@ -496,7 +565,7 @@
           say('Opening customer...');
           location.hash = link.getAttribute('href');
           if (!await until(() => onCustomerPage(custId), 10000)) {
-            health.flag('Quick Notes', 'the customer link didn\'t open the customer page', 'expected #/customer/<id>, got ' + location.hash.split('?')[0].replace(/\d+/g, '<id>'));
+            health.flag('Notes', 'the customer link didn\'t open the customer page', 'expected #/customer/<id>, got ' + location.hash.split('?')[0].replace(/\d+/g, '<id>'));
             return say('⚠️ The customer page didn\'t open.' + CHANGED);
           }
         }
@@ -505,7 +574,7 @@
         say('Opening Add Note...');
         if (!await openNoteBox()) return say('⚠️ Couldn\'t open the Add Note box. Click Add Note on the page, then pick the note again.' + CHANGED);
         await fill(note);
-        if (/^✅/.test(msg.textContent)) health.clear('Quick Notes');
+        if (/^✅/.test(msg.textContent)) health.clear('Notes');
       } catch (e) {
         say('⚠️ Error: ' + (e && e.message ? e.message : e));
       } finally {
@@ -517,88 +586,174 @@
 
     const showing = () => notesPane.style.display !== 'none';
     const idleHint = () => {
-      if (busy || !showing()) return;
+      if (busy || !showing() || editing) return;
       if (armed) {
         if (onBoard()) say('👉 Now click a job. The highlighted note will be added. (Esc to cancel)');
         else { armed = null; renderList(); }
         return;
       }
       if (!jobCustomerLink() && openDrawers().some(d => /Job #\d+/.test(d.textContent || ''))) {
-        health.flag('Quick Notes', 'the job panel doesn\'t show the customer link where expected', '.Drawer--open a[href^="#/Customer/"]');
+        health.flag('Notes', 'the job panel doesn\'t show the customer link where expected', '.Drawer--open a[href^="#/Customer/"]');
       }
-      if (noteBox()) say('Add Note box is open. Pick a note.');
-      else if (onCustomerPage()) say('Pick a note to add it to this customer.');
-      else if (jobCustomerLink()) say('Job selected. Pick a note.');
-      else if (!/^(✅|⚠️)/.test(msg.textContent)) say('Click a job, then pick a note (or the other way round).');
+      const pick = open < 0 ? 'Pick a folder, then a note.' : 'Pick a note.';
+      if (noteBox()) say('Add Note box is open. ' + pick);
+      else if (onCustomerPage()) say(pick + ' It goes on this customer.');
+      else if (jobCustomerLink()) say('Job selected. ' + pick);
+      else if (!/^(✅|⚠️)/.test(msg.textContent)) say(open < 0 ? 'Pick a folder. Then click a job and a note (either order).' : 'Click a job, then pick a note (or the other way round).');
     };
 
-    // ---- Edit notes screen ----
     let editing = false;
+    const showOnly = x => { [main, editor, folderEditor].forEach(v => { v.style.display = v === x ? 'block' : 'none'; }); };
+    const closeEditors = () => { editing = false; showOnly(main); renderList(); };
+
+    // ---- Edit notes (the notes in the open folder) ----
     const editor = el('div', 'display:none;padding:8px 10px 10px');
     const editHead = el('div', 'font-weight:700;margin-bottom:4px', '✏️ Edit notes');
-    const editMsg = el('div', 'font-size:12px;color:#444;margin-bottom:6px', 'Change the button name and the note text. Saved in this browser.');
-    const ed = listEditor('note', 'Button name (e.g. 📞 No Answer)', 'Note text that gets typed in', 'calc(100vh - 290px)');
+    const NOTES_HINT = 'Change the button name and the note text. "Move to" puts a note in another folder. Saved in this browser.';
+    const editMsg = el('div', 'font-size:12px;color:#444;margin-bottom:6px', NOTES_HINT);
+    // "Move to" picker on each note.
+    const moveTo = n => {
+      const sel = el('select', 'max-width:130px;padding:3px 4px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
+      sel.title = 'Move to another folder';
+      folders.forEach((f, i) => {
+        const o = el('option', '', (i === open ? 'Stay in ' : 'Move to ') + (f.name || '(no name)'));
+        o.value = String(i);
+        sel.appendChild(o);
+      });
+      sel.value = String(n.to != null ? n.to : open);
+      sel.onchange = () => { const v = parseInt(sel.value, 10); if (v === open) delete n.to; else n.to = v; };
+      return sel;
+    };
+    const ed = listEditor('note', 'Button name (e.g. 📞 No Answer)', 'Note text that gets typed in', 'calc(100vh - 300px)', { allowEmpty: true, rowExtra: moveTo });
     const openEditor = () => {
+      if (open < 0) return;
       editing = true;
       armed = null;
-      ed.load(list);
-      editMsg.textContent = 'Change the button name and the note text. Saved in this browser.';
-      main.style.display = 'none';
-      editor.style.display = 'block';
-    };
-    const closeEditor = () => {
-      editing = false;
-      editor.style.display = 'none';
-      main.style.display = 'block';
-      renderList();
+      editHead.textContent = '✏️ Edit notes: ' + (folders[open].name || '(no name)');
+      editMsg.textContent = NOTES_HINT;
+      ed.load(cur());
+      showOnly(editor);
     };
     const saveEditor = () => {
       const r = ed.clean();
       if (r.error) { editMsg.textContent = r.error; return; }
-      list = r.list;
-      const ok = set(KEY_NOTES, JSON.stringify(list));
-      closeEditor();
-      say(ok ? '✅ Notes saved.' : '⚠️ Notes updated for now, but this browser wouldn\'t save them for next time.');
+      const stay = [], moved = {};
+      r.list.forEach(n => {
+        const pair = [n[0], n[1]];
+        if (n.to != null && n.to !== open && folders[n.to]) { folders[n.to].notes.push(pair); moved[n.to] = (moved[n.to] || 0) + 1; }
+        else stay.push(pair);
+      });
+      folders[open].notes = stay;
+      const ok = saveFolders();
+      closeEditors();
+      const movedText = Object.keys(moved).map(i => moved[i] + ' moved to ' + folders[i].name).join(', ');
+      say(ok ? '✅ Notes saved.' + (movedText ? ' ' + movedText + '.' : '') : '⚠️ Notes updated for now, but this browser wouldn\'t save them for next time.');
+    };
+    const editButtons = el('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-top:4px');
+    editButtons.append(smallBtn('Save', saveEditor, PRIMARY), smallBtn('Cancel', closeEditors));
+    const addBtn = smallBtn('+ Add a note', () => ed.add(), FULL + 'margin-bottom:2px');
+    editor.append(editHead, editMsg, ed.box, addBtn, editButtons);
+
+    // ---- Edit folders ----
+    const folderEditor = el('div', 'display:none;padding:8px 10px 10px');
+    const FOLDERS_HINT = 'Rename, reorder, add or delete folders. Saved in this browser.';
+    const fMsg = el('div', 'font-size:12px;color:#444;margin-bottom:6px', FOLDERS_HINT);
+    const fList = el('div', 'max-height:calc(100vh - 300px);overflow:auto;margin:0 -4px;padding:0 4px');
+    // Draft rows: { name, notes, src } where src is the folder it came from (null for new ones).
+    let fDraft = [];
+    const renderFolders = () => {
+      fList.textContent = '';
+      fDraft.forEach((f, i) => {
+        const row = el('div', 'border:1px solid #ccc;border-radius:8px;padding:7px;margin-bottom:8px;background:#fafafa');
+        const name = el('input', FULL + 'padding:5px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-weight:600;color:#111;background:#fff');
+        name.type = 'text'; name.value = f.name; name.placeholder = 'Folder name (e.g. 🧾 Billing)';
+        name.oninput = () => { f.name = name.value; };
+        const tools = el('div', 'display:flex;gap:4px;margin-top:5px;align-items:center');
+        const moveBy = d => () => { const j = i + d; if (j < 0 || j >= fDraft.length) return; const t = fDraft[i]; fDraft[i] = fDraft[j]; fDraft[j] = t; renderFolders(); };
+        const n = f.notes.length;
+        // Deleting a folder with notes in it takes a second click.
+        const del = smallBtn('Delete', () => {
+          if (n && !del.dataset.sure) { del.dataset.sure = '1'; del.textContent = 'Delete it and its ' + n + ' note' + (n === 1 ? '' : 's') + '?'; return; }
+          fDraft.splice(i, 1); renderFolders();
+        }, 'margin-left:auto;color:#b00020;border-color:#e0a0a8');
+        tools.append(
+          smallBtn('↑', moveBy(-1), i === 0 ? 'opacity:.4' : ''),
+          smallBtn('↓', moveBy(1), i === fDraft.length - 1 ? 'opacity:.4' : ''),
+          el('span', 'font-size:12px;color:#666', n + ' note' + (n === 1 ? '' : 's')),
+          del
+        );
+        row.append(name, tools);
+        fList.appendChild(row);
+      });
+    };
+    const loadFolderDraft = (fs, fromSaved) => {
+      fDraft = fs.map(f => ({ name: f.name, notes: fromSaved ? f.notes : f.notes.map(n => n.slice()), src: fromSaved ? f : null }));
+      renderFolders();
+    };
+    const openFolderEditor = () => {
+      editing = true;
+      armed = null;
+      fMsg.textContent = FOLDERS_HINT;
+      fResetRow.style.display = 'none';
+      loadFolderDraft(folders, true);
+      showOnly(folderEditor);
+    };
+    const saveFolderEditor = () => {
+      if (!fDraft.length) { fMsg.textContent = '⚠️ Keep at least one folder.'; return; }
+      const wasOpen = open >= 0 ? folders[open] : null;
+      folders = fDraft.map((f, i) => ({ name: f.name.trim() || 'Folder ' + (i + 1), notes: f.notes }));
+      const still = wasOpen ? fDraft.findIndex(f => f.src === wasOpen) : -1;
+      open = still;
+      set(KEY_OPEN, String(open));
+      const ok = saveFolders();
+      closeEditors();
+      say(ok ? '✅ Folders saved.' : '⚠️ Folders updated for now, but this browser wouldn\'t save them for next time.');
     };
     // "Reset" asks for confirmation inside the panel (no pop-up).
-    const resetRow = el('div', 'display:none;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;font-size:12px');
-    resetRow.append(
-      document.createTextNode('Put back the original 5 notes?'),
-      smallBtn('Yes, reset', () => { ed.load(DEFAULT_NOTES); resetRow.style.display = 'none'; editMsg.textContent = 'Original notes loaded. Click Save to keep them.'; }),
-      smallBtn('No', () => { resetRow.style.display = 'none'; })
+    const fResetRow = el('div', 'display:none;gap:6px;align-items:center;flex-wrap:wrap;margin-top:6px;font-size:12px');
+    fResetRow.append(
+      document.createTextNode('Put back the original folders and notes? Your own folders and notes will be removed.'),
+      smallBtn('Yes, reset', () => { loadFolderDraft(DEFAULT_FOLDERS, false); fResetRow.style.display = 'none'; fMsg.textContent = 'Original folders and notes loaded. Click Save to keep them.'; }),
+      smallBtn('No', () => { fResetRow.style.display = 'none'; })
     );
-    const editButtons = el('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-top:4px');
-    editButtons.append(
-      smallBtn('Save', saveEditor, PRIMARY),
-      smallBtn('Cancel', closeEditor),
-      smallBtn('Reset to original', () => { resetRow.style.display = 'flex'; }),
-      smallBtn('Copy list', async () => {
-        const s = JSON.stringify(ed.get());
-        try { await navigator.clipboard.writeText(s); editMsg.textContent = 'List copied. Use "Paste list" in another browser to load it.'; }
-        catch (e) { prompt('Copy this list:', s); }
+    const fButtons = el('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-top:4px');
+    fButtons.append(
+      smallBtn('Save', saveFolderEditor, PRIMARY),
+      smallBtn('Cancel', closeEditors),
+      smallBtn('Reset to original', () => { fResetRow.style.display = 'flex'; }),
+      smallBtn('Copy all', async () => {
+        const s = JSON.stringify(fDraft.map(f => ({ name: f.name, notes: f.notes })));
+        try { await navigator.clipboard.writeText(s); fMsg.textContent = 'Folders and notes copied. Use "Paste all" in another browser to load them.'; }
+        catch (e) { prompt('Copy this:', s); }
       }),
-      smallBtn('Paste list', () => {
-        const s = prompt('Paste a list you copied with "Copy list":');
+      smallBtn('Paste all', () => {
+        const s = prompt('Paste what you copied with "Copy all" (or an old "Copy list" from Quick Notes):');
         if (!s) return;
         try {
           const v = JSON.parse(s);
-          if (!validNotes(v)) throw new Error('bad');
-          ed.load(v);
-          editMsg.textContent = 'List loaded. Click Save to keep it.';
-        } catch (e) { editMsg.textContent = '⚠️ That didn\'t look like a copied notes list.'; }
+          if (validFolders(v)) { loadFolderDraft(v, false); fMsg.textContent = 'Folders loaded. Click Save to keep them.'; }
+          else if (validNotes(v)) { fDraft.push({ name: '📋 Pasted notes', notes: v.map(n => n.slice()), src: null }); renderFolders(); fMsg.textContent = 'Old notes list added as a new folder. Click Save to keep it.'; }
+          else throw new Error('bad');
+        } catch (e) { fMsg.textContent = '⚠️ That didn\'t look like copied folders or notes.'; }
       })
     );
-    const addBtn = smallBtn('+ Add a note', () => ed.add(), FULL + 'margin-bottom:2px');
-    editor.append(editHead, editMsg, ed.box, addBtn, editButtons, resetRow);
+    const fAdd = smallBtn('+ Add a folder', () => {
+      fDraft.push({ name: '', notes: [], src: null });
+      renderFolders();
+      fList.scrollTop = fList.scrollHeight;
+      const inputs = fList.querySelectorAll('input');
+      if (inputs.length) inputs[inputs.length - 1].focus();
+    }, FULL + 'margin-bottom:2px');
+    folderEditor.append(el('div', 'font-weight:700;margin-bottom:4px', '✏️ Edit folders'), fMsg, fList, fAdd, fButtons, fResetRow);
 
-    notesPane.append(main, editor);
+    notesPane.append(main, editor, folderEditor);
     renderList();
     idleHint();
     const hintTimer = setInterval(idleHint, 800);
 
     // When a note is waiting, add it as soon as a job is clicked.
     const armTimer = setInterval(() => {
-      if (armed && showing() && !busy && !lock && jobCustomerLink()) {
+      if (armed && showing() && !editing && !busy && !lock && jobCustomerLink()) {
         const t = armed;
         armed = null;
         renderList();
@@ -606,25 +761,27 @@
       }
     }, 200);
 
-    // Alt+1..9 (Option+1..9 on a Mac). Reads the physical key, because on a Mac Option+1
-    // types a symbol instead of "1". Esc cancels a waiting note.
+    // Alt+1..9 (Option+1..9 on a Mac) follows what's on screen: in a folder it adds that
+    // note, on the folder list it opens that folder. Reads the physical key, because on a
+    // Mac Option+1 types a symbol instead of "1". Esc cancels a waiting note.
     const onKey = e => {
       if (e.key === 'Escape' && armed) { armed = null; renderList(); say('Cancelled.'); return; }
       if (editing || !e.altKey || e.ctrlKey || e.metaKey) return;
       const m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code || '');
       const n = m ? parseInt(m[1], 10) : parseInt(e.key, 10);
-      if (n >= 1 && n <= Math.min(9, list.length)) {
-        e.preventDefault();
-        if (lock && lock !== 'Quick Notes') return;   // another tool is running
-        if (isField(document.activeElement)) lastField = document.activeElement;
-        if (!showing()) showView('notes');   // so you can see what the shortcut is doing
-        run(list[n - 1][1]);
-      }
+      if (!(n >= 1 && n <= 9)) return;
+      if (open < 0 ? n > folders.length : n > cur().length) return;
+      e.preventDefault();
+      if (lock && lock !== 'Notes') return;   // another tool is running
+      if (isField(document.activeElement)) lastField = document.activeElement;
+      if (!showing()) showView('notes');   // so you can see what the shortcut is doing
+      if (open < 0) openFolder(n - 1);
+      else run(cur()[n - 1][1]);
     };
     document.addEventListener('keydown', onKey, true);
 
     return {
-      // Leaving Quick Notes cancels a note that's waiting for a job click.
+      // Leaving Notes cancels a note that's waiting for a job click.
       leave: () => { if (armed) { armed = null; renderList(); say(''); } },
       cleanup: () => {
         document.removeEventListener('focusin', onFocus, true);

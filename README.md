@@ -4,12 +4,14 @@ A small panel of time-savers for the ServiceTitan Dispatch board. It runs from a
 
 ## Tools
 
-**📝 Quick Notes**
-Click a job on the Dispatch board, then click a note (or pick the note first, then click the job). The Toolbox opens that job's customer, clicks **Add Note** and types the note in. It stops there so you can check it and click **Add Note** to save.
+**📝 Notes**
+Ready-made notes sorted into folders: **📞 Updates** (no answer, left a voicemail and so on), **🚚 Techs** (tech on the way, tech arrived) and **📅 Reschedule**. Open a folder, then click a job on the Dispatch board and click a note (or pick the note first, then click the job). The Toolbox opens that job's customer, clicks **Add Note** and types the note in. It stops there so you can check it and click **Add Note** to save.
 
-- Keyboard shortcuts: **Alt + 1–9** (**Option + 1–9** on a Mac)
+- Keyboard shortcuts: **Alt + 1–9** (**Option + 1–9** on a Mac) follow what's on screen: on the folder list they open a folder, inside a folder they add that note.
 - Optional time stamp at the start of each note
-- **✏️ Edit notes** to change, add, remove or reorder notes. Edits are saved in your own browser.
+- **✏️ Edit folders** to add your own folders, rename, reorder or delete them. **Copy all** / **Paste all** moves your folders and notes to another browser.
+- **✏️ Edit notes** (inside a folder) to change, add, remove or reorder its notes, or move a note to another folder.
+- Edits are saved in your own browser. Notes from before folders were added are in **Updates**.
 
 **🔕 Job Notifications**
 On the Dispatch board, pick a tech from the list (it only shows techs with jobs on the day shown), then either:
@@ -47,7 +49,7 @@ Open the project's install page (the GitHub Pages address for this project) and 
 ## Notes
 
 - The Toolbox only works in your own browser while you're signed in to ServiceTitan. It doesn't collect or send any data anywhere.
-- Quick Notes never saves a note by itself; you always click **Add Note** in ServiceTitan.
+- Notes never saves a note by itself; you always click **Add Note** in ServiceTitan.
 - Tech Messages only sends on its own in Auto-send mode, after you confirm.
 - Not affiliated with or endorsed by ServiceTitan.
 
