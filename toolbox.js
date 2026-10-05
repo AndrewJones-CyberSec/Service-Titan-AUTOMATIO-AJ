@@ -16,8 +16,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.2.2';
+  const VERSION = '1.2.3';
   const WHATS_NEW = {
+    '1.2.3': 'Fix: Tech Messages works with the board filtered. It remembers each tech\'s team from the unfiltered board, so a filter no longer shows the "ServiceTitan may have changed" warning.',
     '1.2.2': 'Fix: Tech Messages works with the board filtered by team or people. Pick techs the same way as before; anyone the filter hides is skipped instead of stopping the run.',
     '1.2': 'New: a yellow warning bar if ServiceTitan changes something a tool needs, plus a 🩺 Check button in the menu.',
     '1.1': 'New: 💬 Tech Messages. Send your Good Morning or ETA message to the techs you pick, with safety checks so it never messages blocked teams or people.',
@@ -176,14 +177,19 @@
           const id = first.getAttribute('data-technician-id');
           const nameEl = first.querySelector('.name');
           if (!nameEl || !nameEl.textContent.trim()) flag(BOARD, 'can\'t read tech names', '.technician .name', 'board');
-          if (!document.querySelector('.team-name')) flag('Tech Messages', 'can\'t find team names', '.team-name', 'board');
+          // A team or people filter hides the team headers. That's fine once the Toolbox has
+          // learned everyone's team from an unfiltered board (Tech Messages remembers them).
+          let knownTeams = 0;
+          try { knownTeams = Object.keys(JSON.parse(localStorage.getItem('stMsgTeamMap') || '{}') || {}).length; } catch (e) {}
+          const FILTER_HINT = ' (if a board filter is on, clear it once so the Toolbox can learn the teams)';
+          if (!knownTeams && !document.querySelector('.team-name')) flag('Tech Messages', 'can\'t find team names' + FILTER_HINT, '.team-name', 'board');
           const row = document.getElementById('team-timeline-row-' + id);
           if (!row) flag(BOARD, 'can\'t find the tech\'s row on the timeline', '#team-timeline-row-<id>', 'board');
-          else {
+          else if (!knownTeams) {
             const tc = row.closest('.team-container');
             let h = tc && tc.previousElementSibling;
             while (h && !h.querySelector('.team-name')) h = h.previousElementSibling;
-            if (!h) flag('Tech Messages', 'can\'t tell which team each tech is on', '.team-container / .team-name', 'board');
+            if (!h && document.querySelector('.team-name')) flag('Tech Messages', 'can\'t tell which team each tech is on', '.team-container / .team-name', 'board');
           }
           // Job bubbles: only a problem if bubbles exist but are missing their job/tech tags.
           const bubbles = document.querySelectorAll('a.appointment');
@@ -802,7 +808,7 @@
     // "Who can be messaged" before anyone on it can be picked.
     const SUGGEST_BLOCK = /^(leadership team|executive leadership)$|human resources|accounts (payable|receivable)|compliance|^dispatch$|client care|account executive|concierge|client benefits/i;
     const MAX_PER_RUN = 50;
-    const K = { msgs: 'stMsgs', teams: 'stMsgTeams', never: 'stMsgNever', sel: 'stMsgSel', mode: 'stMsgMode', jobsOnly: 'stMsgJobsOnly', pick: 'stMsgPick' };
+    const K = { msgs: 'stMsgs', teams: 'stMsgTeams', never: 'stMsgNever', sel: 'stMsgSel', mode: 'stMsgMode', jobsOnly: 'stMsgJobsOnly', pick: 'stMsgPick', teamMap: 'stMsgTeamMap' };
     const loadJSON = (k, d) => { try { const v = JSON.parse(get(k)); return v == null ? d : v; } catch (e) { return d; } };
     const validMsgs = v => Array.isArray(v) && v.length > 0 && v.every(n => Array.isArray(n) && n.length === 2 && typeof n[0] === 'string' && typeof n[1] === 'string');
     let list = (() => { const v = loadJSON(K.msgs, null); return validMsgs(v) ? v : DEFAULT_MSGS.map(n => n.slice()); })();
@@ -815,7 +821,7 @@
 
     // ---- Reading the board ----
     const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
-    const teamOf = id => {
+    const liveTeamOf = id => {
       const row = document.getElementById('team-timeline-row-' + id);
       const tc = row && row.closest('.team-container');
       let h = tc && tc.previousElementSibling;
@@ -823,8 +829,23 @@
       const tn = h && h.querySelector('.team-name');
       return tn ? norm(tn.textContent) : null;
     };
+    // Each tech's team, remembered from the board whenever the team headers are showing.
+    // A team or people filter hides those headers, so then the remembered team is used.
+    // A tech the Toolbox has never seen with a team can't be messaged until it has.
+    let teamMap = loadJSON(K.teamMap, {});
+    if (!teamMap || typeof teamMap !== 'object' || Array.isArray(teamMap)) teamMap = {};
+    let teamMapDirty = false;
+    const teamOf = id => {
+      const live = liveTeamOf(id);
+      if (live) {
+        if (teamMap[id] !== live) { teamMap[id] = live; teamMapDirty = true; }
+        return live;
+      }
+      return typeof teamMap[id] === 'string' ? teamMap[id] : null;
+    };
     const boardTechs = () => {
       const out = new Map();
+      teamMapDirty = false;
       document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
         const id = t.getAttribute('data-technician-id');
         if (out.has(id)) return;
@@ -839,6 +860,7 @@
         const x = out.get(t.getAttribute('data-technician-id'));
         if (x && x.hidden && techShowing(t)) x.hidden = false;
       });
+      if (teamMapDirty) set(K.teamMap, JSON.stringify(teamMap));
       return out;
     };
     const teamsOnBoard = () => Array.from(new Set(Array.from(boardTechs().values()).map(t => t.team || '(no team)')));
@@ -1038,8 +1060,11 @@
         });
       });
       if (!shown.length) pickList.appendChild(el('div', 'font-size:12px;color:#666;padding:6px 0', jobsOnly ? 'No allowed techs with jobs on the board. Untick "Only show techs with jobs" or check 🛡️ Who can be messaged.' : 'No allowed techs found. Check 🛡️ Who can be messaged.'));
-      const blockedCount = techs.filter(t => !canMessage(t)).length;
-      pickMsg.textContent = selected.size + ' picked. ' + blockedCount + ' people are hidden because their team is blocked or they\'re on the never-message list.';
+      const unknownTeam = techs.filter(t => !t.team).length;
+      const blockedCount = techs.filter(t => t.team && !canMessage(t)).length;
+      pickMsg.textContent = selected.size + ' picked. ' + blockedCount + ' people are hidden because their team is blocked or they\'re on the never-message list.' +
+        (unknownTeam ? '\n' + unknownTeam + ' more are hidden because their team isn\'t showing (board filter). Clear the filter once and the Toolbox will remember their teams.' : '');
+      pickMsg.style.whiteSpace = 'pre-wrap';
     };
 
     // ===== Who can be messaged (safety settings) =====

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.3
+
+- **Fix for board filters**: a team or people filter hides the team headers, which made Tech Messages warn "can't find team names" / "can't tell which team each tech is on". Tech Messages now remembers each tech's team whenever the board is unfiltered and uses that while a filter is on, so the warning doesn't appear and picking works the same as always.
+- Blocked teams and the never-message list still apply while filtered.
+- A tech the Toolbox has never seen on an unfiltered board can't be picked until it has. The picker says how many, and clearing the filter once fixes it.
+
 ## 1.2.2
 
 - **Back to the 1.2 picker**: choose techs one by one or by team, exactly like before. 1.2.1's change to the picker is undone.
