@@ -16,8 +16,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.1';
+  const VERSION = '1.2';
   const WHATS_NEW = {
+    '1.2': 'New: a yellow warning bar if ServiceTitan changes something a tool needs, plus a 🩺 Check button in the menu.',
     '1.1': 'New: 💬 Tech Messages. Send your Good Morning or ETA message to the techs you pick, with safety checks so it never messages blocked teams or people.',
     '1.0.1': 'Test update',
     '1.0': 'First version: Quick Notes and Job Notifications in one toolbox.'
@@ -113,6 +114,92 @@
     setTimeout(() => { news.style.display = 'none'; }, 12000);
   }
 
+  // ===================================================================
+  // Health check: notices when ServiceTitan has changed something a tool relies on,
+  // and says so in a yellow bar instead of failing quietly.
+  // ===================================================================
+  const health = (() => {
+    const issues = new Map();   // key -> { tool, what, detail }
+    const bar = el('div', 'display:none;padding:7px 12px;background:#fff4e5;color:#6b3f00;font-size:12px;border-bottom:1px solid #f0d3a6');
+    const barText = el('div', 'white-space:pre-wrap');
+    const barBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap;margin-top:6px');
+    bar.append(barText, barBtns);
+    const report = () => {
+      const lines = ['ServiceTitan Toolbox v' + VERSION + ' health report', 'When: ' + new Date().toLocaleString(), 'Page: ' + location.hash.split('?')[0], ''];
+      issues.forEach(i => lines.push('- ' + i.tool + ': ' + i.what + (i.detail ? ' [' + i.detail + ']' : '')));
+      return lines.join('\n');
+    };
+    const render = () => {
+      if (!issues.size) { bar.style.display = 'none'; return; }
+      const list = Array.from(issues.values());
+      barText.textContent = '⚠️ ServiceTitan may have changed. ' + (list.length === 1 ? 'This' : 'These') + ' may not work right now:\n' +
+        list.map(i => '• ' + i.tool + ': ' + i.what).join('\n');
+      barBtns.textContent = '';
+      const cp = smallBtn('Copy report', async () => { if (await copy(report())) cp.textContent = 'Copied'; });
+      barBtns.append(cp, smallBtn('Check again', () => checkBoard(true)), smallBtn('Hide', () => { bar.style.display = 'none'; }));
+      bar.style.display = 'block';
+    };
+    // group 'board' = startup checks (cleared on each re-check); 'use' = found while a tool was running.
+    const flag = (tool, what, detail, group) => {
+      const key = (group || 'use') + '|' + tool + '|' + what;
+      if (issues.has(key)) return;
+      issues.set(key, { tool, what, detail });
+      render();
+    };
+    // Clears problems a tool found while running, once that tool works again.
+    const clear = tool => {
+      let changed = false;
+      Array.from(issues.keys()).forEach(k => { if (k.indexOf('use|' + tool + '|') === 0) { issues.delete(k); changed = true; } });
+      if (changed) render();
+    };
+
+    // Board checks run without clicking anything. They only look at the Dispatch board,
+    // and wait for it to finish loading before deciding anything is missing.
+    let checking = false, manualWaiting = false;
+    const checkBoard = async manual => {
+      // If a check is already running, show its result when it finishes.
+      if (checking) { if (manual) manualWaiting = true; return; }
+      if (!/dispatchboard/i.test(location.hash)) { if (manual) { issues.size ? render() : flashOk('Open the Dispatch board to check it.'); } return; }
+      checking = true;
+      try {
+        const techEls = await until(() => { const t = document.querySelectorAll('.technician[data-technician-id]'); return t.length ? t : null; }, 12000, 500);
+        Array.from(issues.keys()).forEach(k => { if (k.indexOf('board|') === 0) issues.delete(k); });
+        const BOARD = 'Job Notifications & Tech Messages';
+        if (!techEls) {
+          flag(BOARD, 'can\'t find the techs on the Dispatch board', '.technician[data-technician-id]', 'board');
+        } else {
+          const first = techEls[0];
+          const id = first.getAttribute('data-technician-id');
+          const nameEl = first.querySelector('.name');
+          if (!nameEl || !nameEl.textContent.trim()) flag(BOARD, 'can\'t read tech names', '.technician .name', 'board');
+          if (!document.querySelector('.team-name')) flag('Tech Messages', 'can\'t find team names', '.team-name', 'board');
+          const row = document.getElementById('team-timeline-row-' + id);
+          if (!row) flag(BOARD, 'can\'t find the tech\'s row on the timeline', '#team-timeline-row-<id>', 'board');
+          else {
+            const tc = row.closest('.team-container');
+            let h = tc && tc.previousElementSibling;
+            while (h && !h.querySelector('.team-name')) h = h.previousElementSibling;
+            if (!h) flag('Tech Messages', 'can\'t tell which team each tech is on', '.team-container / .team-name', 'board');
+          }
+          // Job bubbles: only a problem if bubbles exist but are missing their job/tech tags.
+          const bubbles = document.querySelectorAll('a.appointment');
+          if (bubbles.length && !document.querySelector('a.appointment[data-job-id][data-technician-id]')) flag('Job Notifications', 'job bubbles are missing their job/tech tags', 'a.appointment[data-job-id][data-technician-id]', 'board');
+        }
+        render();
+        if ((manual || manualWaiting) && !issues.size) flashOk('✅ Everything the Toolbox needs is where it should be.');
+      } finally { checking = false; manualWaiting = false; }
+    };
+    let okTimer = null;
+    const flashOk = text => {
+      barText.textContent = text; barBtns.textContent = '';
+      bar.style.display = 'block';
+      clearTimeout(okTimer);
+      okTimer = setTimeout(() => render(), 5000);
+    };
+    return { bar, flag, clear, checkBoard };
+  })();
+  const CHANGED = ' ServiceTitan may have changed (see the yellow bar).';
+
   // Same look as the note buttons.
   const menuBtn = (label, onClick) => {
     const b = el('button', FULL + 'margin:5px 0;padding:8px 9px;cursor:pointer;border:1px solid #aaa;' +
@@ -146,7 +233,10 @@
     menuBtn('🔕 Job Notifications', () => showView('jobs')),
     menuBtn('💬 Tech Messages', () => showView('msgs'))
   );
-  panel.append(header, news, menuPane, notesPane, jobsPane, msgsPane);
+  const checkRow = el('div', 'display:flex;justify-content:flex-end;margin-top:4px');
+  checkRow.append(smallBtn('🩺 Check', () => health.checkBoard(true)));
+  menuPane.appendChild(checkRow);
+  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane);
 
   // ===================================================================
   // Tool 1: Quick Notes
@@ -259,13 +349,19 @@
       for (let attempt = 1; attempt <= 4; attempt++) {
         if (noteBox()) return true;
         const b = await steadyAddNoteBtn(attempt === 1 ? 20000 : 5000);
-        if (!b) return !!noteBox();
+        if (!b) {
+          if (noteBox()) return true;
+          health.flag('Quick Notes', 'can\'t find the Add Note button on the customer page', 'button[data-tracking-id="crm-notes-add-note-button"]');
+          return false;
+        }
         b.scrollIntoView({ block: 'center' });
         b.click();
         if (await until(noteBox, attempt === 1 ? 6000 : 4000)) return true;
         if (attempt < 4) say('Add Note didn\'t open yet, trying again (' + (attempt + 1) + ' of 4)...');
       }
-      return !!noteBox();
+      if (noteBox()) return true;
+      health.flag('Quick Notes', 'Add Note doesn\'t open the note box', '.Drawer--open [data-tracking-id="add-note-button"] + textarea');
+      return false;
     };
 
     // Waits until the note box has finished opening (same box, not moving) before typing.
@@ -301,7 +397,8 @@
                            : '⚠️ Text is in the box, but the Add Note button still looks greyed out. Type a space in the box if it won\'t save.');
         }
       }
-      say('⚠️ Couldn\'t type into the note box. Pick the note again.');
+      health.flag('Quick Notes', 'the note box won\'t keep the typed note', '.Drawer--open textarea');
+      say('⚠️ Couldn\'t type into the note box. Pick the note again.' + CHANGED);
     };
 
     const run = async text => {
@@ -335,13 +432,17 @@
           if (onBoard()) boardHash = location.hash;
           say('Opening customer...');
           location.hash = link.getAttribute('href');
-          if (!await until(() => onCustomerPage(custId), 10000)) return say('⚠️ The customer page didn\'t open.');
+          if (!await until(() => onCustomerPage(custId), 10000)) {
+            health.flag('Quick Notes', 'the customer link didn\'t open the customer page', 'expected #/customer/<id>, got ' + location.hash.split('?')[0].replace(/\d+/g, '<id>'));
+            return say('⚠️ The customer page didn\'t open.' + CHANGED);
+          }
         }
 
         // 3. On the customer page: click Add Note (retrying if the page ignores it) and fill it.
         say('Opening Add Note...');
-        if (!await openNoteBox()) return say('⚠️ Couldn\'t open the Add Note box. Click Add Note on the page, then pick the note again.');
+        if (!await openNoteBox()) return say('⚠️ Couldn\'t open the Add Note box. Click Add Note on the page, then pick the note again.' + CHANGED);
         await fill(note);
+        if (/^✅/.test(msg.textContent)) health.clear('Quick Notes');
       } catch (e) {
         say('⚠️ Error: ' + (e && e.message ? e.message : e));
       } finally {
@@ -357,6 +458,9 @@
         if (onBoard()) say('👉 Now click a job. The highlighted note will be added. (Esc to cancel)');
         else { armed = null; renderList(); }
         return;
+      }
+      if (!jobCustomerLink() && openDrawers().some(d => /Job #\d+/.test(d.textContent || ''))) {
+        health.flag('Quick Notes', 'the job panel doesn\'t show the customer link where expected', '.Drawer--open a[href^="#/Customer/"]');
       }
       if (noteBox()) say('Add Note box is open. Pick a note.');
       else if (onCustomerPage()) say('Pick a note to add it to this customer.');
@@ -622,6 +726,7 @@
         say('Finding ' + techName + '\'s jobs...');
         const list = await collectJobs(techId);
         if (!list.length) { say('No jobs found for ' + techName + ' on ' + date + '.'); return; }
+        let noSwitch = 0;
         add(date + ' - ' + techName + (real ? '' : ' (checking only, nothing changed)'));
         for (let n = 0; n < list.length; n++) {
           if (stop) { add('Stopped. ' + (list.length - n) + ' job(s) not checked.'); break; }
@@ -630,7 +735,7 @@
           try {
             location.hash = '#/Job/Index/' + j;
             const found = await until(() => { const x = first(IN); return x && document.body.innerText.indexOf(j) > -1 ? x : null; }, 12000, 300);
-            if (!found) { out(j, 'COULD NOT FIND SWITCH', 'problem'); continue; }
+            if (!found) { noSwitch++; out(j, 'COULD NOT FIND SWITCH', 'problem'); continue; }
             let st = !!(first(IN) || {}).checked, calm = 0;
             for (let w = 0; calm < 3 && w < 3000; w += 250) {
               await wait(250);
@@ -638,7 +743,7 @@
               if (c === st) calm++; else { st = c; calm = 0; }
             }
             const inp = first(IN);
-            if (!inp) { out(j, 'COULD NOT FIND SWITCH', 'problem'); continue; }
+            if (!inp) { noSwitch++; out(j, 'COULD NOT FIND SWITCH', 'problem'); continue; }
             if (!inp.checked) { out(j, 'already off', 'already off'); continue; }
             if (!real) { out(j, 'ON (left alone)', 'on'); continue; }
             (first(LB) || inp).click();
@@ -653,7 +758,14 @@
           }
         }
         const summary = Object.keys(tally).map(k => tally[k] + ' ' + k).join(', ') || 'nothing done';
-        say('Done: ' + summary + '.');
+        const checked = Object.keys(tally).reduce((s, k) => s + tally[k], 0);
+        if (checked && noSwitch === checked) {
+          health.flag('Job Notifications', 'can\'t find the Job Notifications switch on job pages', '.qa-job-notification-toggle input');
+          say('Done: ' + summary + '.' + CHANGED);
+        } else {
+          if (checked) health.clear('Job Notifications');
+          say('Done: ' + summary + '.');
+        }
       } catch (e) {
         say('⚠️ Stopped by an error: ' + (e && e.message ? e.message : e));
       } finally {
@@ -759,6 +871,8 @@
         panel.style.right = 'auto';
       }
     };
+    // A missing ServiceTitan piece (not a one-off glitch): flag it and stop the whole run.
+    const changed = (what, detail) => { health.flag('Tech Messages', what, detail); return { changed: true, what }; };
     const openChatFor = async t => {
       const el2 = document.getElementById('team-technician-' + t.id);
       if (!el2) return 'not on the board';
@@ -766,13 +880,18 @@
       await wait(250);
       (el2.querySelector('.name') || el2).click();
       const menu = await until(() => Array.from(document.querySelectorAll('.technician-menu.dropdown-menu')).find(visible), 3000);
-      if (!menu) return 'menu did not open';
+      if (!menu) return changed('the tech menu didn\'t open when clicking a tech\'s name', '.technician-menu.dropdown-menu');
       // Only ever click the link whose text is exactly "Send Message" (never the memo "Send" button).
       const link = Array.from(menu.querySelectorAll('a')).find(a => norm(a.textContent) === 'Send Message');
-      if (!link) return 'no Send Message option';
+      if (!link) return changed('the tech menu has no "Send Message" option', '.technician-menu a: Send Message');
       link.click();
       const ok = await until(() => chatBox() && panelName().toLowerCase() === t.name.toLowerCase(), 8000);
-      if (!ok) return 'panel showed "' + (panelName() || 'nothing') + '" instead';
+      if (!ok) {
+        if (!acHost()) return changed('can\'t find the message panel', 'SERVICETITAN-ACTIVITY-CENTER-*');
+        if (!chatBox()) return changed('can\'t find the message box', '[data-cy=technician-chat-input]');
+        if (!panelName()) return changed('can\'t read whose messages are open', 'Activity Center h3');
+        return 'panel showed "' + panelName() + '" instead';
+      }
       return null;
     };
     const typeInto = (box, text) => {
@@ -1102,6 +1221,11 @@
           if (!canMessage(t)) { out(t, 'skipped: blocked by your 🛡️ settings', 'skipped'); continue; }
           if (!(await closeJobDrawer())) { out(t, 'skipped: a job panel would not close', 'problem'); continue; }
           const err = await openChatFor(t);
+          if (err && err.changed) {
+            out(t, 'stopped: ' + err.what + '.', 'problem');
+            add('Stopped the run.' + CHANGED);
+            break;
+          }
           if (err) { out(t, 'skipped: ' + err, 'problem'); continue; }
           await wait(400);
           dodge();
@@ -1114,7 +1238,14 @@
           if (ab && ab.checked && !ab.disabled) ab.click();
           const text = tmpl.replace(/\{first\}/g, firstName(t.name));
           if (panelName().toLowerCase() !== t.name.toLowerCase()) { out(t, 'skipped: panel changed to someone else', 'problem'); continue; }
-          if (!typeInto(box, text)) { clearBox(box); out(t, 'skipped: could not type the message', 'problem'); continue; }
+          if (!typeInto(box, text)) {
+            clearBox(box);
+            changed('the message box won\'t take typed text', '[data-cy=technician-chat-input]');
+            out(t, 'stopped: could not type the message.', 'problem');
+            add('Stopped the run.' + CHANGED);
+            break;
+          }
+          health.clear('Tech Messages');
 
           if (!auto) {
             const ans = await askStep('Typed to ' + t.name + '. Press Send in the message box, then click Next.', [['Next', 'next', PRIMARY], ['Skip', 'skip'], ['Stop', 'stop']]);
@@ -1128,7 +1259,14 @@
 
           // Auto-send: last checks, then click the send arrow and confirm it went.
           const sb = sendBtn();
-          if (!sb || sb.disabled || panelName().toLowerCase() !== t.name.toLowerCase() || chatBox() !== box || box.value !== text) {
+          if (!sb) {
+            clearBox(box);
+            changed('can\'t find the send button', '[data-cy=send-chat-message]');
+            out(t, 'stopped: no send button. Nothing sent.', 'problem');
+            add('Stopped the run.' + CHANGED);
+            break;
+          }
+          if (sb.disabled || panelName().toLowerCase() !== t.name.toLowerCase() || chatBox() !== box || box.value !== text) {
             if (chatBox() && chatBox().value === text) clearBox(chatBox());
             out(t, 'skipped: final check failed, nothing sent', 'problem');
             continue;
@@ -1191,4 +1329,5 @@
   document.body.appendChild(panel);
   const startView = get('stView');
   showView(['notes', 'jobs', 'msgs'].indexOf(startView) > -1 ? startView : 'menu');
+  health.checkBoard(false);
 })();

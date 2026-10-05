@@ -28,6 +28,9 @@ Send a saved message (for example Good Morning or ETA) to the techs you pick. It
 
 Safety checks on every send: it re-checks your 🛡️ settings, closes any open job panel, confirms the message panel shows the right person and nothing is covering it, skips anyone whose message box already has text, and stops the whole run if a send can't be confirmed. Auto-send asks you to type how many people it will message, and there's a limit of 50 per run.
 
+**🩺 Health check**
+If ServiceTitan changes something a tool relies on, a yellow bar at the top of the Toolbox says which tool is affected and what's missing, instead of the tool failing quietly. Use **Copy report** to pass the details along, or **🩺 Check** in the menu to check any time.
+
 ## Install
 
 Open the project's install page (the GitHub Pages address for this project) and drag the **🧰 Toolbox** button onto your bookmarks bar. The page also has copy-and-paste steps for each browser.
