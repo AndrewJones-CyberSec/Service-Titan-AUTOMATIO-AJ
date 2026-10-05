@@ -32,16 +32,6 @@ Safety checks on every send: it re-checks your 🛡️ settings, closes any open
 
 Open the project's install page (the GitHub Pages address for this project) and drag the **🧰 Toolbox** button onto your bookmarks bar. The page also has copy-and-paste steps for each browser.
 
-## Releasing an update
-
-1. Open `toolbox.js` on GitHub and click the pencil icon to edit it.
-2. Make your change.
-3. Near the top, raise the version number (for example `const VERSION = '1.1';`) and add a line to `WHATS_NEW` describing the change. People see that message the first time they open the new version.
-4. Add the same line to `CHANGELOG.md`.
-5. Click **Commit changes**.
-
-GitHub Pages usually publishes the change within a few minutes. Nobody needs to reinstall anything.
-
 ## Files
 
 | File | What it is |
