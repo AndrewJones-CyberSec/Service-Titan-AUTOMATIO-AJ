@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.1
+
+- Tech Messages: the per-run limit is now **57** people (was 50).
+
 ## 1.3
 
 - **Quick Notes is now 📝 Notes, with folders.** Opening Notes shows the folders first: **📞 Updates** (no answer, left a voicemail and so on), **🚚 Techs** (tech on the way, arrived, running late, finished) and **📅 Reschedule**. Open a folder to see its notes; adding a note to a job works the same as before.
