@@ -1,10 +1,11 @@
 /*
   ServiceTitan Toolbox
   ====================
-  One panel with three tools for the ServiceTitan Dispatch board:
+  One panel with four tools for the ServiceTitan Dispatch board:
     - Notes: adds a ready-made note (sorted into folders) to a job's customer in one click.
     - Job Notifications: checks or turns off job notifications for one tech's jobs.
     - Tech Messages: sends a saved message (Good Morning, ETA, ...) to the techs you pick.
+    - Business Unit: switches the jobs you pick to a branch (Mendenhall Branch by default).
 
   HOW TO RELEASE AN UPDATE
     1. Edit this file on GitHub.
@@ -16,8 +17,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.3.1';
+  const VERSION = '1.4';
   const WHATS_NEW = {
+    '1.4': 'New: 🏢 Business Unit. Pick jobs on the board (or type their numbers) and switch them all to Mendenhall Branch, or another branch, in one go. ↩ Put back undoes it.',
     '1.3.1': 'Tech Messages can now send to up to 57 people per run (was 50).',
     '1.3': 'Quick Notes is now 📝 Notes, with folders: Updates, Techs and Reschedule. Your notes are in Updates. Add your own folders with ✏️ Edit folders, and move notes between folders with ✏️ Edit notes.',
     '1.2.5': 'Safer closing: closing the Toolbox during a run now asks to stop the run first. Tech Messages is lighter on the board, and Quick Notes rests while you use other tools.',
@@ -286,8 +288,9 @@
   const notesPane = el('div', 'display:none');
   const jobsPane = el('div', 'display:none');
   const msgsPane = el('div', 'display:none');
-  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane };
-  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages' };
+  const bizPane = el('div', 'display:none');
+  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane };
+  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit' };
   const showView = name => {
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
     titleText.textContent = TITLES[name];
@@ -295,18 +298,21 @@
     if (name !== 'notes' && typeof notes !== 'undefined') notes.leave();
     if (name === 'jobs' && typeof notify !== 'undefined') notify.refresh();
     if (name === 'msgs' && typeof msgs !== 'undefined') msgs.refresh();
+    if (name !== 'biz' && typeof biz !== 'undefined') biz.leave();
+    if (name === 'biz' && typeof biz !== 'undefined') biz.refresh();
   };
 
   menuPane.append(
     menuMsg,
     menuBtn('📝 Notes', () => showView('notes')),
     menuBtn('🔕 Job Notifications', () => showView('jobs')),
-    menuBtn('💬 Tech Messages', () => showView('msgs'))
+    menuBtn('💬 Tech Messages', () => showView('msgs')),
+    menuBtn('🏢 Business Unit', () => showView('biz'))
   );
   const checkRow = el('div', 'display:flex;justify-content:flex-end;margin-top:4px');
   checkRow.append(smallBtn('🩺 Check', () => health.checkBoard(true)));
   menuPane.appendChild(checkRow);
-  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane);
+  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane);
 
   // ===================================================================
   // Tool 1: Notes
@@ -1541,6 +1547,403 @@
   })();
 
   // ===================================================================
+  // Tool 4: Business Unit
+  // Switches the Business Unit on the jobs you pick to a branch (Mendenhall Branch unless
+  // you pick another). Only branches are offered, never the departments.
+  // For each job it opens the job's Edit page (the grey pencil on the job record), picks the
+  // branch in the Business Unit list, presses Save, then opens the page again to check the
+  // change stuck. "Check jobs" does all of that except Save. "Put back" undoes the last run.
+  // If ServiceTitan pops up a question after Save, the run stops and leaves it for you.
+  // ===================================================================
+  const biz = (() => {
+    const DEFAULT_BRANCH = 'Mendenhall Branch';
+    const KNOWN_BRANCHES = ['Greenville Branch', 'Gulfport Branch', 'Mendenhall Branch', 'Tupelo Branch'];
+    const MAX_PER_RUN = 50;
+    const TOOL = 'Business Unit';
+    const BU_SEL = 'select[name="BusinessUnit"]';
+    const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
+    const same = (a, b) => norm(a).toLowerCase() === norm(b).toLowerCase();
+    const isBranch = name => /\bbranch\b/i.test(name);
+    const s1 = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+    const ko = () => window.ko && typeof window.ko.dataFor === 'function' ? window.ko : null;
+    const vmOf = s => { try { const k = ko(); return k ? k.dataFor(s) || null : null; } catch (e) { return null; } };
+    const unwrap = v => { try { return typeof v === 'function' ? v() : v; } catch (e) { return v; } };
+
+    // The branch list comes from ServiceTitan's own list of Business Units, keeping only the
+    // ones named "... Branch". If the page doesn't have it, use the last list seen.
+    const branches = () => {
+      let names = [];
+      try {
+        const d = window.App && window.App.Data && window.App.Data.BusinessUnits;
+        if (Array.isArray(d)) names = d.filter(b => b && b.Active !== false).map(b => norm(b.Name)).filter(isBranch);
+      } catch (e) {}
+      if (names.length) set('stBizBranches', JSON.stringify(names));
+      else { try { names = (JSON.parse(get('stBizBranches') || '[]') || []).filter(isBranch); } catch (e) { names = []; } }
+      if (!names.length) names = KNOWN_BRANCHES.slice();
+      return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b));
+    };
+
+    // ---------- Picked jobs ----------
+    const picked = new Map();   // job number -> short label from the board
+    const bubble = j => document.querySelector('a.appointment[data-job-id="' + j + '"]');
+    const labelFor = j => { const b = bubble(j); return b ? norm(b.innerText || b.textContent).slice(0, 38) : ''; };
+    // Picked jobs get a blue outline on the board.
+    const paintStyle = el('style');
+    const paint = () => {
+      const ids = Array.from(picked.keys());
+      paintStyle.textContent = ids.length ? ids.map(j => 'a.appointment[data-job-id="' + j + '"]').join(',') +
+        '{outline:3px solid #1a6ed8 !important;outline-offset:-3px !important;box-shadow:0 0 0 3px rgba(26,110,216,.35) !important}' : '';
+    };
+    (document.head || document.documentElement).appendChild(paintStyle);
+
+    // ---------- Pane ----------
+    const wrap = el('div', 'padding:8px 10px 10px;display:grid;gap:8px');
+    const msg = el('div', 'font-size:12px;color:#444;min-height:16px');
+    const say = s => { msg.textContent = s; };
+    const toRow = el('div', 'display:flex;gap:6px;align-items:center');
+    const toLabel = el('span', 'font-size:12px;font-weight:600', 'Change to');
+    const branchPick = el('select', 'flex:1;min-width:0;padding:6px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff');
+    branchPick.id = 'st-biz-branch';
+    toRow.append(toLabel, branchPick);
+
+    const jobsHead = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap');
+    const jobsTitle = el('span', 'font-size:12px;font-weight:600;margin-right:auto', 'Jobs');
+    const pickBtn = smallBtn('', () => setPicking(!picking));
+    const clearBtn = smallBtn('Clear', () => { if (running) return; picked.clear(); paint(); renderJobs(); say('List cleared.'); });
+    jobsHead.append(jobsTitle, pickBtn, clearBtn);
+    const jobList = el('div', 'max-height:150px;overflow:auto;border:1px solid #ddd;border-radius:6px;background:#fafafa');
+    const addRow = el('div', 'display:flex;gap:6px');
+    const addBox = el('input', 'flex:1;min-width:0;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
+    addBox.type = 'text'; addBox.placeholder = 'Or type job #s (comma or space between)';
+    const addBtn = smallBtn('Add', () => addTyped());
+    addBox.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); addTyped(); } };
+    addRow.append(addBox, addBtn);
+
+    const actions = el('div', 'display:flex;flex-wrap:wrap;gap:6px');
+    const checkBtn = smallBtn('Check jobs (changes nothing)', () => startRun('check'), PRIMARY);
+    const changeBtn = smallBtn('Change…', () => askConfirm('change'), 'color:#c62828;border-color:#e0a0a8');
+    actions.append(checkBtn, changeBtn);
+    const confirmBox = el('div', 'display:none;padding:8px;border:1px solid #e0a0a8;background:#fdecec;border-radius:6px;font-size:12px;gap:6px;flex-wrap:wrap;align-items:center');
+    const confirmText = el('span', 'flex-basis:100%');
+    const confirmYes = smallBtn('Yes', () => {}, DANGER);
+    confirmBox.append(confirmText, confirmYes, smallBtn('Cancel', () => { confirmBox.style.display = 'none'; }));
+
+    const progress = el('div', 'display:none;gap:6px');
+    const log = el('pre', 'max-height:200px;overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
+    const progRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    const requestStop = () => { if (!running) return; stop = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping after this job...'; };
+    const stopBtn = smallBtn('Stop', () => requestStop());
+    const copyBtn = smallBtn('Copy results', async () => {
+      const text = log.textContent + (details.length ? '\n--- details ---\n' + details.join('\n') : '');
+      if (await copy(text)) copyBtn.textContent = 'Copied';
+    });
+    const undoBtn = smallBtn('↩ Put back', () => askConfirm('putback'));
+    progRow.append(stopBtn, copyBtn, undoBtn);
+    progress.append(log, progRow);
+    const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    navRow.append(smallBtn('← Menu', () => { if (!running) showView('menu'); }));
+    wrap.append(msg, toRow, jobsHead, jobList, addRow, actions, confirmBox, progress, navRow);
+    bizPane.appendChild(wrap);
+
+    let running = false, stop = false, picking = false;
+    let undo = [];      // [{ job, from }] for the jobs the last run changed
+    let details = [];   // extra lines for "Copy results" (what happened after each Save)
+    const add = s => { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
+    const target = () => branchPick.value || DEFAULT_BRANCH;
+
+    const renderBranches = () => {
+      const list = branches();
+      const prev = branchPick.value || get('stBizBranch') || DEFAULT_BRANCH;
+      branchPick.textContent = '';
+      list.forEach(n => { const o = el('option', '', n); o.value = n; branchPick.appendChild(o); });
+      const keep = list.find(n => same(n, prev)) || list.find(n => same(n, DEFAULT_BRANCH)) || list[0];
+      if (keep) branchPick.value = keep;
+      updateButtons();
+    };
+    branchPick.onchange = () => { set('stBizBranch', branchPick.value); updateButtons(); };
+
+    const renderJobs = () => {
+      jobList.textContent = '';
+      jobsTitle.textContent = 'Jobs (' + picked.size + ')';
+      if (!picked.size) {
+        jobList.appendChild(el('div', 'padding:8px;font-size:12px;color:#666', picking ? 'Click jobs on the board to add them. Click again to take one off.' : 'No jobs yet. Press 🖱️ Pick on board, or type job numbers below.'));
+      }
+      picked.forEach((label, j) => {
+        const row = el('div', 'display:flex;gap:6px;align-items:center;padding:4px 6px;border-bottom:1px solid #eee;font-size:12px');
+        const name = el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
+        name.append(el('b', '', '#' + j), document.createTextNode(label ? '  ' + label : ''));
+        name.title = label;
+        const x = smallBtn('✕', () => { if (running) return; picked.delete(j); paint(); renderJobs(); }, 'padding:1px 6px');
+        x.title = 'Take this job off the list';
+        row.append(name, x);
+        jobList.appendChild(row);
+      });
+      updateButtons();
+    };
+    const updateButtons = () => {
+      const on = !running;
+      changeBtn.textContent = 'Change to ' + target() + '…';
+      [branchPick, pickBtn, clearBtn, addBox, addBtn].forEach(x => { x.disabled = !on; x.style.opacity = on ? '1' : '.5'; });
+      [checkBtn, changeBtn].forEach(x => { const ok = on && picked.size > 0; x.disabled = !ok; x.style.opacity = ok ? '1' : '.5'; });
+      undoBtn.style.display = !running && undo.length ? 'inline-block' : 'none';
+      undoBtn.textContent = '↩ Put back (' + undo.length + ')';
+    };
+
+    const addJob = (j, quiet) => {
+      if (!/^\d{4,}$/.test(j)) return false;
+      if (picked.has(j)) return false;
+      if (picked.size >= MAX_PER_RUN) { say('⚠️ The list is full (' + MAX_PER_RUN + ' jobs per run).'); return false; }
+      picked.set(j, labelFor(j));
+      if (!quiet) say('Added #' + j + '. ' + s1(picked.size, 'job') + ' picked.');
+      return true;
+    };
+    const addTyped = () => {
+      if (running) return;
+      const nums = (addBox.value.match(/\d{4,}/g) || []);
+      if (!nums.length) { say('Type one or more job numbers first.'); return; }
+      let n = 0;
+      nums.forEach(j => { if (addJob(j, true)) n++; });
+      addBox.value = '';
+      paint(); renderJobs();
+      say('Added ' + s1(n, 'job') + '. ' + s1(picked.size, 'job') + ' picked.');
+    };
+
+    // Picking: while it's on, clicking a job on the board adds it (or takes it off) instead
+    // of opening it. It turns itself off when you leave this tool.
+    const setPicking = on => {
+      picking = !!on && !running;
+      pickBtn.textContent = picking ? '🖱️ Picking: ON' : '🖱️ Pick on board';
+      pickBtn.style.background = picking ? '#1a6ed8' : '#fff';
+      pickBtn.style.color = picking ? '#fff' : '#111';
+      pickBtn.style.borderColor = picking ? '#1a6ed8' : '#aaa';
+      pickBtn.style.fontWeight = picking ? '600' : '400';
+      if (picking && !onBoard()) say('Open the Dispatch board to pick jobs there.');
+      else if (picking) say('Click jobs on the board to add them. Click one again to take it off.');
+      renderJobs();
+    };
+    const onClick = e => {
+      if (!picking || running || !onBoard()) return;
+      const a = e.target && e.target.closest && e.target.closest('a.appointment[data-job-id]');
+      if (!a || panel.contains(a)) return;
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      const j = a.getAttribute('data-job-id');
+      if (picked.has(j)) { picked.delete(j); say('Took #' + j + ' off. ' + s1(picked.size, 'job') + ' picked.'); }
+      else addJob(j);
+      paint(); renderJobs();
+    };
+    window.addEventListener('click', onClick, true);
+
+    // ---------- Confirm ----------
+    const askConfirm = mode => {
+      if (running) return;
+      if (lock) return say('Wait for ' + lock + ' to finish first.');
+      if (mode === 'change') {
+        if (!picked.size) return;
+        confirmText.textContent = 'Change the Business Unit on ' + s1(picked.size, 'job') + ' to ' + target() +
+          '? Each job is saved in ServiceTitan. Jobs already on ' + target() + ' are left alone.';
+        confirmYes.textContent = 'Yes, change them';
+        confirmYes.onclick = () => { confirmBox.style.display = 'none'; startRun('change'); };
+      } else {
+        if (!undo.length) return;
+        confirmText.textContent = 'Put back ' + s1(undo.length, 'job') + ' to the Business Unit each one had before the last run?';
+        confirmYes.textContent = 'Yes, put them back';
+        confirmYes.onclick = () => { confirmBox.style.display = 'none'; startRun('putback'); };
+      }
+      confirmBox.style.display = 'flex';
+    };
+
+    // ---------- The Edit Job page ----------
+    const editHash = j => '#/Job/Edit/' + j;
+    const onEdit = j => location.hash.split('?')[0] === editHash(j);
+    // The Business Unit list on job j's Edit page, once it has loaded (not a leftover from
+    // the page before).
+    const buSelect = (j, stale) => {
+      if (!onEdit(j)) return null;
+      const s = document.querySelector(BU_SEL);
+      if (!s || !s.options.length || !visible(s)) return null;
+      const vm = vmOf(s);
+      if (vm && vm.Id != null) { if (String(unwrap(vm.Id)) !== String(j)) return null; }
+      else if (s === stale) return null;
+      return s;
+    };
+    const selectedName = s => { const o = s && s.options[s.selectedIndex]; return o ? norm(o.text) : ''; };
+    const isLocked = s => { const vm = vmOf(s); return !!(s.disabled || (vm && unwrap(vm.IsBusinessUnitReadOnly))); };
+    // Opens job j's Edit page and waits until its Business Unit is showing and settled.
+    const openEdit = async j => {
+      const stale = document.querySelector(BU_SEL);
+      if (onEdit(j)) { location.hash = '#/Job/Index/' + j; await wait(600); }
+      location.hash = editHash(j);
+      let s = await until(() => buSelect(j, stale), 15000, 300);
+      if (!s) return null;
+      let last = selectedName(s), calm = 0;
+      for (let w = 0; calm < 3 && w < 3000; w += 250) {
+        await wait(250);
+        s = buSelect(j, stale) || s;
+        const now = selectedName(s);
+        if (now === last) calm++; else { last = now; calm = 0; }
+      }
+      return buSelect(j, stale);
+    };
+    // Visible pop-ups and error messages (to tell what happened after Save).
+    const POPUP_SEL = '.modal.in, .modal.show, [role="dialog"], [role="alertdialog"], .bootbox';
+    const ERROR_SEL = '.validation-summary-errors, .field-validation-error, .alert-danger, .alert-error, .error-message, .Toast--danger, .toast-error';
+    const shown = sel => Array.from(document.querySelectorAll(sel)).filter(x => visible(x) && !panel.contains(x) && norm(x.innerText));
+    const choose = (s, name) => {
+      const opt = Array.from(s.options).find(o => same(o.text, name));
+      if (!opt) return false;
+      s.value = opt.value;
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+      const vm = vmOf(s);
+      if (vm && typeof vm.BusinessUnitId === 'function') return String(vm.BusinessUnitId()) === String(opt.value);
+      return s.value === opt.value;
+    };
+
+    // Opens one job and checks or changes its Business Unit. Returns { text, kind, from, stopRun }.
+    const doJob = async (j, to, real) => {
+      const res = (text, kind, extra) => Object.assign({ text, kind }, extra || {});
+      try {
+        const s = await openEdit(j);
+        if (!s) {
+          if (onEdit(j) && !document.querySelector(BU_SEL)) health.flag(TOOL, 'can\'t find the Business Unit list on the Edit Job page', BU_SEL);
+          return res('COULD NOT OPEN THE EDIT PAGE', 'problem');
+        }
+        const from = selectedName(s);
+        if (same(from, to)) return res('already ' + to, 'already');
+        if (isLocked(s)) return res('locked in ServiceTitan (shows ' + from + ')', 'locked');
+        if (!Array.from(s.options).some(o => same(o.text, to))) return res(to + ' is not in this job\'s list', 'problem');
+        if (!real) return res(from + ' → would change to ' + to, 'would change', { from });
+
+        if (!choose(s, to)) { choose(s, from); return res('COULD NOT PICK ' + to, 'problem'); }
+        const form = s.closest('form');
+        const save = form && Array.from(form.querySelectorAll('button, input[type="submit"]')).find(b => visible(b) && /^\s*save\s*$/i.test(b.innerText || b.value || ''));
+        if (!save) {
+          choose(s, from);
+          health.flag(TOOL, 'can\'t find the Save button on the Edit Job page', 'form button "Save"');
+          return res('COULD NOT FIND SAVE (nothing saved)', 'problem');
+        }
+        const popupsBefore = new Set(shown(POPUP_SEL));
+        const errorsBefore = new Set(shown(ERROR_SEL));
+        const t0 = Date.now();
+        save.click();
+        const outcome = await until(() => {
+          if (!onEdit(j)) return { how: 'left' };
+          const p = shown(POPUP_SEL).find(x => !popupsBefore.has(x));
+          if (p) return { how: 'popup', text: norm(p.innerText).slice(0, 300) };
+          const er = shown(ERROR_SEL).filter(x => !errorsBefore.has(x));
+          if (er.length) return { how: 'error', text: er.map(x => norm(x.innerText)).join(' | ').slice(0, 300) };
+          return null;
+        }, 20000, 250) || { how: 'stayed' };
+        details.push('#' + j + ' Save: ' + outcome.how + ' after ' + ((Date.now() - t0) / 1000).toFixed(1) + 's, page ' + location.hash.split('?')[0] + (outcome.text ? ', said: ' + outcome.text : ''));
+        if (outcome.how === 'popup') {
+          return res('ServiceTitan asked: "' + outcome.text.slice(0, 120) + '". Answer it yourself, then check this job.', 'problem', { from, stopRun: true, noRetry: true });
+        }
+        if (outcome.how === 'error') {
+          const back = buSelect(j); if (back) choose(back, from);
+          return res('NOT SAVED: ' + outcome.text.slice(0, 160), 'problem', { from });
+        }
+        // Open the job again to make sure the change stuck.
+        await wait(outcome.how === 'left' ? 800 : 0);
+        const again = await openEdit(j);
+        if (!again) return res('saved, but COULD NOT RE-OPEN TO CHECK', 'problem', { from, changed: true });
+        const now = selectedName(again);
+        details.push('#' + j + ' re-opened: shows ' + now);
+        if (same(now, to)) { health.clear(TOOL); return res(from + ' → ' + to, 'changed', { from, changed: true }); }
+        if (same(now, from)) return res('NOT SAVED, still ' + from, 'problem', { from });
+        return res('SAVED BUT SHOWS ' + now, 'problem', { from, changed: true });
+      } catch (e) {
+        return res('ERROR: ' + (e && e.message ? e.message : e), 'problem');
+      }
+    };
+
+    // ---------- A run ----------
+    // mode: 'check' (changes nothing), 'change' (to the picked branch), 'putback' (undo).
+    const startRun = async mode => {
+      if (running) return;
+      if (lock) return say('Wait for ' + lock + ' to finish first.');
+      const to = target();
+      const items = mode === 'putback' ? undo.map(u => ({ job: u.job, to: u.from })) : Array.from(picked.keys()).map(j => ({ job: j, to }));
+      if (!items.length) return;
+      if (items.length > MAX_PER_RUN) return say('⚠️ ' + MAX_PER_RUN + ' jobs per run at most.');
+      const real = mode !== 'check';
+      setPicking(false);
+      running = true; stop = false; lock = TOOL;
+      confirmBox.style.display = 'none';
+      log.textContent = ''; details = [];
+      progress.style.display = 'grid';
+      stopBtn.disabled = false; stopBtn.textContent = 'Stop'; stopBtn.style.display = 'inline-block';
+      copyBtn.textContent = 'Copy results';
+      updateButtons();
+      const home = onBoard() ? location.hash : '#/DispatchBoard';
+      const results = new Map();
+      const record = (it, r, retry) => { results.set(it.job, r); add('#' + it.job + ': ' + (retry ? 'retry: ' : '') + r.text); };
+      const verb = mode === 'check' ? 'Checking' : mode === 'putback' ? 'Putting back' : 'Changing';
+      try {
+        add(mode === 'check' ? 'Check for ' + to + ' (nothing is changed)' : mode === 'putback' ? 'Put back to how they were' : 'Change to ' + to);
+        let halted = false;
+        for (let n = 0; n < items.length; n++) {
+          if (stop) { add('Stopped. ' + s1(items.length - n, 'job') + ' not done.'); break; }
+          const it = items[n];
+          say(verb + ' ' + (n + 1) + ' of ' + items.length + ' (job ' + it.job + ')');
+          const r = await doJob(it.job, it.to, real);
+          record(it, r);
+          if (r.stopRun) { halted = true; add('Run stopped so you can answer ServiceTitan. ' + s1(items.length - n - 1, 'job') + ' not done.'); break; }
+        }
+        // One more try for jobs that had a problem, after the rest are done.
+        const failed = items.filter(it => results.has(it.job) && results.get(it.job).kind === 'problem' && !results.get(it.job).noRetry && !results.get(it.job).changed);
+        if (failed.length && !stop && !halted) {
+          add('');
+          add('Retrying ' + s1(failed.length, 'job') + ' that had a problem...');
+          location.hash = home;
+          await wait(2000);
+          for (let n = 0; n < failed.length; n++) {
+            if (stop) { add('Stopped. ' + (failed.length - n) + ' retry(s) not done.'); break; }
+            say('Retrying ' + (n + 1) + ' of ' + failed.length + ' (job ' + failed[n].job + ')');
+            const r = await doJob(failed[n].job, failed[n].to, real);
+            record(failed[n], r, true);
+            if (r.stopRun) { add('Run stopped so you can answer ServiceTitan.'); break; }
+          }
+        }
+        // Remember what changed so it can be put back.
+        if (mode === 'change') {
+          undo = [];
+          results.forEach((r, j) => { if (r.changed && r.from) undo.push({ job: j, from: r.from }); });
+          // Done jobs come off the list; anything with a problem stays so you can try again.
+          results.forEach((r, j) => { if (r.kind === 'changed' || r.kind === 'already') picked.delete(j); });
+        } else if (mode === 'putback') {
+          undo = undo.filter(u => { const r = results.get(u.job); return !(r && (r.kind === 'changed' || r.kind === 'already')); });
+        }
+        const tally = {};
+        results.forEach(r => { tally[r.kind] = (tally[r.kind] || 0) + 1; });
+        const summary = Object.keys(tally).map(k => tally[k] + ' ' + k).join(', ') || 'nothing done';
+        const left = Array.from(results.entries()).filter(e => e[1].kind === 'problem').map(e => '#' + e[0]);
+        if (left.length) add('Needs a look: ' + left.join(', '));
+        if (undo.length && mode !== 'check') add('↩ Put back can undo ' + s1(undo.length, 'job') + '.');
+        say('Done: ' + summary + '.');
+      } catch (e) {
+        say('⚠️ Stopped by an error: ' + (e && e.message ? e.message : e));
+      } finally {
+        // Leave a pop-up for the person to answer; otherwise go back to the board.
+        const popupOpen = shown(POPUP_SEL).length > 0;
+        if (!popupOpen && location.hash !== home) { location.hash = home; await wait(800); }
+        running = false; lock = null;
+        stopBtn.style.display = 'none';
+        paint(); renderJobs();
+      }
+    };
+
+    const refresh = () => { if (running) return; renderBranches(); renderJobs(); if (!onBoard() && !msg.textContent) say('Open the Dispatch board to pick jobs.'); };
+    setPicking(false);
+    renderBranches();
+    return {
+      refresh,
+      leave: () => { if (picking) setPicking(false); },
+      isRunning: () => running,
+      stop: requestStop,
+      cleanup: () => { window.removeEventListener('click', onClick, true); paintStyle.remove(); }
+    };
+  })();
+
+  // ===================================================================
   // Dragging, closing, and starting up
   // ===================================================================
   header.addEventListener('mousedown', e => {
@@ -1561,8 +1964,8 @@
     document.addEventListener('mouseup', up);
   });
 
-  // Closing while Job Notifications or Tech Messages is running would hide the panel but
-  // leave the run going in the background. So ask first, stop the run, then close.
+  // Closing while a tool is running (Job Notifications, Tech Messages or Business Unit) would
+  // hide the panel but leave the run going in the background. So ask first, stop the run, then close.
   const closeBar = el('div', 'display:none;padding:8px 12px;background:#fdecec;color:#7a1010;font-size:12px;border-bottom:1px solid #e0a0a8');
   const closeText = el('div', 'margin-bottom:6px');
   const closeBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
@@ -1571,14 +1974,17 @@
   let closing = false;
   const finishClose = () => {
     notes.cleanup();
+    biz.cleanup();
     panel.remove();
     delete window.__stToolbox;
   };
   const close = () => {
-    const runner = notify.isRunning() ? notify : msgs.isRunning() ? msgs : null;
-    if (!runner) return finishClose();
+    const runners = [[notify, 'Job Notifications'], [msgs, 'Tech Messages'], [biz, 'Business Unit']];
+    const found = runners.find(r => r[0].isRunning());
+    if (!found) return finishClose();
     if (closing) return;
-    closeText.textContent = (runner === notify ? 'Job Notifications' : 'Tech Messages') + ' is still running. Closing now would leave it running out of sight.';
+    const runner = found[0];
+    closeText.textContent = found[1] + ' is still running. Closing now would leave it running out of sight.';
     closeBtns.textContent = '';
     closeBtns.append(
       smallBtn('Stop it and close', async () => {
@@ -1586,7 +1992,7 @@
         closeBtns.textContent = '';
         closeText.textContent = 'Stopping, then closing...';
         runner.stop();
-        await until(() => !notify.isRunning() && !msgs.isRunning(), 30000, 250);
+        await until(() => !runners.some(r => r[0].isRunning()), 60000, 250);
         finishClose();
       }, DANGER),
       smallBtn('Keep running', () => { closeBar.style.display = 'none'; })
@@ -1598,6 +2004,6 @@
 
   document.body.appendChild(panel);
   const startView = get('stView');
-  showView(['notes', 'jobs', 'msgs'].indexOf(startView) > -1 ? startView : 'menu');
+  showView(['notes', 'jobs', 'msgs', 'biz'].indexOf(startView) > -1 ? startView : 'menu');
   health.checkBoard(false);
 })();

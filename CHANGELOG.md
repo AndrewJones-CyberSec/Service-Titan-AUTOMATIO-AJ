@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4
+
+- **🏢 Business Unit** (new): switch the Business Unit on the jobs you pick to a branch, **Mendenhall Branch** by default. The list only offers branches, not departments.
+  - Pick jobs by clicking them on the Dispatch board (they get a blue outline), or type job numbers.
+  - **Check jobs** shows each job's Business Unit now and changes nothing.
+  - **Change to …** asks first, then opens each job's Edit page, picks the branch, saves, and re-opens the job to confirm it stuck. Jobs already on that branch are left alone; locked jobs are skipped.
+  - **↩ Put back** undoes the last run. Problem jobs get one more try. Stop button, copyable results, 50 jobs per run.
+  - If ServiceTitan asks a question after Save, the run stops and leaves it for you.
+
 ## 1.3.1
 
 - Tech Messages: the per-run limit is now **57** people (was 50).

@@ -30,6 +30,16 @@ Send a saved message (for example Good Morning or ETA) to the techs you pick. It
 
 Safety checks on every send: it re-checks your 🛡️ settings, closes any open job panel, confirms the message panel shows the right person and nothing is covering it, skips anyone whose message box already has text, and stops the whole run if a send can't be confirmed. Auto-send asks you to type how many people it will message, and there's a limit of 57 per run.
 
+**🏢 Business Unit**
+Switch the Business Unit on one job or many to a branch: **Mendenhall Branch** unless you pick another. Only branches are offered, not departments.
+
+- **🖱️ Pick on board**, then click jobs on the Dispatch board to add them (click again to take one off). Picked jobs get a blue outline. You can also type job numbers, which works for jobs on other days.
+- **Check jobs**: opens each job's Edit page and shows its Business Unit now. Changes nothing.
+- **Change to …**: after you confirm, it picks the branch on each job's Edit page, presses **Save**, then opens the job again to make sure the change stuck. Jobs already on that branch are left alone.
+- **↩ Put back** returns the jobs from the last run to the Business Unit each one had before.
+
+If ServiceTitan locks a job's Business Unit, the job is skipped and listed. If ServiceTitan pops up a question after Save, the run stops there and leaves the question on screen for you to answer. Up to 50 jobs per run.
+
 **🩺 Health check**
 If ServiceTitan changes something a tool relies on, a yellow bar at the top of the Toolbox says which tool is affected and what's missing, instead of the tool failing quietly. Use **Copy report** to pass the details along, or **🩺 Check** in the menu to check any time.
 
@@ -51,6 +61,7 @@ Open the project's install page (the GitHub Pages address for this project) and 
 - The Toolbox only works in your own browser while you're signed in to ServiceTitan. It doesn't collect or send any data anywhere.
 - Notes never saves a note by itself; you always click **Add Note** in ServiceTitan.
 - Tech Messages only sends on its own in Auto-send mode, after you confirm.
+- Business Unit only saves jobs after you confirm, and checks each one afterwards.
 - Not affiliated with or endorsed by ServiceTitan.
 
 ## License
