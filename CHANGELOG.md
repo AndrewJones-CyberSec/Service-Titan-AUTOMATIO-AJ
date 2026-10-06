@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.4
+
+- **Tech Messages: "Send to"**. Under the messages there are now two choices:
+  - **🚚 Working today**: everyone your 🛡️ settings allow who has at least one job on the board for the day shown. If the board shows another day, the button says which day (for example "🚚 Working Oct 7").
+  - **👤 Picked**: the techs you chose with **👥 Choose techs**, the same as before.
+- The Good Morning routine is now: open Tech Messages, click **☀️ Good Morning**, check it says **🚚 Working**, then **Review and send**. No need to open Choose techs or tick "Only show techs with jobs" first (that box is still in Choose techs).
+- **Each message remembers where it starts.** Click **☆ Always use … for …** under the Send to buttons, or choose **🚚 Working** or **👤 Picked** under each message in **✏️ Edit messages**. Picking that message switches Send to for you, and you can still change it before sending. Your saved messages carry over unchanged; anything not set starts on 👤 Picked, like before. New users start with Good Morning on 🚚 Working.
+- **🛡️ excluded**: when your safety settings leave people out of the group, a small **🛡️ 3 excluded** button says so. Click it to see who and why (never-message list, team blocked, new team not approved yet, team unknown). The confirm screen lists them too. Safety settings always win: nobody excluded is ever messaged.
+- Techs a board filter is hiding are left out up front (before, they were picked and then skipped during the run), so the number you confirm is the number that gets messaged.
+- A **↻** next to Send to reads the board again. If the Toolbox opens before the board has loaded, it checks again by itself for a little while.
+- Every safety check from before still runs right before each person: 🛡️ settings, the right person's message panel, nothing covering the box, no unsent text, and stopping if a send can't be confirmed. The limit is still 57 per run.
+- **Safer closing, fixed**: "Stop it and close" now only closes the Toolbox once the run has really stopped. If it's still stopping after 30 seconds, the Toolbox stays open and says so, then offers **Close now** once it has stopped. Before, it closed after 30 seconds even if the run was still going.
+- Behind the scenes: Job Notifications, Tech Messages and the health check now read the Dispatch board the same way, in one place, and the board's date is read without picking up dates from the Toolbox's own results.
+
 ## 1.3.1
 
 - Tech Messages: the per-run limit is now **57** people (was 50).

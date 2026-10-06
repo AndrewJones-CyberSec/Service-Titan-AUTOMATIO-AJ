@@ -4,7 +4,7 @@
   One panel with three tools for the ServiceTitan Dispatch board:
     - Notes: adds a ready-made note (sorted into folders) to a job's customer in one click.
     - Job Notifications: checks or turns off job notifications for one tech's jobs.
-    - Tech Messages: sends a saved message (Good Morning, ETA, ...) to the techs you pick.
+    - Tech Messages: sends a saved message (Good Morning, ETA, ...) to everyone working or the techs you pick.
 
   HOW TO RELEASE AN UPDATE
     1. Edit this file on GitHub.
@@ -16,8 +16,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.3.1';
+  const VERSION = '1.4';
   const WHATS_NEW = {
+    '1.4': 'Tech Messages: pick 🚚 Working (everyone with jobs on the board) or 👤 Picked under "Send to", and each message can remember which one it starts on. "🛡️ excluded" shows who your safety settings leave out, and why.',
     '1.3.1': 'Tech Messages can now send to up to 57 people per run (was 50).',
     '1.3': 'Quick Notes is now 📝 Notes, with folders: Updates, Techs and Reschedule. Your notes are in Updates. Add your own folders with ✏️ Edit folders, and move notes between folders with ✏️ Edit notes.',
     '1.2.5': 'Safer closing: closing the Toolbox during a run now asks to stop the run first. Tech Messages is lighter on the board, and Quick Notes rests while you use other tools.',
@@ -178,6 +179,97 @@
   }
 
   // ===================================================================
+  // Board reader: the one place that reads the Dispatch board for every tool.
+  // Read-only: it only looks at what ServiceTitan is already showing. It never clicks,
+  // scrolls or changes anything. It keeps only what the tools need: each tech's ID, name,
+  // team and job IDs, whether a board filter is hiding them, and the day the board shows.
+  // No customer names, addresses or phone numbers.
+  // ===================================================================
+  const board = (() => {
+    const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
+    // Each tech's team, remembered whenever the team headers are showing. A team or people
+    // filter hides the headers, so then the remembered team is used (added in 1.2.3; the
+    // storage name is unchanged so the teams people already learned carry over).
+    const TEAM_KEY = 'stMsgTeamMap';
+    let teamMap = (() => {
+      try { const v = JSON.parse(get(TEAM_KEY)); if (v && typeof v === 'object' && !Array.isArray(v)) return v; } catch (e) {}
+      return {};
+    })();
+    // ServiceTitan puts each team's rows in a .team-container, with the team's name in a
+    // .team-name header somewhere before it (not always the element right before it).
+    const liveTeamOf = id => {
+      const row = document.getElementById('team-timeline-row-' + id);
+      const tc = row && row.closest('.team-container');
+      let h = tc && tc.previousElementSibling;
+      while (h && !h.querySelector('.team-name')) h = h.previousElementSibling;
+      const tn = h && h.querySelector('.team-name');
+      return tn ? norm(tn.textContent) : null;
+    };
+    // The day the board is showing, e.g. "Tue, Oct 6, 2026", or null if it can't be read.
+    // Only ServiceTitan's part of the page is read: the Toolbox's own results can contain dates.
+    const DATE_RE = /(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [A-Z][a-z]{2} \d+, \d{4}/;
+    const date = () => {
+      for (const c of Array.from(document.body.children)) {
+        if (c.id === ID || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|LINK|META)$/.test(c.tagName) || !visible(c)) continue;
+        const m = (c.innerText || '').match(DATE_RE);
+        if (m) return m[0];
+      }
+      return null;
+    };
+    // True if `day` (a board date like "Tue, Oct 6, 2026") is today on this computer.
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const isToday = day => {
+      const m = String(day || '').match(/, ([A-Z][a-z]{2}) (\d+), (\d{4})/);
+      if (!m) return false;
+      const d = new Date();
+      return MONTHS.indexOf(m[1]) === d.getMonth() && +m[2] === d.getDate() && +m[3] === d.getFullYear();
+    };
+    // One tech's job IDs (light enough to call over and over while waiting for the board).
+    const jobsFor = techId => {
+      const ids = new Set();
+      document.querySelectorAll('a.appointment[data-technician-id="' + techId + '"][data-job-id]').forEach(a => ids.add(a.getAttribute('data-job-id')));
+      return Array.from(ids);
+    };
+    // A fresh look at the whole board. Returns
+    //   { date, at, techs: Map(id -> { id, name, named, team, jobIds, jobs, hidden }), jobs, filtered }
+    // `hidden`: a board filter is hiding this tech right now (scrolled out of view is NOT hidden).
+    // `named`: the name came from the tech's .name tag (not a fallback).
+    const read = () => {
+      // Job IDs per tech in one pass over the job bubbles (instead of one search per tech).
+      // A board filter can leave hidden copies of things on the page, so IDs are de-duplicated.
+      const jobMap = new Map();
+      document.querySelectorAll('a.appointment[data-technician-id][data-job-id]').forEach(a => {
+        const id = a.getAttribute('data-technician-id');
+        if (!jobMap.has(id)) jobMap.set(id, new Set());
+        jobMap.get(id).add(a.getAttribute('data-job-id'));
+      });
+      const techs = new Map();
+      let learned = false, jobs = 0, filtered = false;
+      document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
+        const id = t.getAttribute('data-technician-id');
+        const showing = techShowing(t);
+        // A board filter can leave a hidden copy of a tech next to the one that's showing.
+        const have = techs.get(id);
+        if (have) { if (showing) have.hidden = false; return; }
+        const n = t.querySelector('.name');
+        const name = n ? norm(n.textContent) : norm((t.textContent || '').trim().split('\n')[0]);
+        if (!id || !name) return;
+        const live = liveTeamOf(id);
+        if (live && teamMap[id] !== live) { teamMap[id] = live; learned = true; }
+        const team = live || (typeof teamMap[id] === 'string' ? teamMap[id] : null);
+        const jobIds = Array.from(jobMap.get(id) || []);
+        techs.set(id, { id, name, named: !!n, team, jobIds, jobs: jobIds.length, hidden: !showing });
+      });
+      techs.forEach(t => { jobs += t.jobs; if (t.hidden) filtered = true; });
+      if (learned) set(TEAM_KEY, JSON.stringify(teamMap));
+      // The date is only read if asked for (reading it makes the browser lay out the page).
+      let day;
+      return { get date() { if (day === undefined) day = date(); return day; }, at: Date.now(), techs, jobs, filtered };
+    };
+    return { read, date, isToday, jobsFor, knownTeams: () => Object.keys(teamMap).length };
+  })();
+
+  // ===================================================================
   // Health check: notices when ServiceTitan has changed something a tool relies on,
   // and says so in a yellow bar instead of failing quietly.
   // ===================================================================
@@ -238,8 +330,7 @@
           if (!nameEl || !nameEl.textContent.trim()) flag(BOARD, 'can\'t read tech names', '.technician .name', 'board');
           // A team or people filter hides the team headers. That's fine once the Toolbox has
           // learned everyone's team from an unfiltered board (Tech Messages remembers them).
-          let knownTeams = 0;
-          try { knownTeams = Object.keys(JSON.parse(localStorage.getItem('stMsgTeamMap') || '{}') || {}).length; } catch (e) {}
+          const knownTeams = board.knownTeams();
           const FILTER_HINT = ' (if a board filter is on, clear it once so the Toolbox can learn the teams)';
           if (!knownTeams && !document.querySelector('.team-name')) flag('Tech Messages', 'can\'t find team names' + FILTER_HINT, '.team-name', 'board');
           const row = document.getElementById('team-timeline-row-' + id);
@@ -802,23 +893,10 @@
     const IN = ['.qa-job-notification-toggle input.ToggleSwitch__input', '.qa-job-notification-toggle input[type=checkbox]'];
     const LB = ['.qa-job-notification-toggle label.ToggleSwitch__html-label', '.qa-job-notification-toggle label'];
     const first = sels => { for (const s of sels) { const x = document.querySelector(s); if (x) return x; } return null; };
-    const boardDate = () => (document.body.innerText.match(/(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [A-Z][a-z]{2} \d+, \d{4}/) || ['the day shown'])[0];
-    const techsOnBoard = () => {
-      const seen = new Map();
-      document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
-        const id = t.getAttribute('data-technician-id');
-        if (seen.has(id)) return;
-        const n = t.querySelector('.name');
-        const name = (n ? n.textContent : t.textContent).trim().split('\n')[0].trim();
-        if (name) seen.set(id, name);
-      });
-      return seen;
-    };
-    const jobsFor = techId => {
-      const ids = new Set();
-      document.querySelectorAll('a.appointment[data-technician-id="' + techId + '"][data-job-id]').forEach(a => ids.add(a.getAttribute('data-job-id')));
-      return Array.from(ids);
-    };
+    // The board is read through the shared board reader (see "Board reader" near the top).
+    const boardDate = () => board.date() || 'the day shown';
+    const nameOf = id => { const t = board.read().techs.get(id); return t ? t.name : null; };
+    const jobsFor = board.jobsFor;
     const wrap = el('div', 'padding:8px 10px 10px;display:grid;gap:8px');
     const msg = el('div', 'font-size:12px;color:#444;min-height:16px');
     const say = s => { msg.textContent = s; };
@@ -859,14 +937,15 @@
         return;
       }
       const prev = pick.value || get('stNotifyTech') || '';
-      const techs = techsOnBoard();
+      const snap = board.read();
+      const day = snap.date || 'the day shown';
       const rows = [];
-      techs.forEach((name, id) => { const n = jobsFor(id).length; if (n) rows.push({ id, name, n }); });
+      snap.techs.forEach(t => { if (t.jobs) rows.push({ id: t.id, name: t.name, n: t.jobs }); });
       pick.textContent = '';
       if (!rows.length) {
         setEnabled(false);
         refreshBtn.disabled = false; refreshBtn.style.opacity = '1';
-        say('No jobs on the board for ' + boardDate() + '. Press ↻ after the board finishes loading.');
+        say('No jobs on the board for ' + day + '. Press ↻ after the board finishes loading.');
         return;
       }
       rows.forEach(r => {
@@ -876,12 +955,12 @@
       });
       if (rows.some(r => r.id === prev)) pick.value = prev;
       setEnabled(true);
-      if (!keepMsg || !msg.textContent) say(boardDate() + ': ' + rows.length + ' tech' + (rows.length === 1 ? '' : 's') + ' with jobs.');
+      if (!keepMsg || !msg.textContent) say(day + ': ' + rows.length + ' tech' + (rows.length === 1 ? '' : 's') + ' with jobs.');
     };
     const askConfirm = () => {
       if (!pick.value) return;
       const n = jobsFor(pick.value).length;
-      const name = techsOnBoard().get(pick.value) || 'this tech';
+      const name = nameOf(pick.value) || 'this tech';
       confirmText.textContent = 'Turn OFF notifications on ' + n + ' job' + (n === 1 ? '' : 's') + ' for ' + name + ' on ' + boardDate() + '?';
       confirmBox.style.display = 'flex';
     };
@@ -909,7 +988,7 @@
       copyBtn.textContent = 'Copy results';
       const techId = pick.value;
       set('stNotifyTech', techId);
-      const techName = techsOnBoard().get(techId) || 'Tech';
+      const techName = nameOf(techId) || 'Tech';
       const date = boardDate();
       const home = location.hash;
       const NO_SWITCH = 'COULD NOT FIND SWITCH';
@@ -1016,10 +1095,24 @@
     // "Who can be messaged" before anyone on it can be picked.
     const SUGGEST_BLOCK = /^(leadership team|executive leadership)$|human resources|accounts (payable|receivable)|compliance|^dispatch$|client care|account executive|concierge|client benefits/i;
     const MAX_PER_RUN = 57;
-    const K = { msgs: 'stMsgs', teams: 'stMsgTeams', never: 'stMsgNever', sel: 'stMsgSel', mode: 'stMsgMode', jobsOnly: 'stMsgJobsOnly', pick: 'stMsgPick', teamMap: 'stMsgTeamMap' };
+    // (Each tech's remembered team, stMsgTeamMap, now lives in the shared board reader.)
+    // stMsgAudDefaults (added in 1.4) is kept apart from stMsgs on purpose: stMsgs stays the
+    // same [name, text] list as always, so older versions and old saved lists keep working.
+    const K = { msgs: 'stMsgs', teams: 'stMsgTeams', never: 'stMsgNever', sel: 'stMsgSel', mode: 'stMsgMode', jobsOnly: 'stMsgJobsOnly', pick: 'stMsgPick', audDefaults: 'stMsgAudDefaults' };
     const loadJSON = (k, d) => { try { const v = JSON.parse(get(k)); return v == null ? d : v; } catch (e) { return d; } };
     const validMsgs = v => Array.isArray(v) && v.length > 0 && v.every(n => Array.isArray(n) && n.length === 2 && typeof n[0] === 'string' && typeof n[1] === 'string');
     let list = (() => { const v = loadJSON(K.msgs, null); return validMsgs(v) ? v : DEFAULT_MSGS.map(n => n.slice()); })();
+    // Who each message usually goes to: { "message name": "working" }. A message that isn't in
+    // here goes to the techs you picked (how every message worked before 1.4).
+    // Someone new to Tech Messages starts with Good Morning going to everyone working.
+    const AUD_WORKING = 'working', AUD_PICKED = 'picked';
+    const newToMessages = get(K.sel) == null && get(K.audDefaults) == null;
+    let audDefaults = loadJSON(K.audDefaults, null);
+    if (!audDefaults || typeof audDefaults !== 'object' || Array.isArray(audDefaults)) audDefaults = newToMessages ? { '☀️ Good Morning': AUD_WORKING } : {};
+    const usualAud = name => Object.prototype.hasOwnProperty.call(audDefaults, name) && audDefaults[name] === AUD_WORKING ? AUD_WORKING : AUD_PICKED;
+    const saveAudDefaults = () => set(K.audDefaults, JSON.stringify(audDefaults));
+    // Save the starting choice right away, so it isn't decided again on the next visit.
+    if (newToMessages) saveAudDefaults();
     // teamRules: { teamName: true (OK) | false (blocked) }, or null if never set up.
     // never: { techId: name }. selected: tech IDs picked last time.
     let teamRules = loadJSON(K.teams, null);
@@ -1028,52 +1121,26 @@
     let pickIdx = Math.max(0, Math.min(parseInt(get(K.pick) || '0', 10) || 0, list.length - 1));
 
     // ---- Reading the board ----
+    // Comes from the shared board reader. Each tech's team is remembered from the unfiltered
+    // board, so a team or people filter doesn't lose it. A tech the Toolbox has never seen with
+    // a team can't be messaged until it has.
+    // Only techs whose name comes from their .name tag are used here: the name is what's
+    // checked against the message panel before anything is typed.
     const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
-    const liveTeamOf = id => {
-      const row = document.getElementById('team-timeline-row-' + id);
-      const tc = row && row.closest('.team-container');
-      let h = tc && tc.previousElementSibling;
-      while (h && !h.querySelector('.team-name')) h = h.previousElementSibling;
-      const tn = h && h.querySelector('.team-name');
-      return tn ? norm(tn.textContent) : null;
+    const readBoard = () => {
+      const snap = board.read();
+      snap.techs.forEach((t, id) => { if (!t.named) snap.techs.delete(id); });
+      return snap;
     };
-    // Each tech's team, remembered from the board whenever the team headers are showing.
-    // A team or people filter hides those headers, so then the remembered team is used.
-    // A tech the Toolbox has never seen with a team can't be messaged until it has.
-    let teamMap = loadJSON(K.teamMap, {});
-    if (!teamMap || typeof teamMap !== 'object' || Array.isArray(teamMap)) teamMap = {};
-    let teamMapDirty = false;
-    const teamOf = id => {
-      const live = liveTeamOf(id);
-      if (live) {
-        if (teamMap[id] !== live) { teamMap[id] = live; teamMapDirty = true; }
-        return live;
-      }
-      return typeof teamMap[id] === 'string' ? teamMap[id] : null;
-    };
-    const boardTechs = () => {
-      const out = new Map();
-      teamMapDirty = false;
-      document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
-        const id = t.getAttribute('data-technician-id');
-        if (out.has(id)) return;
-        const n = t.querySelector('.name');
-        const name = norm(n ? n.textContent : '');
-        if (!name) return;
-        const jobs = document.querySelectorAll('a.appointment[data-technician-id="' + id + '"][data-job-id]').length;
-        out.set(id, { id, name, team: teamOf(id), jobs, hidden: true });
-      });
-      // Everyone stays in the list. "hidden" just notes who a board filter is hiding right now.
-      document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
-        const x = out.get(t.getAttribute('data-technician-id'));
-        if (x && x.hidden && techShowing(t)) x.hidden = false;
-      });
-      if (teamMapDirty) set(K.teamMap, JSON.stringify(teamMap));
-      return out;
-    };
+    const boardTechs = () => readBoard().techs;
     const teamsOnBoard = () => Array.from(new Set(Array.from(boardTechs().values()).map(t => t.team || '(no team)')));
     const teamAllowed = team => !!(teamRules && team && teamRules[team] === true);
     const canMessage = t => !!t && teamAllowed(t.team) && !never[t.id];
+    // Why the 🛡️ settings leave someone out (only asked about people canMessage says no to).
+    const whyNot = t => never[t.id] ? 'never-message list'
+      : !t.team ? 'team unknown (if a board filter is on, clear it once)'
+      : teamRules && teamRules[t.team] === false ? 'team blocked: ' + t.team
+      : 'new team, not approved yet: ' + t.team;
     const firstName = name => norm(name).split(' ')[0] || '';
 
     // ---- The Send Message panel (lives inside ServiceTitan's Activity Center) ----
@@ -1189,7 +1256,51 @@
     const vMain = mkView('main');
     const mainMsg = msgLine();
     const msgList = el('div', '');
-    const toLine = el('div', 'font-size:12px;margin-top:8px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;background:#fafafa');
+    // "Send to": everyone working on the day the board shows, or the techs you picked.
+    // Starts on the picked message's usual choice; clicking a button changes it for now.
+    let audience = usualAud((list[pickIdx] || [''])[0]);
+    const sendTo = el('div', 'margin-top:8px');
+    const audHead = el('div', 'display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:700;letter-spacing:.06em;color:#666');
+    const reread = smallBtn('↻', () => { emptyRetries = 0; say('Board read again.'); renderMain(); }, 'padding:1px 7px;font-size:12px');
+    reread.title = 'Read the board again';
+    audHead.append(el('span', '', 'SEND TO'), reread);
+    const audRow = el('div', 'display:flex;gap:6px;margin-top:4px');
+    const audBtn = onClick => {
+      const b = el('button', 'flex:1;min-width:0;padding:6px;cursor:pointer;border:1px solid #aaa;border-radius:6px;background:#f5f5f5;color:#111;font:inherit;text-align:center');
+      b.type = 'button';
+      b.addEventListener('mousedown', e => e.preventDefault());
+      b.onclick = onClick;
+      b.top = el('div', 'font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis');
+      b.sub = el('div', 'font-size:11px;color:#555;margin-top:1px');
+      b.append(b.top, b.sub);
+      return b;
+    };
+    const showAud = (b, on, top, sub, title) => {
+      b.style.borderColor = on ? '#1a6ed8' : '#aaa';
+      b.style.background = on ? '#e3eefc' : '#f5f5f5';
+      b.style.boxShadow = on ? 'inset 0 -3px 0 #1a6ed8' : 'none';
+      b.top.textContent = top; b.sub.textContent = sub; b.title = title;
+    };
+    const workingBtn = audBtn(() => { audience = AUD_WORKING; exclOpen = false; renderMain(); });
+    const pickedBtn = audBtn(() => { audience = AUD_PICKED; exclOpen = false; if (!selected.size) return openPicker(); renderMain(); });
+    audRow.append(workingBtn, pickedBtn);
+    // Offers to make the current choice the message's usual one (also in ✏️ Edit messages).
+    const usualBtn = smallBtn('', () => {
+      const name = list[pickIdx][0];
+      if (audience === AUD_WORKING) audDefaults[name] = AUD_WORKING; else delete audDefaults[name];
+      const ok = saveAudDefaults();
+      say(ok ? '✅ ' + name + ' will start on ' + (audience === AUD_WORKING ? '🚚 Working' : '👤 Picked') + ' from now on.' : '⚠️ Changed for now, but this browser wouldn\'t save it for next time.');
+      renderMain();
+    }, 'display:none;margin-top:5px;padding:0;border:none;background:none;color:#1a6ed8;text-decoration:underline;font-size:11px;text-align:left');
+    const toLine = el('div', 'font-size:12px;margin-top:6px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;background:#fafafa');
+    const toText = el('div', '');
+    // "🛡️ 3 excluded": who the safety settings leave out of this group, and why. Click to see.
+    let exclOpen = false;
+    const exclBtn = smallBtn('', () => { exclOpen = !exclOpen; renderMain(); }, 'display:none;margin-top:5px;padding:2px 7px;font-size:11px');
+    const exclList = el('div', 'display:none;margin-top:4px;max-height:120px;overflow:auto;font-size:11px;color:#444');
+    const boardNote = el('div', 'display:none;margin-top:5px;font-size:11px;color:#8a5a00;white-space:pre-wrap');
+    toLine.append(toText, exclBtn, exclList, boardNote);
+    sendTo.append(audHead, audRow, usualBtn, toLine);
     const modeRow = el('div', 'margin-top:8px;font-size:12px;display:grid;gap:2px');
     let mode = get(K.mode) === 'auto' ? 'auto' : 'type';
     const mkRadio = (val, label) => {
@@ -1199,7 +1310,7 @@
       l.append(r, document.createTextNode(label));
       return l;
     };
-    modeRow.append(mkRadio('type', 'Type only: I press Send for each person'), mkRadio('auto', 'Auto-send: sends to everyone picked'));
+    modeRow.append(mkRadio('type', 'Type only: I press Send for each person'), mkRadio('auto', 'Auto-send: sends to everyone in the To list'));
     const startBtn = smallBtn('Start', () => openConfirm(), PRIMARY + 'margin-top:8px;' + FULL + 'padding:8px');
     const mainNav = row();
     mainNav.append(
@@ -1208,12 +1319,35 @@
       smallBtn('✏️ Edit messages', () => openEditor()),
       smallBtn('🛡️ Who can be messaged', () => openSafety())
     );
-    vMain.append(mainMsg, msgList, toLine, modeRow, startBtn, mainNav);
+    vMain.append(mainMsg, msgList, sendTo, modeRow, startBtn, mainNav);
 
+    // Who the chosen group sends to right now, read fresh from the board.
+    //   people:   who would be messaged (allowed by 🛡️ and showing on the board), in board order
+    //             for "working" and in the order picked for "picked"
+    //   excluded: who the 🛡️ settings leave out of this group (shown with the reason)
+    //   hiddenPicked: picked techs a board filter is hiding (can't be messaged until it's cleared)
+    // Safety settings always win: nobody in `excluded` is ever sent to.
     const recipients = () => {
-      const techs = boardTechs();
-      return Array.from(selected).map(id => techs.get(id)).filter(t => canMessage(t));
+      const snap = readBoard();
+      const all = Array.from(snap.techs.values());
+      const working = all.filter(t => t.jobs > 0 && !t.hidden);
+      const picked = Array.from(selected).map(id => snap.techs.get(id)).filter(Boolean);
+      const pickedShowing = picked.filter(t => !t.hidden);
+      const pool = audience === AUD_WORKING ? working : pickedShowing;
+      return {
+        snap,
+        people: pool.filter(canMessage),
+        excluded: pool.filter(t => !canMessage(t)),
+        hiddenPicked: audience === AUD_PICKED ? picked.filter(t => t.hidden && canMessage(t)).length : 0,
+        workingCount: working.filter(canMessage).length,
+        pickedCount: pickedShowing.filter(canMessage).length
+      };
     };
+    // "Tue, Oct 6, 2026" -> "today", or "Oct 6" for another day (short enough for the button).
+    const shortDay = d => !d ? '' : board.isToday(d) ? 'today' : d.replace(/^[A-Za-z]+, /, '').replace(/, \d{4}$/, '');
+    const longDay = d => !d ? 'the day shown' : board.isToday(d) ? 'today (' + d + ')' : d;
+    const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+    let emptyRetries = 0, emptyTimer = null;
     const renderMain = () => {
       msgList.textContent = '';
       list.forEach(([name, text], i) => {
@@ -1222,18 +1356,58 @@
         b.type = 'button';
         b.title = text;
         b.addEventListener('mousedown', e => e.preventDefault());
-        b.onclick = () => { pickIdx = i; set(K.pick, String(i)); renderMain(); };
+        // Picking a message also switches "Send to" to that message's usual group.
+        b.onclick = () => { pickIdx = i; set(K.pick, String(i)); audience = usualAud(name); exclOpen = false; renderMain(); };
         msgList.appendChild(b);
       });
-      if (!onBoard()) { say('Open the Dispatch board to send messages.'); startBtn.disabled = true; startBtn.style.opacity = '.5'; toLine.textContent = ''; return; }
-      if (!teamRules) { say('First, set up who can be messaged (🛡️ below). Nothing can be sent until you do.'); startBtn.disabled = true; startBtn.style.opacity = '.5'; toLine.textContent = 'To: nobody yet'; return; }
+      const off = () => { startBtn.disabled = true; startBtn.style.opacity = '.5'; sendTo.style.display = 'none'; };
+      if (!onBoard()) { say('Open the Dispatch board to send messages.'); off(); return; }
+      if (!teamRules) { say('First, set up who can be messaged (🛡️ below). Nothing can be sent until you do.'); off(); return; }
+      sendTo.style.display = 'block';
       const r = recipients();
-      toLine.textContent = 'To: ' + (r.length ? r.length + ' tech' + (r.length === 1 ? '' : 's') + ' (' + r.slice(0, 4).map(t => t.name).join(', ') + (r.length > 4 ? ', …' : '') + ')' : 'nobody picked yet. Click 👥 Choose techs.');
-      const hiddenPicked = r.filter(t => t.hidden).length;
-      if (hiddenPicked) toLine.textContent += ' · ' + hiddenPicked + ' hidden by the board filter will be skipped';
-      startBtn.disabled = !r.length; startBtn.style.opacity = r.length ? '1' : '.5';
+      const n = r.people.length;
+      const day = shortDay(r.snap.date);
+      showAud(workingBtn, audience === AUD_WORKING, '🚚 Working' + (day ? ' ' + day : ''), plural(r.workingCount, 'tech'),
+        'Everyone allowed by 🛡️ who has at least one job on the board for ' + longDay(r.snap.date));
+      showAud(pickedBtn, audience === AUD_PICKED, '👤 Picked', plural(r.pickedCount, 'tech'),
+        'The techs you chose with 👥 Choose techs');
+      const name = list[pickIdx][0];
+      usualBtn.style.display = usualAud(name) !== audience ? 'block' : 'none';
+      usualBtn.textContent = '☆ Always use ' + (audience === AUD_WORKING ? '🚚 Working' : '👤 Picked') + ' for ' + (name || 'this message');
+
+      if (n) {
+        toText.textContent = 'To: ' + plural(n, 'tech') + ' (' + r.people.slice(0, 4).map(t => t.name).join(', ') + (n > 4 ? ', …' : '') + ')';
+      } else if (audience === AUD_PICKED) {
+        toText.textContent = 'Nobody picked yet. Click 👥 Choose techs.';
+      } else if (!r.snap.techs.size || !r.snap.jobs) {
+        toText.textContent = 'No jobs on the board for ' + longDay(r.snap.date) + ' yet. If the board is still loading, press ↻.';
+      } else {
+        toText.textContent = 'Nobody allowed has jobs on the board for ' + longDay(r.snap.date) + '.';
+      }
+      exclBtn.style.display = r.excluded.length ? 'inline-block' : 'none';
+      exclBtn.textContent = '🛡️ ' + r.excluded.length + ' excluded ' + (exclOpen ? '▾' : '▸');
+      exclBtn.title = 'Left out by your 🛡️ Who can be messaged settings';
+      exclList.textContent = '';
+      r.excluded.forEach(t => exclList.appendChild(el('div', 'padding:1px 0', '• ' + t.name + ' — ' + whyNot(t))));
+      exclList.style.display = exclOpen && r.excluded.length ? 'block' : 'none';
+      const notes = [];
+      if (audience === AUD_WORKING && r.snap.filtered) notes.push('A board filter is on, so only techs showing on the board are included.');
+      if (r.hiddenPicked) notes.push(r.hiddenPicked + ' picked ' + (r.hiddenPicked === 1 ? 'is' : 'are') + ' hidden by the board filter and won\'t be messaged.');
+      if (n > MAX_PER_RUN) notes.push('⚠️ ' + n + ' is over the limit of ' + MAX_PER_RUN + ' per run. Use 👥 Choose techs to send in smaller groups.');
+      boardNote.textContent = notes.join('\n');
+      boardNote.style.display = notes.length ? 'block' : 'none';
+
+      const canStart = n > 0 && n <= MAX_PER_RUN;
+      startBtn.disabled = !canStart; startBtn.style.opacity = canStart ? '1' : '.5';
       startBtn.textContent = mode === 'auto' ? 'Review and send…' : 'Start (type only)';
-      if (!mainMsg.textContent || /^(Open the Dispatch|First, set up)/.test(mainMsg.textContent)) say('Pick a message, choose techs, then Start.');
+      if (!mainMsg.textContent || /^(Open the Dispatch|First, set up|Pick a message)/.test(mainMsg.textContent)) say('Pick a message, check who it goes to, then ' + (mode === 'auto' ? 'Review and send.' : 'Start.'));
+      // The Toolbox can open before ServiceTitan has drawn the board. While the board looks
+      // empty, read it again every couple of seconds for a little while (reading only).
+      clearTimeout(emptyTimer);
+      if (!r.snap.jobs && emptyRetries < 10) {
+        emptyRetries++;
+        emptyTimer = setTimeout(() => { if (!running && panel.isConnected && views.main.style.display === 'block' && msgsPane.style.display === 'block') renderMain(); }, 2000);
+      } else if (r.snap.jobs) emptyRetries = 0;
     };
     const say = s => { mainMsg.textContent = s; };
 
@@ -1249,7 +1423,7 @@
     pickNav.append(
       smallBtn('Select all shown', () => { shown.forEach(t => selected.add(t.id)); saveSel(); renderPicker(); }),
       smallBtn('Clear', () => { selected.clear(); saveSel(); renderPicker(); }),
-      smallBtn('Done', () => { sub('main'); renderMain(); }, PRIMARY)
+      smallBtn('Done', () => { audience = AUD_PICKED; exclOpen = false; sub('main'); renderMain(); }, PRIMARY)
     );
     vPick.append(head('👥 Choose techs'), pickMsg, search, jobsOnlyRow, pickList, pickNav);
     search.oninput = () => renderPicker();
@@ -1355,19 +1529,40 @@
     // ===== Edit messages =====
     const vEdit = mkView('edit');
     const editMsg = msgLine();
-    const EDIT_HINT = 'Use {first} for the tech\'s first name. Saved in this browser.';
+    const EDIT_HINT = 'Use {first} for the tech\'s first name. 🚚 Working / 👤 Picked under each message is who it starts on when you pick it (you can still change it before sending). Saved in this browser.';
     editMsg.textContent = EDIT_HINT;
-    const ed = listEditor('message', 'Button name (e.g. ☀️ Good Morning)', 'Message text', 'calc(100vh - 300px)');
-    const openEditor = () => { ed.load(list); sub('edit'); };
+    // "Starts on" picker on each message. It rides along on the row as `.to` (the list editor
+    // keeps it through edits and reordering) and is saved separately, matched by message name.
+    const startsOn = n => {
+      const sel = el('select', 'max-width:130px;padding:3px 4px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
+      sel.title = 'Starts on: who this message goes to when you pick it';
+      [['', '👤 Picked'], [AUD_WORKING, '🚚 Working']].forEach(([v, label]) => {
+        const o = el('option', '', label); o.value = v; sel.appendChild(o);
+      });
+      sel.value = n.to === AUD_WORKING ? AUD_WORKING : '';
+      sel.onchange = () => { if (sel.value) n.to = sel.value; else delete n.to; };
+      return sel;
+    };
+    const ed = listEditor('message', 'Button name (e.g. ☀️ Good Morning)', 'Message text', 'calc(100vh - 300px)', { rowExtra: startsOn });
+    const openEditor = () => {
+      ed.load(list.map(n => { const c = n.slice(); if (usualAud(n[0]) === AUD_WORKING) c.to = AUD_WORKING; return c; }));
+      sub('edit');
+    };
     const editNav = row();
     editNav.append(
       smallBtn('Save', () => {
         const r = ed.clean();
         if (r.error) { editMsg.textContent = r.error; return; }
-        list = r.list; set(K.msgs, JSON.stringify(list));
+        // Messages are saved as plain [name, text] pairs, exactly as before 1.4.
+        list = r.list.map(n => [n[0], n[1]]);
+        const ok = set(K.msgs, JSON.stringify(list));
+        audDefaults = {};
+        r.list.forEach(n => { if (n.to === AUD_WORKING) audDefaults[n[0]] = AUD_WORKING; });
+        saveAudDefaults();
         pickIdx = Math.min(pickIdx, list.length - 1); set(K.pick, String(pickIdx));
+        audience = usualAud(list[pickIdx][0]);
         editMsg.textContent = EDIT_HINT;
-        sub('main'); say('✅ Messages saved.'); renderMain();
+        sub('main'); say(ok ? '✅ Messages saved.' : '⚠️ Messages updated for now, but this browser wouldn\'t save them for next time.'); renderMain();
       }, PRIMARY),
       smallBtn('Cancel', () => { editMsg.textContent = EDIT_HINT; sub('main'); renderMain(); }),
       smallBtn('+ Add a message', () => ed.add())
@@ -1384,14 +1579,19 @@
     const confNav = row();
     confNav.append(confGo, smallBtn('Cancel', () => { sub('main'); renderMain(); }));
     vConfirm.append(head('Check before sending'), confText, confAsk, confNav);
-    let pending = [];
+    let pending = [], pendingWho = '';
     const openConfirm = () => {
       if (lock) return say('Wait for ' + lock + ' to finish first.');
-      pending = recipients();
-      if (!pending.length) return say('Nobody picked. Click 👥 Choose techs.');
-      if (pending.length > MAX_PER_RUN) return say('⚠️ ' + pending.length + ' people picked. For safety the limit is ' + MAX_PER_RUN + ' per run.');
+      // Read the board again now: the list on this screen is exactly who gets messaged.
+      const r = recipients();
+      pending = r.people;
+      if (!pending.length) { renderMain(); return say(audience === AUD_WORKING ? 'Nobody to send to: no allowed techs have jobs on the board.' : 'Nobody picked. Click 👥 Choose techs.'); }
+      if (pending.length > MAX_PER_RUN) { renderMain(); return say('⚠️ ' + pending.length + ' people. For safety the limit is ' + MAX_PER_RUN + ' per run.'); }
+      pendingWho = audience === AUD_WORKING ? 'working ' + (r.snap.date ? (board.isToday(r.snap.date) ? 'today, ' : 'on ') + r.snap.date : 'on the day shown') : 'you picked';
       const tmpl = list[pickIdx][1];
-      confText.textContent = 'Message: "' + tmpl + '"\n\nTo ' + pending.length + ' tech' + (pending.length === 1 ? '' : 's') + ':\n' + pending.map(t => '• ' + t.name + '  (' + (t.team || 'no team') + ')').join('\n');
+      confText.textContent = 'Message: "' + tmpl + '"\n\nTo ' + plural(pending.length, 'tech') + ' ' + pendingWho + ':\n' + pending.map(t => '• ' + t.name + '  (' + (t.team || 'no team') + ')').join('\n') +
+        (r.excluded.length ? '\n\n🛡️ Not included (your safety settings):\n' + r.excluded.map(t => '• ' + t.name + ' — ' + whyNot(t)).join('\n') : '') +
+        (r.hiddenPicked ? '\n\nNot included: ' + plural(r.hiddenPicked, 'picked tech') + ' hidden by the board filter.' : '');
       confAsk.textContent = '';
       confInput.value = '';
       if (mode === 'auto') {
@@ -1447,7 +1647,7 @@
       stopBtn.disabled = false; stopBtn.textContent = 'Stop'; stopBtn.style.display = 'inline-block';
       doneBtn.style.display = 'none'; copyBtn.textContent = 'Copy results';
       sub('run');
-      add((auto ? 'Auto-send' : 'Type only') + ': "' + tmpl + '" to ' + people.length);
+      add((auto ? 'Auto-send' : 'Type only') + ': "' + tmpl + '" to ' + people.length + ' (' + pendingWho + ')');
       const tally = {};
       const out = (t, s, k) => { tally[k] = (tally[k] || 0) + 1; add(t.name + ': ' + s); };
       try {
@@ -1534,7 +1734,7 @@
     msgsPane.appendChild(pane);
     sub('main');
     return {
-      refresh: () => { if (!running) { sub('main'); renderMain(); } },
+      refresh: () => { if (!running) { emptyRetries = 0; sub('main'); renderMain(); } },
       isRunning: () => running,
       stop: requestStop
     };
@@ -1562,32 +1762,50 @@
   });
 
   // Closing while Job Notifications or Tech Messages is running would hide the panel but
-  // leave the run going in the background. So ask first, stop the run, then close.
+  // leave the run going in the background. So ask first, stop the run, and only close once
+  // the run has really stopped. If it's slow to stop, the Toolbox stays open and says so.
   const closeBar = el('div', 'display:none;padding:8px 12px;background:#fdecec;color:#7a1010;font-size:12px;border-bottom:1px solid #e0a0a8');
   const closeText = el('div', 'margin-bottom:6px');
   const closeBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
   closeBar.append(closeText, closeBtns);
   header.after(closeBar);
-  let closing = false;
+  let closing = false, closeAttempt = 0;
+  const anyRunning = () => notify.isRunning() || msgs.isRunning();
   const finishClose = () => {
+    // Last guard: never remove the panel while a run is still going.
+    if (anyRunning()) return false;
     notes.cleanup();
     panel.remove();
     delete window.__stToolbox;
+    return true;
   };
   const close = () => {
     const runner = notify.isRunning() ? notify : msgs.isRunning() ? msgs : null;
     if (!runner) return finishClose();
     if (closing) return;
-    closeText.textContent = (runner === notify ? 'Job Notifications' : 'Tech Messages') + ' is still running. Closing now would leave it running out of sight.';
+    const toolName = runner === notify ? 'Job Notifications' : 'Tech Messages';
+    closeText.textContent = toolName + ' is still running. Closing now would leave it running out of sight.';
     closeBtns.textContent = '';
     closeBtns.append(
       smallBtn('Stop it and close', async () => {
         closing = true;
+        const attempt = ++closeAttempt;
         closeBtns.textContent = '';
         closeText.textContent = 'Stopping, then closing...';
         runner.stop();
-        await until(() => !notify.isRunning() && !msgs.isRunning(), 30000, 250);
-        finishClose();
+        const stopped = await until(() => !anyRunning(), 30000, 250);
+        if (stopped && finishClose()) return;
+        // Still going after 30 seconds: keep the Toolbox open so the run isn't hidden,
+        // and let the person close it once the run has actually stopped.
+        closing = false;
+        closeText.textContent = '⚠️ ' + toolName + ' is still stopping. The Toolbox will stay open so the running task isn\'t hidden.';
+        closeBtns.append(smallBtn('Keep it open', () => { closeBar.style.display = 'none'; }));
+        await until(() => !anyRunning(), 10 * 60000, 500);
+        // Only update the bar if it's still the one this attempt put up.
+        if (anyRunning() || !panel.isConnected || attempt !== closeAttempt || closeBar.style.display === 'none') return;
+        closeText.textContent = '✅ ' + toolName + ' has stopped. You can close the Toolbox now.';
+        closeBtns.textContent = '';
+        closeBtns.append(smallBtn('Close now', () => finishClose(), DANGER), smallBtn('Keep it open', () => { closeBar.style.display = 'none'; }));
       }, DANGER),
       smallBtn('Keep running', () => { closeBar.style.display = 'none'; })
     );

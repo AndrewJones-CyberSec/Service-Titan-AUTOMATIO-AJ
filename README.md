@@ -22,9 +22,11 @@ On the Dispatch board, pick a tech from the list (it only shows techs with jobs 
 Any job that has a problem gets one more try after the rest of the run is done. Shows progress as it goes, with a Stop button and a copyable list of results.
 
 **💬 Tech Messages**
-Send a saved message (for example Good Morning or ETA) to the techs you pick. It opens each tech's Send Message panel, types the message, and either waits for you to press Send (**Type only**) or sends it for you (**Auto-send**).
+Send a saved message (for example Good Morning or ETA) to everyone working or to the techs you pick. It opens each tech's Send Message panel, types the message, and either waits for you to press Send (**Type only**) or sends it for you (**Auto-send**).
 
-- **✏️ Edit messages** to change or add messages. Use `{first}` for the tech's first name.
+- **Send to**: **🚚 Working today** (everyone allowed who has a job on the board for the day shown) or **👤 Picked** (the techs you chose). Each message can remember which one it starts on, so Good Morning is: click **☀️ Good Morning**, then **Review and send**.
+- **🛡️ excluded** shows who your safety settings leave out of the group, and why.
+- **✏️ Edit messages** to change or add messages and set where each one starts. Use `{first}` for the tech's first name.
 - **👥 Choose techs** by team, by name, or only techs with jobs on the board.
 - **🛡️ Who can be messaged**: tick the teams that are OK to message and add anyone to a never-message list (for example the owner). Nothing can be sent until this is set up, and any new team starts blocked.
 
