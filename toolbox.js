@@ -3,7 +3,7 @@
   ====================
   One panel with five tools for the ServiceTitan Dispatch board:
     - Notes: adds a ready-made note (sorted into folders) to a job's customer in one click.
-    - Job Notifications: checks or turns off job notifications for one tech's jobs.
+    - Job Notifications: checks or turns off job notifications for one tech's jobs, or jobs you pick.
     - Tech Messages: sends a saved message (Good Morning, ETA, ...) to the techs you pick.
     - Business Unit: switches the jobs you pick to a branch (Mendenhall Branch by default).
     - Customer Texts: texts customers a saved message (holds, tech updates, reschedules, ...).
@@ -20,7 +20,7 @@
 (() => {
   const VERSION = '1.5';
   const WHATS_NEW = {
-    '1.5': 'New: 📱 Customer Texts. Text customers a saved message from folders (Holds, Tech Updates, Reschedule). Load every hold at once and filter by job type, or pick jobs on the board. {dispatcher} fills in your first name.',
+    '1.5': 'New: 📱 Customer Texts. Text customers a saved message from folders (Holds, Tech Updates, Reschedule). Load every hold at once and filter by job type, or pick jobs on the board. {dispatcher} fills in your first name. Also: Job Notifications and Business Unit can pick jobs from the Unassigned / Hold list too.',
     '1.4': 'New: 🏢 Business Unit. Pick jobs on the board (or type their numbers) and switch them all to Mendenhall Branch, or another branch, in one go. ↩ Put back undoes it.',
     '1.3.1': 'Tech Messages can now send to up to 57 people per run (was 50).',
     '1.3': 'Quick Notes is now 📝 Notes, with folders: Updates, Techs and Reschedule. Your notes are in Updates. Add your own folders with ✏️ Edit folders, and move notes between folders with ✏️ Edit notes.',
@@ -53,6 +53,31 @@
   // True if a tech's name is actually showing on the board (a team or people filter hides the rest).
   const techShowing = t => visible((t && t.querySelector('.name')) || t);
   const onBoard = () => /dispatchboard/i.test(location.hash);
+  // A job clicked on the Dispatch board: a bubble on the timeline, or a row in the job list at
+  // the bottom (Unassigned, Hold and the other tabs). Returns the job number, or null.
+  const clickedJob = target => {
+    if (!target || !target.closest) return null;
+    const a = target.closest('a.appointment[data-job-id]');
+    if (a) return a.getAttribute('data-job-id');
+    const tr = target.closest('.job-list tr[class*="qa-job-"]');
+    const m = tr && /(?:^|\s)qa-job-(\d+)(?:\s|$)/.exec(String(tr.className));
+    return m ? m[1] : null;
+  };
+  // What the job list at the bottom of the board knows about a job on the tab showing.
+  const listJob = j => {
+    try {
+      const jl = document.querySelector('.job-list');
+      const vm = jl && window.ko && window.ko.dataFor(jl);
+      const list = (vm && vm.JobList && window.ko.unwrap(vm.JobList.AllVisibleJobs)) || [];
+      const x = list.find(y => String(window.ko.unwrap(y.JobId)) === String(j));
+      if (!x) return null;
+      return { customer: String(window.ko.unwrap(x.Customer) || '').replace(/\s+/g, ' ').trim(), customerId: window.ko.unwrap(x.CustomerId) || null };
+    } catch (e) { return null; }
+  };
+  // Highlights picked jobs on the timeline and in the job list.
+  const pickedCss = (ids, color, soft) => !ids.length ? '' :
+    ids.map(j => 'a.appointment[data-job-id="' + j + '"]').join(',') + '{outline:3px solid ' + color + ' !important;outline-offset:-3px !important;box-shadow:0 0 0 3px ' + soft + ' !important}' +
+    ids.map(j => '.job-list tr.qa-job-' + j + ' > td').join(',') + '{background:' + soft + ' !important;box-shadow:inset 0 2px 0 ' + color + ',inset 0 -2px 0 ' + color + ' !important}';
   const isMac = /Mac|iPhone|iPad/i.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || '');
   const ALT = isMac ? 'Option' : 'Alt';
   const el = (tag, css, text) => { const e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; };
@@ -299,6 +324,7 @@
     titleText.textContent = TITLES[name];
     set('stView', name);
     if (name !== 'notes' && typeof notes !== 'undefined') notes.leave();
+    if (name !== 'jobs' && typeof notify !== 'undefined') notify.leave();
     if (name === 'jobs' && typeof notify !== 'undefined') notify.refresh();
     if (name === 'msgs' && typeof msgs !== 'undefined') msgs.refresh();
     if (name !== 'biz' && typeof biz !== 'undefined') biz.leave();
@@ -857,13 +883,128 @@
     progress.append(log, progRow);
     const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
     navRow.append(smallBtn('← Menu', () => { if (!running) showView('menu'); }));
-    wrap.append(msg, pickRow, actions, confirmBox, progress, navRow);
+    // Which jobs: one tech's jobs (the list above), or jobs you pick yourself.
+    let src = get('stNotifySrc') === 'picked' ? 'picked' : 'tech';
+    const srcRow = el('div', 'display:grid;gap:1px;font-size:12px');
+    const srcRadio = (val, text) => {
+      const l = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer');
+      const r = el('input'); r.type = 'radio'; r.name = 'st-notify-src'; r.checked = src === val;
+      r.onchange = () => { src = val; set('stNotifySrc', val); if (val !== 'picked') setPicking(false); confirmBox.style.display = 'none'; refresh(); };
+      l.append(r, document.createTextNode(text));
+      return { l, r };
+    };
+    const srcTech = srcRadio('tech', '👷 A tech\'s jobs'), srcPicked = srcRadio('picked', '🖱️ Jobs I pick (board, Unassigned / Hold list, or job #)');
+    srcRow.append(srcTech.l, srcPicked.l);
+    const pickedBox = el('div', 'display:none;gap:5px');
+    const pickedHead = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap');
+    const pickedCount = el('span', 'font-size:12px;font-weight:600;margin-right:auto', '');
+    const pickOnBtn = smallBtn('🖱️ Pick on board', () => setPicking(!picking));
+    const listAllBtn = smallBtn('+ All in the list', () => addListTab());
+    listAllBtn.title = 'Adds every job showing in the list at the bottom of the board (the tab and page that are open)';
+    const pickedClear = smallBtn('Clear', () => { if (running) return; picked.clear(); paint(); refresh(); });
+    pickedHead.append(pickedCount, pickOnBtn, listAllBtn, pickedClear);
+    const pickedList = el('div', 'max-height:140px;overflow:auto;border:1px solid #ddd;border-radius:6px;background:#fafafa');
+    const typedRow = el('div', 'display:flex;gap:6px');
+    const typedBox = el('input', 'flex:1;min-width:0;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
+    typedBox.type = 'text'; typedBox.placeholder = 'Or type job #s';
+    const typedAdd = smallBtn('Add', () => addTyped());
+    typedBox.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); addTyped(); } };
+    typedRow.append(typedBox, typedAdd);
+    pickedBox.append(pickedHead, pickedList, typedRow);
+    wrap.append(msg, srcRow, pickRow, pickedBox, actions, confirmBox, progress, navRow);
     jobsPane.appendChild(wrap);
     let running = false, stop = false;
     const add = s => { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
-    const setEnabled = on => { [pick, refreshBtn, checkBtn, offBtn].forEach(x => { x.disabled = !on; x.style.opacity = on ? '1' : '.5'; }); };
+
+    // ---- Jobs you pick ----
+    const picked = new Map();   // job number -> label
+    let picking = false;
+    const paintStyle = el('style');
+    (document.head || document.documentElement).appendChild(paintStyle);
+    const paint = () => { paintStyle.textContent = pickedCss(Array.from(picked.keys()), '#ef6c00', 'rgba(239,108,0,.22)'); };
+    const labelOf = j => {
+      const l = listJob(j);
+      if (l && l.customer) return l.customer;
+      const a = document.querySelector('a.appointment[data-job-id="' + j + '"]');
+      return a ? String(a.innerText || a.textContent).replace(/\s+/g, ' ').trim().slice(0, 38) : '';
+    };
+    const setPicking = on => {
+      picking = !!on && !running;
+      pickOnBtn.textContent = picking ? '🖱️ Picking: ON' : '🖱️ Pick on board';
+      pickOnBtn.style.background = picking ? '#ef6c00' : '#fff';
+      pickOnBtn.style.color = picking ? '#fff' : '#111';
+      pickOnBtn.style.borderColor = picking ? '#ef6c00' : '#aaa';
+      pickOnBtn.style.fontWeight = picking ? '600' : '400';
+      if (src === 'picked') renderPicked();
+    };
+    const onPickClick = e => {
+      if (!picking || running || !onBoard() || panel.contains(e.target)) return;
+      const j = clickedJob(e.target);
+      if (!j) return;
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      if (picked.has(j)) picked.delete(j); else picked.set(j, labelOf(j));
+      paint(); refresh();
+    };
+    window.addEventListener('click', onPickClick, true);
+    const addTyped = () => {
+      if (running) return;
+      const nums = typedBox.value.match(/\d{4,}/g) || [];
+      if (!nums.length) { say('Type one or more job numbers first.'); return; }
+      let n = 0;
+      nums.forEach(j => { if (!picked.has(j)) { picked.set(j, labelOf(j)); n++; } });
+      typedBox.value = '';
+      paint(); refresh(); say('Added ' + n + ' job' + (n === 1 ? '' : 's') + '.');
+    };
+    // Every job showing in the list at the bottom of the board (the open tab and page).
+    const addListTab = () => {
+      if (running) return;
+      let caption = '', jobs = [];
+      try {
+        const jl = document.querySelector('.job-list');
+        const vm = jl && window.ko && window.ko.dataFor(jl);
+        const JL = vm && vm.JobList;
+        const view = JL && window.ko.unwrap(JL.View);
+        caption = (view && view.Caption) || '';
+        jobs = (JL && window.ko.unwrap(JL.AllVisibleJobs)) || [];
+      } catch (e) {}
+      if (!jobs.length) {
+        // Fall back to the rows showing in the list.
+        document.querySelectorAll('.job-list tr[class*="qa-job-"]').forEach(tr => { const j = clickedJob(tr); if (j && visible(tr)) jobs.push({ JobId: j }); });
+      }
+      if (!jobs.length) { say('The list at the bottom of the board is empty. Open a tab there (Unassigned, Hold, …) first.'); return; }
+      let n = 0;
+      jobs.forEach(x => { const j = String(window.ko ? window.ko.unwrap(x.JobId) : x.JobId); if (/^\d+$/.test(j) && !picked.has(j)) { picked.set(j, labelOf(j)); n++; } });
+      paint(); refresh();
+      say('Added ' + n + ' job' + (n === 1 ? '' : 's') + (caption ? ' from the ' + caption + ' list' : ' from the list') + ' (the page showing).');
+    };
+    const renderPicked = () => {
+      pickedCount.textContent = picked.size + ' job' + (picked.size === 1 ? '' : 's') + ' picked';
+      pickedList.textContent = '';
+      if (!picked.size) pickedList.appendChild(el('div', 'padding:6px 8px;font-size:12px;color:#666', picking ? 'Click jobs on the board, or in the Unassigned / Hold list at the bottom, to add them. Click again to take one off.' : 'Press 🖱️ Pick on board, use + All in the list, or type job numbers.'));
+      picked.forEach((lab, j) => {
+        const r = el('div', 'display:flex;gap:6px;align-items:center;padding:3px 6px;border-bottom:1px solid #eee;font-size:12px');
+        const n = el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
+        n.append(el('b', '', '#' + j), document.createTextNode(lab ? '  ' + lab : ''));
+        r.append(n, smallBtn('✕', () => { if (running) return; picked.delete(j); paint(); refresh(); }, 'padding:1px 6px'));
+        pickedList.appendChild(r);
+      });
+    };
+    const setEnabled = on => {
+      [pick, refreshBtn, checkBtn, offBtn, pickOnBtn, listAllBtn, pickedClear, typedBox, typedAdd].forEach(x => { x.disabled = !on; x.style.opacity = on ? '1' : '.5'; });
+      // Switching between "a tech's jobs" and "jobs I pick" only locks during a run.
+      [srcTech.r, srcPicked.r].forEach(x => { x.disabled = running; });
+    };
     const refresh = keepMsg => {
       if (running) return;
+      pickRow.style.display = src === 'tech' ? 'flex' : 'none';
+      pickedBox.style.display = src === 'picked' ? 'grid' : 'none';
+      if (src === 'picked') {
+        renderPicked();
+        setEnabled(true);
+        if (!picked.size) [checkBtn, offBtn].forEach(x => { x.disabled = true; x.style.opacity = '.5'; });
+        if (!keepMsg && !msg.textContent) say(onBoard() ? 'Pick jobs, then check them or turn their notifications off.' : 'Open the Dispatch board to pick jobs there, or type job numbers.');
+        return;
+      }
       if (!onBoard()) {
         pick.textContent = '';
         setEnabled(false);
@@ -891,6 +1032,12 @@
       if (!keepMsg || !msg.textContent) say(boardDate() + ': ' + rows.length + ' tech' + (rows.length === 1 ? '' : 's') + ' with jobs.');
     };
     const askConfirm = () => {
+      if (src === 'picked') {
+        if (!picked.size) return;
+        confirmText.textContent = 'Turn OFF notifications on ' + picked.size + ' picked job' + (picked.size === 1 ? '' : 's') + '?';
+        confirmBox.style.display = 'flex';
+        return;
+      }
       if (!pick.value) return;
       const n = jobsFor(pick.value).length;
       const name = techsOnBoard().get(pick.value) || 'this tech';
@@ -910,8 +1057,10 @@
       return ids;
     };
     const start = async real => {
-      if (running || !pick.value) return;
+      const usePicked = src === 'picked';
+      if (running || (usePicked ? !picked.size : !pick.value)) return;
       if (lock) return say('Wait for ' + lock + ' to finish first.');
+      if (usePicked) setPicking(false);
       running = true; stop = false; lock = 'Job Notifications';
       setEnabled(false);
       confirmBox.style.display = 'none';
@@ -919,9 +1068,9 @@
       progress.style.display = 'grid';
       stopBtn.disabled = false; stopBtn.textContent = 'Stop'; stopBtn.style.display = 'inline-block';
       copyBtn.textContent = 'Copy results';
-      const techId = pick.value;
-      set('stNotifyTech', techId);
-      const techName = techsOnBoard().get(techId) || 'Tech';
+      const techId = usePicked ? '' : pick.value;
+      if (!usePicked) set('stNotifyTech', techId);
+      const techName = usePicked ? 'Picked jobs' : techsOnBoard().get(techId) || 'Tech';
       const date = boardDate();
       const home = location.hash;
       const NO_SWITCH = 'COULD NOT FIND SWITCH';
@@ -956,10 +1105,16 @@
         }
       };
       try {
-        say('Finding ' + techName + '\'s jobs...');
-        const list = await collectJobs(techId);
-        if (!list.length) { say('No jobs found for ' + techName + ' on ' + date + '.'); return; }
-        add(date + ' - ' + techName + (real ? '' : ' (checking only, nothing changed)'));
+        let list;
+        if (usePicked) {
+          list = Array.from(picked.keys());
+          add(techName + ' (' + list.length + ')' + (real ? '' : ' (checking only, nothing changed)'));
+        } else {
+          say('Finding ' + techName + '\'s jobs...');
+          list = await collectJobs(techId);
+          if (!list.length) { say('No jobs found for ' + techName + ' on ' + date + '.'); return; }
+          add(date + ' - ' + techName + (real ? '' : ' (checking only, nothing changed)'));
+        }
         for (let n = 0; n < list.length; n++) {
           if (stop) { add('Stopped. ' + (list.length - n) + ' job(s) not checked.'); break; }
           const j = list[n];
@@ -984,6 +1139,8 @@
           const still = failed.filter(j => results.get(j).kind === 'problem');
           add(still.length ? 'Still a problem after retry: ' + still.join(', ') : 'All retried jobs worked.');
         }
+        // Picked jobs that are now off come off the list; anything with a problem stays.
+        if (usePicked && real) results.forEach((r, j) => { if (r.kind === 'turned off' || r.kind === 'already off') picked.delete(j); });
         const tally = {};
         let noSwitch = 0;
         results.forEach(r => { tally[r.kind] = (tally[r.kind] || 0) + 1; if (r.text === NO_SWITCH) noSwitch++; });
@@ -1002,10 +1159,18 @@
         if (location.hash !== home) { location.hash = home; await wait(800); }
         running = false; lock = null;
         stopBtn.style.display = 'none';
+        paint();
         refresh(true);
       }
     };
-    return { refresh, isRunning: () => running, stop: requestStop };
+    setPicking(false);
+    return {
+      refresh,
+      leave: () => { if (picking) setPicking(false); },
+      isRunning: () => running,
+      stop: requestStop,
+      cleanup: () => { window.removeEventListener('click', onPickClick, true); paintStyle.remove(); }
+    };
   })();
 
   // ===================================================================
@@ -1592,14 +1757,10 @@
     // ---------- Picked jobs ----------
     const picked = new Map();   // job number -> short label from the board
     const bubble = j => document.querySelector('a.appointment[data-job-id="' + j + '"]');
-    const labelFor = j => { const b = bubble(j); return b ? norm(b.innerText || b.textContent).slice(0, 38) : ''; };
-    // Picked jobs get a blue outline on the board.
+    const labelFor = j => { const b = bubble(j); if (b) return norm(b.innerText || b.textContent).slice(0, 38); const l = listJob(j); return l ? l.customer : ''; };
+    // Picked jobs get a blue outline on the board (and a blue band in the job list).
     const paintStyle = el('style');
-    const paint = () => {
-      const ids = Array.from(picked.keys());
-      paintStyle.textContent = ids.length ? ids.map(j => 'a.appointment[data-job-id="' + j + '"]').join(',') +
-        '{outline:3px solid #1a6ed8 !important;outline-offset:-3px !important;box-shadow:0 0 0 3px rgba(26,110,216,.35) !important}' : '';
-    };
+    const paint = () => { paintStyle.textContent = pickedCss(Array.from(picked.keys()), '#1a6ed8', 'rgba(26,110,216,.25)'); };
     (document.head || document.documentElement).appendChild(paintStyle);
 
     // ---------- Pane ----------
@@ -1672,7 +1833,7 @@
       jobList.textContent = '';
       jobsTitle.textContent = 'Jobs (' + picked.size + ')';
       if (!picked.size) {
-        jobList.appendChild(el('div', 'padding:8px;font-size:12px;color:#666', picking ? 'Click jobs on the board to add them. Click again to take one off.' : 'No jobs yet. Press 🖱️ Pick on board, or type job numbers below.'));
+        jobList.appendChild(el('div', 'padding:8px;font-size:12px;color:#666', picking ? 'Click jobs on the board, or in the Unassigned / Hold list at the bottom, to add them. Click again to take one off.' : 'No jobs yet. Press 🖱️ Pick on board, or type job numbers below.'));
       }
       picked.forEach((label, j) => {
         const row = el('div', 'display:flex;gap:6px;align-items:center;padding:4px 6px;border-bottom:1px solid #eee;font-size:12px');
@@ -1724,15 +1885,14 @@
       pickBtn.style.borderColor = picking ? '#1a6ed8' : '#aaa';
       pickBtn.style.fontWeight = picking ? '600' : '400';
       if (picking && !onBoard()) say('Open the Dispatch board to pick jobs there.');
-      else if (picking) say('Click jobs on the board to add them. Click one again to take it off.');
+      else if (picking) say('Click jobs on the board, or in the Unassigned / Hold list at the bottom, to add them. Click one again to take it off.');
       renderJobs();
     };
     const onClick = e => {
-      if (!picking || running || !onBoard()) return;
-      const a = e.target && e.target.closest && e.target.closest('a.appointment[data-job-id]');
-      if (!a || panel.contains(a)) return;
+      if (!picking || running || !onBoard() || panel.contains(e.target)) return;
+      const j = clickedJob(e.target);
+      if (!j) return;
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      const j = a.getAttribute('data-job-id');
       if (picked.has(j)) { picked.delete(j); say('Took #' + j + ' off. ' + s1(picked.size, 'job') + ' picked.'); }
       else addJob(j);
       paint(); renderJobs();
@@ -2089,18 +2249,15 @@
     let picking = false;
     const paintStyle = el('style');
     (document.head || document.documentElement).appendChild(paintStyle);
-    const paint = () => {
-      const ids = Array.from(picked.keys());
-      paintStyle.textContent = ids.length ? ids.map(j => 'a.appointment[data-job-id="' + j + '"]').join(',') +
-        '{outline:3px solid #2e7d32 !important;outline-offset:-3px !important;box-shadow:0 0 0 3px rgba(46,125,50,.35) !important}' : '';
-    };
-    const labelFor = j => { const b = boardJob(j); if (b && b.customer) return b.customer; const a = document.querySelector('a.appointment[data-job-id="' + j + '"]'); return a ? norm(a.innerText || a.textContent).slice(0, 38) : ''; };
+    const paint = () => { paintStyle.textContent = pickedCss(Array.from(picked.keys()), '#2e7d32', 'rgba(46,125,50,.22)'); };
+    // Customer and tech: from the timeline if the job is on it, else from the job list at the bottom.
+    const jobInfo = j => boardJob(j) || listJob(j);
+    const labelFor = j => { const b = jobInfo(j); if (b && b.customer) return b.customer; const a = document.querySelector('a.appointment[data-job-id="' + j + '"]'); return a ? norm(a.innerText || a.textContent).slice(0, 38) : ''; };
     const onBoardClick = e => {
-      if (!picking || running || !onBoard()) return;
-      const a = e.target && e.target.closest && e.target.closest('a.appointment[data-job-id]');
-      if (!a || panel.contains(a)) return;
+      if (!picking || running || !onBoard() || panel.contains(e.target)) return;
+      const j = clickedJob(e.target);
+      if (!j) return;
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      const j = a.getAttribute('data-job-id');
       if (picked.has(j)) picked.delete(j); else picked.set(j, labelFor(j));
       paint(); renderMain();
     };
@@ -2170,7 +2327,7 @@
         if (!holds) return out;
         holds.jobs.forEach(h => { if (typeSel.has(h.type)) addOne({ jobId: h.jobId, customer: h.customer, customerId: h.customerId, tech: '' }); });
       } else {
-        picked.forEach((lab, j) => { const b = boardJob(j) || {}; addOne({ jobId: j, customer: b.customer || lab || '', customerId: b.customerId || null, tech: b.tech || '' }); });
+        picked.forEach((lab, j) => { const b = jobInfo(j) || {}; addOne({ jobId: j, customer: b.customer || lab || '', customerId: b.customerId || null, tech: b.tech || '' }); });
       }
       return out;
     };
@@ -2242,7 +2399,7 @@
       top.append(el('span', 'font-size:12px;flex:1', s1(picked.size, 'job') + ' picked'), pb, smallBtn('Clear', () => { picked.clear(); paint(); renderMain(); }));
       whoBox.appendChild(top);
       const list = el('div', 'max-height:130px;overflow:auto;border:1px solid #ddd;border-radius:6px;background:#fafafa;margin-top:5px');
-      if (!picked.size) list.appendChild(el('div', 'padding:6px 8px;font-size:12px;color:#666', picking ? 'Click jobs on the board to add them. Click again to take one off.' : 'Press 🖱️ Pick on board, or type job numbers below.'));
+      if (!picked.size) list.appendChild(el('div', 'padding:6px 8px;font-size:12px;color:#666', picking ? 'Click jobs on the board, or in the Unassigned / Hold list at the bottom, to add them. Click again to take one off.' : 'Press 🖱️ Pick on board, or type job numbers below.'));
       picked.forEach((lab, j) => {
         const r = el('div', 'display:flex;gap:6px;align-items:center;padding:3px 6px;border-bottom:1px solid #eee;font-size:12px');
         const n = el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
@@ -2752,6 +2909,7 @@
   let closing = false;
   const finishClose = () => {
     notes.cleanup();
+    notify.cleanup();
     biz.cleanup();
     texts.cleanup();
     panel.remove();

@@ -9,6 +9,8 @@
   - **Fill-ins:** `{dispatcher}` (your first name from your login), `{first}` (customer), `{tech}` (tech on the board).
   - **Repeat rule per folder** (Holds: 7 days; Tech Updates and Reschedule: same message today). Always skips STOP replies, unread replies, the never-text list and numbers already texted in the run.
   - **Type only** (you press Send; it notices and moves on) or **Auto-send** (type the count to confirm; each text is checked; stops if one can't be confirmed or 3 fail in a row). Stop button and copyable results.
+- **🔕 Job Notifications** can now work on **jobs you pick** as well as a tech's jobs: click jobs on the board or in the Unassigned / Hold list, add a whole list tab with **+ All in the list**, or type job numbers. The tech picker works the same as before.
+- **🏢 Business Unit** and **📱 Customer Texts** can pick jobs from the Unassigned / Hold list at the bottom of the board too.
 
 ## 1.4
 

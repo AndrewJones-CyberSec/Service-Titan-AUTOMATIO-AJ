@@ -14,7 +14,12 @@ Ready-made notes sorted into folders: **📞 Updates** (no answer, left a voicem
 - Edits are saved in your own browser. Notes from before folders were added are in **Updates**.
 
 **🔕 Job Notifications**
-On the Dispatch board, pick a tech from the list (it only shows techs with jobs on the day shown), then either:
+On the Dispatch board, choose which jobs:
+
+- **👷 A tech's jobs**: pick a tech from the list (it only shows techs with jobs on the day shown).
+- **🖱️ Jobs I pick**: click jobs on the board or in the Unassigned / Hold list at the bottom (they get an orange outline), add every job in the list tab that's open with **+ All in the list**, or type job numbers.
+
+Then either:
 
 - **Check jobs**: shows whether each of their jobs has notifications on. Changes nothing.
 - **Turn off notifications**: switches them off on each job, after you confirm.
@@ -33,7 +38,7 @@ Safety checks on every send: it re-checks your 🛡️ settings, closes any open
 **🏢 Business Unit**
 Switch the Business Unit on one job or many to a branch: **Mendenhall Branch** unless you pick another. Only branches are offered, not departments.
 
-- **🖱️ Pick on board**, then click jobs on the Dispatch board to add them (click again to take one off). Picked jobs get a blue outline. You can also type job numbers, which works for jobs on other days.
+- **🖱️ Pick on board**, then click jobs on the Dispatch board, or in the Unassigned / Hold list at the bottom, to add them (click again to take one off). Picked jobs get a blue outline. You can also type job numbers, which works for jobs on other days.
 - **Check jobs**: opens each job's Edit page and shows its Business Unit now. Changes nothing.
 - **Change to …**: after you confirm, it picks the branch on each job's Edit page, presses **Save**, then opens the job again to make sure the change stuck. Jobs already on that branch are left alone.
 - **↩ Put back** returns the jobs from the last run to the Business Unit each one had before.
@@ -43,7 +48,7 @@ If ServiceTitan locks a job's Business Unit, the job is skipped and listed. If S
 **📱 Customer Texts**
 Text customers a saved message through ServiceTitan's Chat Center. Messages are sorted into folders, **⏸️ Holds**, **🚚 Tech Updates** and **📅 Reschedule**, plus any you add.
 
-- **Who:** the **Hold list** (every hold on the board's Hold tab loads at once; tick the kinds to text, such as Quote or Non Operational, or open a kind to tick single job types), or **jobs you pick** on the board or by job number. One text per customer.
+- **Who:** the **Hold list** (every hold on the board's Hold tab loads at once; tick the kinds to text, such as Quote or Non Operational, or open a kind to tick single job types), or **jobs you pick** on the board, in the Unassigned / Hold list at the bottom, or by job number. One text per customer.
 - **Which number:** the Bill To's primary number. If that's a landline, their first mobile number. In ⚙️ Settings you can text every mobile number on the Bill To instead.
 - **Fill-ins:** `{dispatcher}` is your first name from your ServiceTitan login (or the name in ⚙️ Settings), `{first}` the customer's first name, `{tech}` the tech's first name (jobs on the board).
 - **Repeat rules per folder:** Holds skips anyone who got a text from us in the last 7 days. Tech Updates and Reschedule skip anyone who already got that same message today. Change them in 📁 Edit folders. Automatic notifications and texts that failed don't count.
