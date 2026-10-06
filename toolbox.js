@@ -1,11 +1,12 @@
 /*
   ServiceTitan Toolbox
   ====================
-  One panel with four tools for the ServiceTitan Dispatch board:
+  One panel with five tools for the ServiceTitan Dispatch board:
     - Notes: adds a ready-made note (sorted into folders) to a job's customer in one click.
     - Job Notifications: checks or turns off job notifications for one tech's jobs.
     - Tech Messages: sends a saved message (Good Morning, ETA, ...) to the techs you pick.
     - Business Unit: switches the jobs you pick to a branch (Mendenhall Branch by default).
+    - Customer Texts: texts customers a saved message (holds, tech updates, reschedules, ...).
 
   HOW TO RELEASE AN UPDATE
     1. Edit this file on GitHub.
@@ -17,8 +18,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.4';
+  const VERSION = '1.5';
   const WHATS_NEW = {
+    '1.5': 'New: 📱 Customer Texts. Text customers a saved message from folders (Holds, Tech Updates, Reschedule). Load every hold at once and filter by job type, or pick jobs on the board. {dispatcher} fills in your first name.',
     '1.4': 'New: 🏢 Business Unit. Pick jobs on the board (or type their numbers) and switch them all to Mendenhall Branch, or another branch, in one go. ↩ Put back undoes it.',
     '1.3.1': 'Tech Messages can now send to up to 57 people per run (was 50).',
     '1.3': 'Quick Notes is now 📝 Notes, with folders: Updates, Techs and Reschedule. Your notes are in Updates. Add your own folders with ✏️ Edit folders, and move notes between folders with ✏️ Edit notes.',
@@ -289,8 +291,9 @@
   const jobsPane = el('div', 'display:none');
   const msgsPane = el('div', 'display:none');
   const bizPane = el('div', 'display:none');
-  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane };
-  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit' };
+  const textsPane = el('div', 'display:none');
+  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane, texts: textsPane };
+  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts' };
   const showView = name => {
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
     titleText.textContent = TITLES[name];
@@ -300,6 +303,8 @@
     if (name === 'msgs' && typeof msgs !== 'undefined') msgs.refresh();
     if (name !== 'biz' && typeof biz !== 'undefined') biz.leave();
     if (name === 'biz' && typeof biz !== 'undefined') biz.refresh();
+    if (name !== 'texts' && typeof texts !== 'undefined') texts.leave();
+    if (name === 'texts' && typeof texts !== 'undefined') texts.refresh();
   };
 
   menuPane.append(
@@ -307,12 +312,13 @@
     menuBtn('📝 Notes', () => showView('notes')),
     menuBtn('🔕 Job Notifications', () => showView('jobs')),
     menuBtn('💬 Tech Messages', () => showView('msgs')),
-    menuBtn('🏢 Business Unit', () => showView('biz'))
+    menuBtn('🏢 Business Unit', () => showView('biz')),
+    menuBtn('📱 Customer Texts', () => showView('texts'))
   );
   const checkRow = el('div', 'display:flex;justify-content:flex-end;margin-top:4px');
   checkRow.append(smallBtn('🩺 Check', () => health.checkBoard(true)));
   menuPane.appendChild(checkRow);
-  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane);
+  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane);
 
   // ===================================================================
   // Tool 1: Notes
@@ -1944,6 +1950,778 @@
   })();
 
   // ===================================================================
+  // Tool 5: Customer Texts
+  // Texts customers a saved message through ServiceTitan's Chat Center, one at a time.
+  // Messages are sorted into folders (Holds, Tech Updates, Reschedule, plus your own) and
+  // each folder has its own repeat rule (for example: skip anyone texted in the last 7 days).
+  //   - Who: the Hold list (every hold loads at once, then filter by job type), or jobs you
+  //     pick on the board or by job number.
+  //   - Which number: the Bill To's primary number. If that's a landline, their first mobile.
+  //     Optionally every mobile number on the Bill To.
+  //   - Before typing it checks: the right conversation is open, the box is empty, they
+  //     haven't replied STOP, no unread reply is waiting, and the folder's repeat rule.
+  //   - Type only: it types, you press Send (it notices and moves on).
+  //     Auto-send: you confirm by typing how many it will text, and it checks each one went out.
+  // ===================================================================
+  const texts = (() => {
+    const TOOL = 'Customer Texts';
+    const BOX = 'textarea.cht-response-input';
+    const K = { folders: 'stCtFolders', folder: 'stCtFolder', pick: 'stCtPick', mode: 'stCtMode', name: 'stCtName', all: 'stCtAllMobiles', never: 'stCtNever', types: 'stCtTypes', source: 'stCtSource' };
+    const loadJSON = (k, d) => { try { const v = JSON.parse(get(k)); return v == null ? d : v; } catch (e) { return d; } };
+    const norm = s => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+    const digits = s => String(s == null ? '' : s).replace(/\D/g, '');
+    const last10 = s => digits(s).slice(-10);
+    const showNum = d => d ? '…' + String(d).slice(-4) : '?';
+    const s1 = (n, w, pl) => n + ' ' + (n === 1 ? w : (pl || w + 's'));
+    const kov = () => window.ko && typeof window.ko.dataFor === 'function' ? window.ko : null;
+    const vmOf = x => { try { const k = kov(); return k ? k.dataFor(x) || null : null; } catch (e) { return null; } };
+    // Unwraps a Knockout observable; leaves anything else (including plain functions) alone.
+    const un = v => { try { const k = kov(); return k && k.isObservable && k.isObservable(v) ? v() : v; } catch (e) { return undefined; } };
+    const toJS = v => { try { const k = kov(); return k ? k.toJS(v) : v; } catch (e) { return v; } };
+    const firstWord = s => norm(s).split(' ')[0] || '';
+    const titleCase = w => w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : '';
+
+    // ---------- Folders and messages ----------
+    const DEFAULT_FOLDERS = [
+      { name: '⏸️ Holds', days: 7, same: false, msgs: [
+        ['🆓 Free quote follow-up', 'Hey, this is {dispatcher} with AirSouth Cooling, Heating, Plumbing and Electrical. I am reaching out regarding the appointment we had scheduled for you in the past. I was trying to see if I could offer you some priority for a day you are available for a FREE quote. We offer free quotes on HVAC Heating & Cooling systems, Generators, Water Heaters, Ductwork, Duct Cleanings and more! Just give us a call at 601-847-9941.']
+      ] },
+      { name: '🚚 Tech Updates', days: 1, same: true, msgs: [
+        ['⏱️ Running late', 'Hey, this is {dispatcher} with Air South Cooling and Heating. I am reaching out about your appointment. I wanted to update as I know your time is valuable. My expert has ran into a few delays, but is still scheduled to come out to see you. He will send you a text 30 minutes before his arrival. If you have any questions or concerns, please give me a call back at 601-847-9941. Thank you for being the best part of AirSouth!']
+      ] },
+      { name: '📅 Reschedule', days: 1, same: true, msgs: [
+        ['📅 Need to reschedule', 'Hey, this is {dispatcher} with AirSouth Cooling, Heating, Plumbing and Electrical. We need to reschedule your appointment. Please give us a call at 601-847-9941 so we can find a time that works for you. Thank you!']
+      ] }
+    ];
+    const cloneDefaults = () => DEFAULT_FOLDERS.map(f => ({ name: f.name, days: f.days, same: f.same, msgs: f.msgs.map(m => m.slice()) }));
+    const validFolders = v => Array.isArray(v) && v.length > 0 && v.every(f => f && typeof f.name === 'string' && Array.isArray(f.msgs) &&
+      f.msgs.every(n => Array.isArray(n) && n.length === 2 && typeof n[0] === 'string' && typeof n[1] === 'string'));
+    const tidy = f => { f.days = Math.max(0, Math.min(365, parseInt(f.days, 10) || 0)); f.same = !!f.same; return f; };
+    let folders = (() => { const v = loadJSON(K.folders, null); return validFolders(v) ? v : cloneDefaults(); })().map(tidy);
+    const saveFolders = () => set(K.folders, JSON.stringify(folders));
+    let fIdx = Math.max(0, Math.min(parseInt(get(K.folder) || '0', 10) || 0, folders.length - 1));
+    let picks = loadJSON(K.pick, {});
+    if (!picks || typeof picks !== 'object' || Array.isArray(picks)) picks = {};
+    const curFolder = () => folders[fIdx];
+    const curMsgIdx = () => { const f = curFolder(); return Math.max(0, Math.min(parseInt(picks[f.name], 10) || 0, f.msgs.length - 1)); };
+    const curMsg = () => { const f = curFolder(); return f.msgs.length ? f.msgs[curMsgIdx()] : null; };
+    const ruleText = f => !f.days ? 'Never skips anyone.' : 'Skips anyone who got ' + (f.same ? 'this same message' : 'any text from us') + (f.days === 1 ? ' today.' : ' in the last ' + f.days + ' days.');
+
+    // ---------- Fill-ins ----------
+    // {dispatcher}: your first name, from the ServiceTitan account you're signed in with
+    // (or the name you set in ⚙️ Settings). {first}: customer's first name. {tech}: tech's first name.
+    const autoName = () => {
+      try {
+        const id = window.App && window.App.Notifications && window.App.Notifications.store && window.App.Notifications.store.userId;
+        const D = (window.App && window.App.Data) || {};
+        const e = id != null && ((D.Employees || []).find(x => x && x.UserId === id) || (D.ActiveEmployees || []).find(x => x && x.UserId === id));
+        if (e && e.Name) return titleCase(firstWord(e.Name));
+      } catch (e) {}
+      return '';
+    };
+    const myName = () => norm(get(K.name)) || autoName();
+    const uses = (tmpl, key) => new RegExp('\\{' + key + '\\}', 'i').test(tmpl);
+    const fill = (tmpl, r) => tmpl.replace(/\{dispatcher\}/gi, myName()).replace(/\{first\}/gi, r.first || '').replace(/\{tech\}/gi, r.tech || '');
+
+    // ---------- Settings ----------
+    let allMobiles = get(K.all) === '1';
+    let never = (loadJSON(K.never, []) || []).map(last10).filter(n => n.length === 10);
+
+    // ---------- Reading the board ----------
+    const boardVM = () => { const jl = document.querySelector('.job-list'); return jl ? vmOf(jl) : null; };
+    // A job that's on the board's timeline: customer, and the tech's first name for {tech}.
+    const boardJob = jobId => {
+      const vm = boardVM();
+      const list = (vm && un(vm.Assignments)) || [];
+      for (let i = 0; i < list.length; i++) {
+        const a = list[i];
+        if (String(un(a.JobId)) !== String(jobId)) continue;
+        return { customer: norm(un(a.Customer)), customerId: un(a.CustomerId), tech: titleCase(firstWord(un(a.FirstName) || un(a.TechnicianName))) };
+      }
+      return null;
+    };
+    const boardDateISO = () => {
+      try { const d = un(boardVM().Date); if (d && typeof d.toISOString === 'function') return d.toISOString(); } catch (e) {}
+      const d = new Date(); d.setHours(0, 0, 0, 0); return d.toISOString();
+    };
+    // The Business Units the board is filtered to (the Hold list uses the same filter).
+    const boardBUs = () => {
+      try { const f = boardVM().BusinessUnitFilter; const ids = f && typeof f.getIds === 'function' ? f.getIds() : []; return (ids || []).map(Number).filter(Boolean); } catch (e) { return []; }
+    };
+    const buNames = ids => {
+      const all = (window.App && window.App.Data && window.App.Data.BusinessUnits) || [];
+      return ids.map(id => (all.find(b => b.Id === id) || {}).Name).filter(Boolean);
+    };
+    const xhrHeaders = { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' };
+
+    // ---------- The Hold list ----------
+    const groupOf = type => { const t = norm(type); if (/^non\s*-?\s*operational/i.test(t)) return 'Non Operational'; return norm(t.split(' - ')[0]) || '(no type)'; };
+    let holds = null;   // { jobs: [{ jobId, customer, customerId, type }], total, bus, at }
+    let holdsLoading = false;
+    let typeSel = new Set(loadJSON(K.types, []) || []);
+    const saveTypes = () => set(K.types, JSON.stringify(Array.from(typeSel)));
+    const loadHolds = async () => {
+      const ids = boardBUs();
+      const date = boardDateISO();
+      const seen = new Set(), jobs = [];
+      let total = 0;
+      for (let skip = 0; skip < 20000; skip += 500) {
+        const r = await fetch('/Dispatch/GetJobs', { method: 'POST', credentials: 'include',
+          headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, xhrHeaders),
+          body: JSON.stringify({ JobType: 'Hold', Date: date, QueryFilter: { Skip: skip, Take: 500, Start: {}, Created: {}, BusinessUnitIds: ids } }) });
+        if (!r.ok) throw new Error('ServiceTitan answered ' + r.status);
+        const d = await r.json();
+        if (!d || !Array.isArray(d.Jobs)) { health.flag(TOOL, 'the Hold list came back in a shape the Toolbox doesn\'t know', '/Dispatch/GetJobs'); throw new Error('unexpected reply'); }
+        total = d.Count || 0;
+        d.Jobs.forEach(j => {
+          if (!j || !j.JobId || seen.has(j.JobId)) return;
+          seen.add(j.JobId);
+          jobs.push({ jobId: j.JobId, customer: norm(j.Customer), customerId: j.CustomerId, type: norm(j.Type) || '(no type)' });
+        });
+        if (!d.Jobs.length || skip + 500 >= total) break;
+      }
+      health.clear(TOOL);
+      return { jobs, total, bus: buNames(ids), at: new Date() };
+    };
+
+    // ---------- Jobs picked on the board ----------
+    const picked = new Map();   // job number -> label
+    let picking = false;
+    const paintStyle = el('style');
+    (document.head || document.documentElement).appendChild(paintStyle);
+    const paint = () => {
+      const ids = Array.from(picked.keys());
+      paintStyle.textContent = ids.length ? ids.map(j => 'a.appointment[data-job-id="' + j + '"]').join(',') +
+        '{outline:3px solid #2e7d32 !important;outline-offset:-3px !important;box-shadow:0 0 0 3px rgba(46,125,50,.35) !important}' : '';
+    };
+    const labelFor = j => { const b = boardJob(j); if (b && b.customer) return b.customer; const a = document.querySelector('a.appointment[data-job-id="' + j + '"]'); return a ? norm(a.innerText || a.textContent).slice(0, 38) : ''; };
+    const onBoardClick = e => {
+      if (!picking || running || !onBoard()) return;
+      const a = e.target && e.target.closest && e.target.closest('a.appointment[data-job-id]');
+      if (!a || panel.contains(a)) return;
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      const j = a.getAttribute('data-job-id');
+      if (picked.has(j)) picked.delete(j); else picked.set(j, labelFor(j));
+      paint(); renderMain();
+    };
+    window.addEventListener('click', onBoardClick, true);
+    const setPicking = on => { picking = !!on && !running; renderMain(); };
+
+    // ---------- UI ----------
+    const pane = el('div', 'padding:8px 10px 10px');
+    const views = {};
+    const sub = name => { Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; }); };
+    const mkView = name => { views[name] = el('div', 'display:none'); pane.appendChild(views[name]); return views[name]; };
+    const msgLine = () => el('div', 'font-size:12px;color:#444;margin-bottom:6px;min-height:16px;white-space:pre-wrap');
+    const head = text => el('div', 'font-weight:700;margin-bottom:4px', text);
+    const row = () => el('div', 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px');
+    const label = text => el('div', 'font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.03em;margin-top:10px;margin-bottom:3px', text);
+    const check = (text, checked, onChange) => {
+      const l = el('label', 'display:flex;gap:6px;align-items:center;padding:2px 0;cursor:pointer;font-size:12px');
+      const c = el('input'); c.type = 'checkbox'; c.checked = !!checked;
+      c.onchange = () => onChange(c.checked);
+      l.append(c, document.createTextNode(text));
+      return { l, c };
+    };
+    const chip = (text, on, onClick) => {
+      const b = el('button', 'padding:4px 8px;cursor:pointer;border:1px solid ' + (on ? '#1a6ed8' : '#aaa') + ';border-radius:14px;background:' + (on ? '#e3eefc' : '#fff') + ';color:#111;font:inherit;font-size:12px;' + (on ? 'font-weight:600' : ''), text);
+      b.type = 'button'; b.onclick = onClick;
+      b.addEventListener('mousedown', e => e.preventDefault());
+      return b;
+    };
+    const radio = (name, val, cur, text, onPick) => {
+      const l = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer;font-size:12px;padding:1px 0');
+      const r = el('input'); r.type = 'radio'; r.name = name; r.checked = val === cur;
+      r.onchange = () => onPick(val);
+      l.append(r, document.createTextNode(text));
+      return l;
+    };
+
+    // ===== Main view =====
+    const vMain = mkView('main');
+    const mainMsg = msgLine();
+    const folderRow = el('div', 'display:flex;flex-wrap:wrap;gap:5px');
+    const ruleLine = el('div', 'font-size:11px;color:#666;margin-top:4px');
+    const msgList = el('div', '');
+    const whoRow = el('div', 'display:grid;gap:1px');
+    const whoBox = el('div', 'margin-top:4px');
+    const modeRow = el('div', 'display:grid;gap:1px');
+    const startBtn = smallBtn('Start', () => openConfirm(), PRIMARY + 'margin-top:10px;' + FULL + 'padding:8px');
+    const mainNav = row();
+    mainNav.append(
+      smallBtn('← Menu', () => { if (!running) showView('menu'); }),
+      smallBtn('✏️ Edit messages', () => openEditor()),
+      smallBtn('📁 Edit folders', () => openFolders()),
+      smallBtn('⚙️ Settings', () => openSettings())
+    );
+    vMain.append(mainMsg, label('Folder'), folderRow, ruleLine, label('Message'), msgList, label('Who'), whoRow, whoBox, label('How'), modeRow, startBtn, mainNav);
+    const say = s => { mainMsg.textContent = s; };
+
+    let stopRun = false, running = false, stepResolve = null;
+    let source = get(K.source) === 'picked' ? 'picked' : 'holds';
+    let mode = get(K.mode) === 'auto' ? 'auto' : 'type';
+    const openGroups = new Set();
+
+    // Who gets texted: one entry per customer (the first job found for them).
+    const recipients = () => {
+      const out = [], seen = new Set();
+      const addOne = r => { const key = r.customerId ? 'c' + r.customerId : 'j' + r.jobId; if (seen.has(key)) return; seen.add(key); out.push(r); };
+      if (source === 'holds') {
+        if (!holds) return out;
+        holds.jobs.forEach(h => { if (typeSel.has(h.type)) addOne({ jobId: h.jobId, customer: h.customer, customerId: h.customerId, tech: '' }); });
+      } else {
+        picked.forEach((lab, j) => { const b = boardJob(j) || {}; addOne({ jobId: j, customer: b.customer || lab || '', customerId: b.customerId || null, tech: b.tech || '' }); });
+      }
+      return out;
+    };
+
+    const renderHolds = () => {
+      whoBox.textContent = '';
+      const top = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap');
+      const info = el('span', 'font-size:12px;flex:1;min-width:120px');
+      const loadBtn = smallBtn(holds ? '↻ Reload' : 'Load holds', () => doLoadHolds());
+      if (holdsLoading) { info.textContent = 'Loading holds…'; loadBtn.disabled = true; loadBtn.style.opacity = '.5'; }
+      else if (!holds) info.textContent = onBoard() ? 'Loads every hold on the board\'s Hold list.' : 'Open the Dispatch board first.';
+      else info.textContent = s1(holds.jobs.length, 'hold') + (holds.bus.length ? ' · ' + holds.bus.join(', ') : ' · all business units') +
+        ' · ' + holds.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      top.append(info, loadBtn);
+      whoBox.appendChild(top);
+      if (!holds) return;
+      const groups = new Map();
+      holds.jobs.forEach(h => { const g = groupOf(h.type); if (!groups.has(g)) groups.set(g, new Map()); const m = groups.get(g); m.set(h.type, (m.get(h.type) || 0) + 1); });
+      const box = el('div', 'max-height:190px;overflow:auto;border:1px solid #ddd;border-radius:6px;padding:3px 6px;background:#fafafa;margin-top:5px');
+      Array.from(groups.entries()).sort((a, b) => sumOf(b[1]) - sumOf(a[1])).forEach(([g, types]) => {
+        const tnames = Array.from(types.keys());
+        const onCount = tnames.filter(t => typeSel.has(t)).length;
+        const line = el('div', 'display:flex;align-items:center;gap:4px');
+        const c = check(g + ' (' + sumOf(types) + ')', onCount === tnames.length, v => { tnames.forEach(t => v ? typeSel.add(t) : typeSel.delete(t)); saveTypes(); renderMain(); });
+        c.c.indeterminate = onCount > 0 && onCount < tnames.length;
+        c.l.style.flex = '1'; c.l.style.fontWeight = '600';
+        const tog = smallBtn(openGroups.has(g) ? '▾' : '▸', () => { openGroups.has(g) ? openGroups.delete(g) : openGroups.add(g); renderMain(); }, 'padding:0 6px;border:none;background:transparent');
+        tog.title = 'Show each job type';
+        line.append(c.l, tog);
+        box.appendChild(line);
+        if (openGroups.has(g)) {
+          Array.from(types.entries()).sort((a, b) => b[1] - a[1]).forEach(([t, n]) => {
+            const ct = check(t + ' (' + n + ')', typeSel.has(t), v => { v ? typeSel.add(t) : typeSel.delete(t); saveTypes(); renderMain(); });
+            ct.l.style.paddingLeft = '18px';
+            box.appendChild(ct.l);
+          });
+        }
+      });
+      whoBox.appendChild(box);
+      const r = recipients();
+      const ticked = holds.jobs.filter(h => typeSel.has(h.type)).length;
+      const btns = el('div', 'display:flex;gap:6px;align-items:center;margin-top:4px;font-size:12px');
+      btns.append(el('span', 'flex:1', s1(ticked, 'hold') + ' ticked → ' + s1(r.length, 'customer')),
+        smallBtn('None', () => { typeSel.clear(); saveTypes(); renderMain(); }, 'padding:2px 6px'));
+      whoBox.appendChild(btns);
+    };
+    const sumOf = m => Array.from(m.values()).reduce((a, b) => a + b, 0);
+    const doLoadHolds = async () => {
+      if (holdsLoading || running) return;
+      if (!onBoard()) { say('Open the Dispatch board first.'); return; }
+      holdsLoading = true; renderMain();
+      try { holds = await loadHolds(); say('Loaded ' + s1(holds.jobs.length, 'hold') + '. Tick the kinds to text.'); }
+      catch (e) { say('⚠️ Couldn\'t load the Hold list: ' + (e && e.message ? e.message : e)); }
+      finally { holdsLoading = false; renderMain(); }
+    };
+
+    const addBox = el('input', 'flex:1;min-width:0;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
+    addBox.type = 'text'; addBox.placeholder = 'Or type job #s';
+    const addTyped = () => {
+      const nums = addBox.value.match(/\d{4,}/g) || [];
+      nums.forEach(j => { if (!picked.has(j)) picked.set(j, labelFor(j)); });
+      addBox.value = ''; paint(); renderMain();
+    };
+    addBox.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); addTyped(); } };
+    const renderPicked = () => {
+      whoBox.textContent = '';
+      const top = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap');
+      const pb = smallBtn(picking ? '🖱️ Picking: ON' : '🖱️ Pick on board', () => setPicking(!picking), picking ? 'background:#2e7d32;color:#fff;border-color:#2e7d32;font-weight:600' : '');
+      top.append(el('span', 'font-size:12px;flex:1', s1(picked.size, 'job') + ' picked'), pb, smallBtn('Clear', () => { picked.clear(); paint(); renderMain(); }));
+      whoBox.appendChild(top);
+      const list = el('div', 'max-height:130px;overflow:auto;border:1px solid #ddd;border-radius:6px;background:#fafafa;margin-top:5px');
+      if (!picked.size) list.appendChild(el('div', 'padding:6px 8px;font-size:12px;color:#666', picking ? 'Click jobs on the board to add them. Click again to take one off.' : 'Press 🖱️ Pick on board, or type job numbers below.'));
+      picked.forEach((lab, j) => {
+        const r = el('div', 'display:flex;gap:6px;align-items:center;padding:3px 6px;border-bottom:1px solid #eee;font-size:12px');
+        const n = el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
+        n.append(el('b', '', '#' + j), document.createTextNode(lab ? '  ' + lab : ''));
+        r.append(n, smallBtn('✕', () => { picked.delete(j); paint(); renderMain(); }, 'padding:1px 6px'));
+        list.appendChild(r);
+      });
+      whoBox.appendChild(list);
+      const ar = el('div', 'display:flex;gap:6px;margin-top:4px');
+      ar.append(addBox, smallBtn('Add', () => addTyped()));
+      whoBox.appendChild(ar);
+    };
+
+    const renderMain = () => {
+      if (running) return;
+      folderRow.textContent = '';
+      folders.forEach((f, i) => folderRow.appendChild(chip(f.name, i === fIdx, () => {
+        fIdx = i; set(K.folder, String(i));
+        // The Holds folder usually goes with the Hold list; the others with picked jobs.
+        const want = /hold/i.test(f.name) ? 'holds' : 'picked';
+        if (want !== source) { source = want; set(K.source, source); if (source !== 'picked') picking = false; }
+        renderMain();
+      })));
+      const f = curFolder();
+      ruleLine.textContent = '🔁 ' + ruleText(f);
+      msgList.textContent = '';
+      if (!f.msgs.length) msgList.appendChild(el('div', 'font-size:12px;color:#666', 'No messages in this folder yet. Use ✏️ Edit messages.'));
+      f.msgs.forEach(([name, text], i) => {
+        const on = i === curMsgIdx();
+        const b = el('button', FULL + 'margin:4px 0;padding:7px 9px;cursor:pointer;border:1px solid ' + (on ? '#1a6ed8' : '#aaa') + ';border-radius:6px;background:' + (on ? '#e3eefc' : '#f5f5f5') + ';color:#111;text-align:left;font:inherit' + (on ? ';box-shadow:inset 3px 0 0 #1a6ed8' : ''), (on ? '✔ ' : '') + (name || '(no name)'));
+        b.type = 'button'; b.title = text;
+        b.addEventListener('mousedown', e => e.preventDefault());
+        b.onclick = () => { picks[f.name] = i; set(K.pick, JSON.stringify(picks)); renderMain(); };
+        msgList.appendChild(b);
+      });
+      whoRow.textContent = '';
+      whoRow.append(
+        radio('st-ct-src', 'holds', source, '⏸️ Hold list (filter by job type)', v => { source = v; set(K.source, v); picking = false; renderMain(); }),
+        radio('st-ct-src', 'picked', source, '🖱️ Jobs I pick', v => { source = v; set(K.source, v); renderMain(); })
+      );
+      if (source === 'holds') { picking = false; renderHolds(); } else renderPicked();
+      modeRow.textContent = '';
+      modeRow.append(
+        radio('st-ct-mode', 'type', mode, 'Type only: I press Send for each one', v => { mode = v; set(K.mode, v); renderMain(); }),
+        radio('st-ct-mode', 'auto', mode, 'Auto-send: sends to everyone in the list', v => { mode = v; set(K.mode, v); renderMain(); })
+      );
+      const r = recipients();
+      const m = curMsg();
+      const ok = onBoard() && r.length > 0 && !!m;
+      startBtn.disabled = !ok; startBtn.style.opacity = ok ? '1' : '.5';
+      startBtn.textContent = (mode === 'auto' ? 'Review and send to ' : 'Start (type only): ') + s1(r.length, 'customer');
+      if (!onBoard()) say('Open the Dispatch board to use this.');
+      else if (m && uses(m[1], 'dispatcher') && !myName()) say('⚠️ This message uses {dispatcher}, but your name couldn\'t be found. Set it in ⚙️ Settings.');
+      else if (!mainMsg.textContent || /^(Open the Dispatch|⚠️ This message uses)/.test(mainMsg.textContent)) say(myName() ? 'Texts are signed as ' + myName() + '.' : '');
+    };
+
+    // ===== Edit messages =====
+    const vEdit = mkView('edit');
+    const editHead = head('');
+    const editMsg = msgLine();
+    const EDIT_HINT = 'Fill-ins: {dispatcher} = your first name, {first} = customer\'s first name, {tech} = the tech\'s first name (jobs on the board only). Saved in this browser.';
+    const ed = listEditor('message', 'Button name (e.g. 🆓 Free quote)', 'Message text', 'calc(100vh - 320px)', { allowEmpty: true });
+    const editNav = row();
+    editNav.append(
+      smallBtn('Save', () => {
+        const r = ed.clean();
+        if (r.error) { editMsg.textContent = r.error; return; }
+        curFolder().msgs = r.list; saveFolders();
+        sub('main'); say('✅ Messages saved.'); renderMain();
+      }, PRIMARY),
+      smallBtn('Cancel', () => { sub('main'); renderMain(); }),
+      smallBtn('+ Add a message', () => ed.add())
+    );
+    vEdit.append(editHead, editMsg, ed.box, editNav);
+    const openEditor = () => { if (running) return; editHead.textContent = '✏️ Edit messages: ' + curFolder().name; editMsg.textContent = EDIT_HINT; ed.load(curFolder().msgs); sub('edit'); };
+
+    // ===== Edit folders =====
+    const vFolders = mkView('folders');
+    const foldMsg = msgLine();
+    const foldBox = el('div', 'max-height:calc(100vh - 300px);overflow:auto;margin:0 -4px;padding:0 4px');
+    let draftF = [];
+    const renderFolders = () => {
+      foldBox.textContent = '';
+      draftF.forEach((f, i) => {
+        const r = el('div', 'border:1px solid #ccc;border-radius:8px;padding:7px;margin-bottom:8px;background:#fafafa;font-size:12px');
+        const nm = el('input', FULL + 'padding:5px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-weight:600;color:#111;background:#fff');
+        nm.type = 'text'; nm.value = f.name; nm.placeholder = 'Folder name'; nm.oninput = () => { f.name = nm.value; };
+        const rule = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px');
+        const days = el('input', 'width:46px;padding:3px 5px;border:1px solid #aaa;border-radius:5px;font:inherit;color:#111;background:#fff');
+        days.type = 'number'; days.min = '0'; days.max = '365'; days.value = String(f.days);
+        days.oninput = () => { f.days = Math.max(0, Math.min(365, parseInt(days.value, 10) || 0)); };
+        rule.append(document.createTextNode('Skip if texted in the last'), days, document.createTextNode('days (0 = never skip, 1 = today)'));
+        const same = check('Only count this same message (not other texts)', f.same, v => { f.same = v; });
+        same.l.style.marginTop = '3px';
+        const tools = el('div', 'display:flex;gap:4px;margin-top:5px;align-items:center');
+        const mv = d => () => { const j = i + d; if (j < 0 || j >= draftF.length) return; const t = draftF[i]; draftF[i] = draftF[j]; draftF[j] = t; renderFolders(); };
+        tools.append(smallBtn('↑', mv(-1), i === 0 ? 'opacity:.4' : ''), smallBtn('↓', mv(1), i === draftF.length - 1 ? 'opacity:.4' : ''),
+          el('span', 'flex:1;color:#666;padding-left:4px', s1(f.msgs.length, 'message')),
+          smallBtn('Delete', () => { draftF.splice(i, 1); renderFolders(); }, 'color:#b00020;border-color:#e0a0a8'));
+        r.append(nm, rule, same.l, tools);
+        foldBox.appendChild(r);
+      });
+    };
+    const foldNav = row();
+    foldNav.append(
+      smallBtn('Save', () => {
+        const clean = draftF.map(f => tidy({ name: norm(f.name), days: f.days, same: f.same, msgs: f.msgs })).filter(f => f.name || f.msgs.length);
+        if (!clean.length) { foldMsg.textContent = '⚠️ Keep at least one folder.'; return; }
+        clean.forEach((f, i) => { if (!f.name) f.name = 'Folder ' + (i + 1); });
+        const names = clean.map(f => f.name.toLowerCase());
+        if (new Set(names).size !== names.length) { foldMsg.textContent = '⚠️ Two folders have the same name.'; return; }
+        folders = clean; saveFolders();
+        fIdx = Math.min(fIdx, folders.length - 1); set(K.folder, String(fIdx));
+        sub('main'); say('✅ Folders saved.'); renderMain();
+      }, PRIMARY),
+      smallBtn('Cancel', () => { sub('main'); renderMain(); }),
+      smallBtn('+ Add folder', () => { draftF.push({ name: '', days: 1, same: true, msgs: [] }); renderFolders(); foldBox.scrollTop = foldBox.scrollHeight; }),
+      smallBtn('Reset to original', () => { draftF = cloneDefaults(); renderFolders(); foldMsg.textContent = 'Back to the original folders and messages. Press Save to keep this.'; })
+    );
+    vFolders.append(head('📁 Edit folders'), foldMsg, foldBox, foldNav);
+    const openFolders = () => {
+      if (running) return;
+      draftF = folders.map(f => ({ name: f.name, days: f.days, same: f.same, msgs: f.msgs.map(m => m.slice()) }));
+      foldMsg.textContent = 'Each folder has its own repeat rule. Deleting a folder deletes its messages when you Save.';
+      renderFolders(); sub('folders');
+    };
+
+    // ===== Settings =====
+    const vSet = mkView('settings');
+    const setMsg = msgLine();
+    const nameIn = el('input', FULL + 'padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff');
+    nameIn.type = 'text';
+    const allChk = check('Text every mobile number on the Bill To (not just the primary)', allMobiles, () => {});
+    const neverIn = el('textarea', FULL + 'padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff;resize:vertical');
+    neverIn.rows = 4; neverIn.placeholder = 'One phone number per line';
+    const setNav = row();
+    setNav.append(
+      smallBtn('Save', () => {
+        set(K.name, norm(nameIn.value));
+        allMobiles = allChk.c.checked; set(K.all, allMobiles ? '1' : '0');
+        never = Array.from(new Set((neverIn.value.match(/[\d()+.\- ]{10,}/g) || []).map(last10).filter(n => n.length === 10)));
+        set(K.never, JSON.stringify(never));
+        sub('main'); say('⚙️ Saved.' + (myName() ? ' Texts are signed as ' + myName() + '.' : '')); renderMain();
+      }, PRIMARY),
+      smallBtn('Cancel', () => { sub('main'); renderMain(); })
+    );
+    vSet.append(head('⚙️ Settings'), setMsg,
+      label('Your name for {dispatcher}'), nameIn,
+      label('Numbers'), allChk.l,
+      el('div', 'font-size:11px;color:#666;margin:2px 0 0 20px', 'Off: the primary number, or their first mobile if the primary is a landline.'),
+      label('🚫 Never text these numbers'), neverIn, setNav);
+    const openSettings = () => {
+      if (running) return;
+      const auto = autoName();
+      nameIn.value = norm(get(K.name));
+      nameIn.placeholder = auto ? auto + ' (from your ServiceTitan login)' : 'Your first name';
+      setMsg.textContent = 'Leave the name empty to use the first name on your ServiceTitan login' + (auto ? ' (' + auto + ').' : '.');
+      allChk.c.checked = allMobiles;
+      neverIn.value = never.map(n => '(' + n.slice(0, 3) + ') ' + n.slice(3, 6) + '-' + n.slice(6)).join('\n');
+      sub('settings');
+    };
+
+    // ===== Confirm =====
+    const vConfirm = mkView('confirm');
+    const confText = el('div', 'font-size:12px;white-space:pre-wrap;max-height:calc(100vh - 340px);overflow:auto;border:1px solid #ddd;border-radius:6px;padding:6px;background:#fafafa');
+    const confAsk = el('div', 'font-size:12px;margin-top:8px');
+    const confInput = el('input', 'width:70px;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff;margin-left:6px');
+    confInput.type = 'text'; confInput.inputMode = 'numeric'; confInput.id = 'st-ct-confirm-count';
+    const confGo = smallBtn('Send', () => go(), DANGER);
+    const confNav = row();
+    confNav.append(confGo, smallBtn('Cancel', () => { sub('main'); renderMain(); }));
+    vConfirm.append(head('Check before texting'), confText, confAsk, confNav);
+    let pending = [];
+    const openConfirm = () => {
+      if (running) return;
+      if (lock) return say('Wait for ' + lock + ' to finish first.');
+      const m = curMsg();
+      if (!m) return say('Pick a message first.');
+      if (uses(m[1], 'dispatcher') && !myName()) return say('⚠️ Set your name in ⚙️ Settings first (the message uses {dispatcher}).');
+      pending = recipients();
+      if (!pending.length) return say(source === 'holds' ? 'Load the holds and tick at least one kind.' : 'Pick some jobs first.');
+      setPicking(false);
+      const f = curFolder();
+      const sample = pending[0];
+      const lines = [
+        'Folder: ' + f.name + '   🔁 ' + ruleText(f),
+        'Message (as the first customer will see it):',
+        '"' + fill(m[1], { first: titleCase(firstWord(sample.customer)), tech: sample.tech || '{tech}' }) + '"',
+        '',
+        'Numbers: ' + (allMobiles ? 'every mobile on the Bill To' : 'Bill To primary (their first mobile if the primary is a landline)'),
+        'To ' + s1(pending.length, 'customer') + (source === 'holds' ? ' from the Hold list' : '') + ':'
+      ];
+      pending.slice(0, 40).forEach(r => lines.push('• ' + (r.customer || 'job #' + r.jobId) + '  (#' + r.jobId + ')'));
+      if (pending.length > 40) lines.push('…and ' + (pending.length - 40) + ' more');
+      if (uses(m[1], 'tech')) lines.push('', 'Jobs with no tech on the board are skipped, because the message uses {tech}.');
+      confText.textContent = lines.join('\n');
+      confAsk.textContent = ''; confInput.value = '';
+      if (mode === 'auto') {
+        confAsk.append(document.createTextNode('Auto-send is on. To confirm, type how many customers this texts (' + pending.length + '):'), confInput);
+        confGo.textContent = 'Text ' + s1(pending.length, 'customer');
+        setTimeout(() => confInput.focus(), 0);
+      } else {
+        confAsk.textContent = 'Type only: it opens each conversation and types the message. You press Send, and it moves to the next one.';
+        confGo.textContent = 'Start';
+      }
+      confAsk.appendChild(el('div', 'color:#666;margin-top:4px', 'Keep this tab on screen while it runs (browsers slow down hidden tabs). It takes about 4–5 seconds per text.'));
+      sub('confirm');
+    };
+    confInput.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); go(); } };
+
+    // ===== Run =====
+    const vRun = mkView('run');
+    const runMsg = el('div', 'font-size:12px;color:#444;margin-bottom:6px;min-height:16px');
+    const runLog = el('pre', 'max-height:220px;overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
+    const runStep = el('div', 'display:none;margin-top:8px;padding:8px;border:1px solid #1a6ed8;background:#e3eefc;border-radius:6px;font-size:12px');
+    const stepText = el('div', 'margin-bottom:6px');
+    const stepBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    runStep.append(stepText, stepBtns);
+    const requestStop = () => { if (!running) return; stopRun = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping...'; if (stepResolve) stepResolve('stop'); };
+    const stopBtn = smallBtn('Stop', () => requestStop());
+    const copyBtn = smallBtn('Copy results', async () => { if (await copy(runLog.textContent)) copyBtn.textContent = 'Copied'; });
+    const doneBtn = smallBtn('← Back', () => { sub('main'); renderMain(); });
+    const runNav = row();
+    runNav.append(stopBtn, copyBtn, doneBtn);
+    vRun.append(head('Texting'), runMsg, runLog, runStep, runNav);
+    const add = s => { runLog.textContent += s + '\n'; runLog.scrollTop = runLog.scrollHeight; };
+    const askStep = (text, buttons) => new Promise(resolve => {
+      stepResolve = v => { stepResolve = null; runStep.style.display = 'none'; resolve(v); };
+      stepText.textContent = text;
+      stepBtns.textContent = '';
+      buttons.forEach(([lab, val, style]) => stepBtns.appendChild(smallBtn(lab, () => stepResolve && stepResolve(val), style)));
+      runStep.style.display = 'block';
+    });
+
+    // ---------- Talking to ServiceTitan ----------
+    // The Bill To's phone numbers, from the job's own data. Primary first.
+    const billTo = async jobId => {
+      const r = await fetch('/Job/Index/?id=' + encodeURIComponent(jobId) + '&skipForms=true', { credentials: 'include', headers: xhrHeaders });
+      if (!r.ok) throw new Error('the job didn\'t load (' + r.status + ')');
+      const j = await r.json();
+      const c = j && j.Customer;
+      if (!c || !Array.isArray(c.Contacts)) { health.flag(TOOL, 'can\'t read the Bill To phone numbers from a job', 'Job/Index Customer.Contacts'); throw new Error('no Bill To contacts in the job data'); }
+      const phones = c.Contacts.filter(x => x && /phone/i.test(x.Type || '') && last10(x.Value).length === 10)
+        .map(x => ({ num: last10(x.Value), mobile: /mobile/i.test(x.Type || '') }));
+      return { name: norm(c.Name), phones };
+    };
+    const pickNumbers = phones => {
+      const mobiles = phones.filter(p => p.mobile);
+      if (allMobiles) return { nums: Array.from(new Set(mobiles.map(p => p.num))), note: '' };
+      if (!phones.length) return { nums: [], note: '' };
+      if (phones[0].mobile) return { nums: [phones[0].num], note: '' };
+      if (mobiles.length) return { nums: [mobiles[0].num], note: ' (primary is a landline, used their mobile)' };
+      return { nums: [], note: '' };
+    };
+    // The conversation for one number, once its messages have loaded.
+    const chatFor = num => {
+      const b = document.querySelector(BOX);
+      if (!b || !visible(b)) return null;
+      const v = vmOf(b);
+      if (!v || last10(un(v.ContactNumber)) !== num) return null;
+      if (un(v.LoadingMessages) || un(v.HasFetchedMessagePage) === false) return null;
+      return { box: b, vm: v };
+    };
+    const openChat = async (num, jobId) => {
+      const want = '#/ChatCenter/' + num;
+      if (location.hash.split('?')[0] === want) { location.hash = '#/DispatchBoard'; await wait(800); }
+      location.hash = want + (jobId ? '?jobid=' + jobId : '');
+      const c = await until(() => chatFor(num), 15000, 250);
+      if (!c) return null;
+      await wait(400);   // let the message history settle
+      return chatFor(num);
+    };
+    const messagesOf = v => {
+      const days = toJS(un(v.MessagesByDay)) || [];
+      const out = [];
+      days.forEach(d => (d && d.Messages || []).forEach(m => out.push(m)));
+      return out;
+    };
+    const timeOf = m => { const t = new Date(m.CreatedOn).getTime(); return isFinite(t) ? t : 0; };
+    const STOP_WORDS = /^(stop|stop all|stopall|unsubscribe|cancel|end|quit|stop texting( me)?|remove me)[.!]*$/i;
+    const START_WORDS = /^(start|unstop|yes)[.!]*$/i;
+    const optedOut = list => {
+      let out = false;
+      list.filter(m => m.IsInbound).sort((a, b) => timeOf(a) - timeOf(b)).forEach(m => {
+        const b = norm(m.Body);
+        if (STOP_WORDS.test(b)) out = true; else if (START_WORDS.test(b)) out = false;
+      });
+      return out;
+    };
+    // The folder's repeat rule: was this customer texted (or sent this same text) recently?
+    const recentText = (list, f, text) => {
+      if (!f.days) return null;
+      const since = new Date(); since.setHours(0, 0, 0, 0); since.setDate(since.getDate() - (f.days - 1));
+      // Automatic notifications and texts that failed to send don't count.
+      const hit = list.filter(m => m.IsOutbound && !m.IsNotification && !m.SmsSendErrorCode && !m.HasNotBeenDelivered && timeOf(m) >= since.getTime() &&
+        (!f.same || norm(m.Body) === norm(text))).sort((a, b) => timeOf(b) - timeOf(a))[0];
+      return hit ? new Date(timeOf(hit)) : null;
+    };
+    const ago = d => { const days = Math.floor((Date.now() - d.getTime()) / 86400000); return days < 1 ? 'today' : days === 1 ? 'yesterday' : days + ' days ago'; };
+    const outCount = (v, text) => messagesOf(v).filter(m => m.IsOutbound && norm(m.Body) === norm(text)).length;
+    const typeIn = (c, text) => {
+      const box = c.box;
+      box.focus();
+      if (!(document.execCommand && document.execCommand('insertText', false, text) && box.value === text)) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(box, text);
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      box.dispatchEvent(new Event('change', { bubbles: true }));
+      if (typeof c.vm.ResponseText === 'function' && un(c.vm.ResponseText) !== text) c.vm.ResponseText(text);
+      return box.value === text && (typeof c.vm.ResponseText !== 'function' || un(c.vm.ResponseText) === text);
+    };
+    const clearIn = c => {
+      if (!c || !c.box) return;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(c.box, '');
+      c.box.dispatchEvent(new Event('input', { bubbles: true }));
+      c.box.dispatchEvent(new Event('change', { bubbles: true }));
+      if (typeof c.vm.ResponseText === 'function') c.vm.ResponseText('');
+    };
+    // True once our text shows in the conversation as sent and the box has emptied.
+    const wentOut = (num, text, before) => {
+      const c = chatFor(num);
+      if (!c) return null;
+      if (un(c.vm.SubmittingResponseInProgress)) return null;
+      if (norm(c.box.value) !== '') return null;
+      const mine = messagesOf(c.vm).filter(m => m.IsOutbound && norm(m.Body) === norm(text));
+      return mine.length > before ? mine[mine.length - 1] : null;
+    };
+
+    // ---------- The run ----------
+    const go = async () => {
+      if (running) return;
+      if (mode === 'auto' && confInput.value.trim() !== String(pending.length)) {
+        if (confAsk.firstChild) confAsk.firstChild.textContent = '⚠️ That number doesn\'t match. Type ' + pending.length + ' to text ' + s1(pending.length, 'customer') + ':';
+        return;
+      }
+      if (lock) { sub('main'); return say('Wait for ' + lock + ' to finish first.'); }
+      const f = curFolder(), m = curMsg();
+      if (!m) { sub('main'); return; }
+      running = true; stopRun = false; lock = TOOL;
+      const auto = mode === 'auto';
+      const tmpl = m[1];
+      const list = pending.slice();
+      const home = onBoard() ? location.hash : '#/DispatchBoard';
+      runLog.textContent = ''; runMsg.textContent = '';
+      stopBtn.disabled = false; stopBtn.textContent = 'Stop'; stopBtn.style.display = 'inline-block';
+      doneBtn.style.display = 'none'; copyBtn.textContent = 'Copy results';
+      sub('run');
+      add((auto ? 'Auto-send' : 'Type only') + ' · ' + f.name + ' · "' + m[0] + '" · ' + s1(list.length, 'customer'));
+      const tally = {}, look = [];
+      const done = new Set();   // numbers texted this run
+      let failsInRow = 0;
+      const out = (r, num, text, kind) => {
+        tally[kind] = (tally[kind] || 0) + 1;
+        add('#' + r.jobId + ' ' + (r.customer || '') + (num ? ' ' + showNum(num) : '') + ': ' + text);
+        if (kind === 'problem' || kind === 'look') look.push('#' + r.jobId + ' ' + (r.customer || '') + ': ' + text);
+      };
+      try {
+        for (let n = 0; n < list.length; n++) {
+          if (stopRun) { add('Stopped. ' + s1(list.length - n, 'customer') + ' not texted.'); break; }
+          const r = list[n];
+          runMsg.textContent = (auto ? 'Texting ' : 'Typing ') + (n + 1) + ' of ' + list.length + ': ' + (r.customer || '#' + r.jobId);
+          if (uses(tmpl, 'tech') && !r.tech) { out(r, '', 'skipped: no tech on the board for {tech}', 'skipped'); continue; }
+          let info;
+          try { info = await billTo(r.jobId); }
+          catch (e) { out(r, '', 'skipped: ' + (e && e.message ? e.message : e), 'problem'); if (/no Bill To contacts/.test(String(e && e.message))) { add('Stopped the run.' + CHANGED); break; } continue; }
+          if (!r.customer) r.customer = info.name;
+          const pickN = pickNumbers(info.phones);
+          if (!pickN.nums.length) { out(r, '', 'skipped: no mobile number on the Bill To', 'skipped'); continue; }
+          const text = fill(tmpl, { first: titleCase(firstWord(info.name || r.customer)), tech: r.tech });
+          if (uses(tmpl, 'first') && !firstWord(info.name || r.customer)) { out(r, '', 'skipped: no customer name for {first}', 'skipped'); continue; }
+          for (const num of pickN.nums) {
+            if (stopRun) break;
+            if (never.indexOf(num) > -1) { out(r, num, 'skipped: on your 🚫 never-text list', 'skipped'); continue; }
+            if (done.has(num)) { out(r, num, 'skipped: already texted this number in this run', 'skipped'); continue; }
+            const c = await openChat(num, r.jobId);
+            if (!c) {
+              if (!document.querySelector(BOX)) {
+                health.flag(TOOL, 'the Chat Center\'s message box didn\'t show up', BOX);
+                out(r, num, 'stopped: the Chat Center didn\'t open.', 'problem');
+                add('Stopped the run.' + CHANGED);
+                stopRun = true; break;
+              }
+              out(r, num, 'skipped: the conversation didn\'t load', 'problem'); continue;
+            }
+            const hist = messagesOf(c.vm);
+            if (optedOut(hist)) { out(r, num, 'skipped: they replied STOP', 'skipped'); continue; }
+            if (un(c.vm.IsUnread)) { out(r, num, 'skipped: they have an unread reply. Read it first', 'look'); continue; }
+            const recent = recentText(hist, f, text);
+            if (recent) { out(r, num, 'skipped: ' + (f.same ? 'got this message ' : 'texted ') + ago(recent), 'skipped'); continue; }
+            if (norm(c.box.value) || norm(un(c.vm.ResponseText))) { out(r, num, 'skipped: the message box already had unsent text', 'problem'); continue; }
+            const before = outCount(c.vm, text);
+            if (!typeIn(c, text)) {
+              clearIn(c);
+              health.flag(TOOL, 'the Chat Center\'s message box won\'t take typed text', BOX);
+              out(r, num, 'stopped: could not type the message.', 'problem');
+              add('Stopped the run.' + CHANGED);
+              stopRun = true; break;
+            }
+            health.clear(TOOL);
+
+            if (!auto) {
+              // Wait for the person to press Send (noticed automatically), or Skip / Stop.
+              let watch = true;
+              const watcher = (async () => {
+                while (watch) { if (wentOut(num, text, before)) return 'sent'; await wait(300); }
+                return null;
+              })();
+              const ans = await Promise.race([
+                askStep('Typed to ' + (r.customer || 'customer') + ' ' + showNum(num) + '. Press Send in the chat. It moves on by itself once it\'s sent (or press Next if you changed the text first).', [['Next', 'next', PRIMARY], ['Skip', 'skip'], ['Stop', 'stop']]),
+                watcher
+              ]);
+              watch = false;
+              if (stepResolve) stepResolve(null);
+              if (ans === 'sent') { done.add(num); failsInRow = 0; out(r, num, 'sent by you' + pickN.note, 'sent'); await wait(800); continue; }
+              const cNow = chatFor(num);
+              if (ans === 'next') {
+                if (cNow && norm(cNow.box.value)) { out(r, num, 'not sent? the text is still in the box', 'problem'); continue; }
+                done.add(num); out(r, num, 'sent by you' + pickN.note, 'sent'); continue;
+              }
+              if (cNow && norm(cNow.box.value) === norm(text)) clearIn(cNow);
+              if (ans === 'stop') { stopRun = true; add('Stopped. ' + s1(list.length - n, 'customer') + ' not texted.'); break; }
+              out(r, num, 'skipped by you (text cleared)', 'skipped');
+              continue;
+            }
+
+            // Auto-send: last checks, press Send, then make sure it went out.
+            const c2 = chatFor(num);
+            const form = c2 && c2.box.closest('form');
+            const send = form && Array.from(form.querySelectorAll('button[type="submit"], button')).find(b => visible(b) && /^\s*send\s*$/i.test(b.innerText || ''));
+            if (!c2 || c2.box !== c.box || norm(c2.box.value) !== norm(text) || !send) {
+              if (c2 && norm(c2.box.value) === norm(text)) clearIn(c2);
+              if (!send && c2) { health.flag(TOOL, 'can\'t find the Send button in the Chat Center', 'form button "Send"'); out(r, num, 'stopped: no Send button. Nothing sent.', 'problem'); add('Stopped the run.' + CHANGED); stopRun = true; break; }
+              out(r, num, 'skipped: final check failed, nothing sent', 'problem'); continue;
+            }
+            send.click();
+            const sent = await until(() => wentOut(num, text, before), 15000, 300);
+            if (!sent) {
+              out(r, num, 'NOT CONFIRMED: it may not have sent. Stopping to be safe.', 'problem');
+              stopRun = true; break;
+            }
+            await wait(1200);
+            const last = messagesOf(chatFor(num) ? chatFor(num).vm : c.vm).filter(x => x.IsOutbound && norm(x.Body) === norm(text)).pop() || sent;
+            if (last.SmsSendErrorCode || last.HasNotBeenDelivered) {
+              failsInRow++;
+              out(r, num, 'ServiceTitan says it failed to send (code ' + (last.SmsSendErrorCode || '?') + ')', 'problem');
+              if (failsInRow >= 3) { add('3 failures in a row. Stopped to be safe.'); stopRun = true; break; }
+            } else {
+              failsInRow = 0;
+              out(r, num, 'sent' + pickN.note, 'sent');
+            }
+            done.add(num);
+            await wait(800);
+          }
+        }
+        const summary = Object.keys(tally).map(k => tally[k] + ' ' + k).join(', ') || 'nothing done';
+        if (look.length) { add(''); add('Needs a look:'); look.forEach(x => add('• ' + x)); }
+        runMsg.textContent = 'Done: ' + summary + '.';
+      } catch (e) {
+        runMsg.textContent = '⚠️ Stopped by an error: ' + (e && e.message ? e.message : e);
+      } finally {
+        if (stepResolve) stepResolve('stop');
+        if (location.hash !== home) { location.hash = home; await wait(800); }
+        running = false; lock = null;
+        stopBtn.style.display = 'none'; doneBtn.style.display = 'inline-block';
+      }
+    };
+
+    textsPane.appendChild(pane);
+    sub('main');
+    return {
+      refresh: () => { if (!running) { sub('main'); renderMain(); } },
+      leave: () => { if (picking) { picking = false; if (!running) renderMain(); } },
+      isRunning: () => running,
+      stop: requestStop,
+      cleanup: () => { window.removeEventListener('click', onBoardClick, true); paintStyle.remove(); }
+    };
+  })();
+
+  // ===================================================================
   // Dragging, closing, and starting up
   // ===================================================================
   header.addEventListener('mousedown', e => {
@@ -1964,7 +2742,7 @@
     document.addEventListener('mouseup', up);
   });
 
-  // Closing while a tool is running (Job Notifications, Tech Messages or Business Unit) would
+  // Closing while a tool is running (Job Notifications, Tech Messages, Business Unit or Customer Texts) would
   // hide the panel but leave the run going in the background. So ask first, stop the run, then close.
   const closeBar = el('div', 'display:none;padding:8px 12px;background:#fdecec;color:#7a1010;font-size:12px;border-bottom:1px solid #e0a0a8');
   const closeText = el('div', 'margin-bottom:6px');
@@ -1975,11 +2753,12 @@
   const finishClose = () => {
     notes.cleanup();
     biz.cleanup();
+    texts.cleanup();
     panel.remove();
     delete window.__stToolbox;
   };
   const close = () => {
-    const runners = [[notify, 'Job Notifications'], [msgs, 'Tech Messages'], [biz, 'Business Unit']];
+    const runners = [[notify, 'Job Notifications'], [msgs, 'Tech Messages'], [biz, 'Business Unit'], [texts, 'Customer Texts']];
     const found = runners.find(r => r[0].isRunning());
     if (!found) return finishClose();
     if (closing) return;
@@ -2004,6 +2783,6 @@
 
   document.body.appendChild(panel);
   const startView = get('stView');
-  showView(['notes', 'jobs', 'msgs', 'biz'].indexOf(startView) > -1 ? startView : 'menu');
+  showView(['notes', 'jobs', 'msgs', 'biz', 'texts'].indexOf(startView) > -1 ? startView : 'menu');
   health.checkBoard(false);
 })();

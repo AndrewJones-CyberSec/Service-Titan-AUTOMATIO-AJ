@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5
+
+- **📱 Customer Texts** (new): text customers a saved message through the Chat Center.
+  - Folders: **⏸️ Holds** (free-quote follow-up), **🚚 Tech Updates** (running late) and **📅 Reschedule**, plus your own. ✏️ Edit messages and 📁 Edit folders.
+  - **Hold list:** loads every hold at once from the board's Hold tab, grouped by job type (Quote, Non Operational, Maintenance…) with counts. Tick groups or single job types. Or pick jobs on the board / type job numbers.
+  - **Numbers:** Bill To primary, or their first mobile if the primary is a landline. Option to text every mobile on the Bill To.
+  - **Fill-ins:** `{dispatcher}` (your first name from your login), `{first}` (customer), `{tech}` (tech on the board).
+  - **Repeat rule per folder** (Holds: 7 days; Tech Updates and Reschedule: same message today). Always skips STOP replies, unread replies, the never-text list and numbers already texted in the run.
+  - **Type only** (you press Send; it notices and moves on) or **Auto-send** (type the count to confirm; each text is checked; stops if one can't be confirmed or 3 fail in a row). Stop button and copyable results.
+
 ## 1.4
 
 - **🏢 Business Unit** (new): switch the Business Unit on the jobs you pick to a branch, **Mendenhall Branch** by default. The list only offers branches, not departments.

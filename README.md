@@ -40,6 +40,17 @@ Switch the Business Unit on one job or many to a branch: **Mendenhall Branch** u
 
 If ServiceTitan locks a job's Business Unit, the job is skipped and listed. If ServiceTitan pops up a question after Save, the run stops there and leaves the question on screen for you to answer. Up to 50 jobs per run.
 
+**📱 Customer Texts**
+Text customers a saved message through ServiceTitan's Chat Center. Messages are sorted into folders, **⏸️ Holds**, **🚚 Tech Updates** and **📅 Reschedule**, plus any you add.
+
+- **Who:** the **Hold list** (every hold on the board's Hold tab loads at once; tick the kinds to text, such as Quote or Non Operational, or open a kind to tick single job types), or **jobs you pick** on the board or by job number. One text per customer.
+- **Which number:** the Bill To's primary number. If that's a landline, their first mobile number. In ⚙️ Settings you can text every mobile number on the Bill To instead.
+- **Fill-ins:** `{dispatcher}` is your first name from your ServiceTitan login (or the name in ⚙️ Settings), `{first}` the customer's first name, `{tech}` the tech's first name (jobs on the board).
+- **Repeat rules per folder:** Holds skips anyone who got a text from us in the last 7 days. Tech Updates and Reschedule skip anyone who already got that same message today. Change them in 📁 Edit folders. Automatic notifications and texts that failed don't count.
+- **Skipped every time:** anyone who replied STOP, anyone with an unread reply (listed so you can read it), numbers on your 🚫 never-text list, and a number already texted in the same run.
+- **Type only:** it opens each conversation and types the message. You press Send and it moves on by itself. **Auto-send:** you confirm by typing how many customers it will text, and it checks each text went out. It stops if a text can't be confirmed or 3 fail in a row.
+- **✏️ Edit messages**, **📁 Edit folders** and **⚙️ Settings** are saved in your own browser. About 4–5 seconds per text; keep the tab on screen while it runs.
+
 **🩺 Health check**
 If ServiceTitan changes something a tool relies on, a yellow bar at the top of the Toolbox says which tool is affected and what's missing, instead of the tool failing quietly. Use **Copy report** to pass the details along, or **🩺 Check** in the menu to check any time.
 
@@ -62,6 +73,7 @@ Open the project's install page (the GitHub Pages address for this project) and 
 - Notes never saves a note by itself; you always click **Add Note** in ServiceTitan.
 - Tech Messages only sends on its own in Auto-send mode, after you confirm.
 - Business Unit only saves jobs after you confirm, and checks each one afterwards.
+- Customer Texts only sends on its own in Auto-send mode, after you type how many customers it will text.
 - Not affiliated with or endorsed by ServiceTitan.
 
 ## License
