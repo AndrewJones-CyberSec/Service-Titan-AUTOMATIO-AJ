@@ -42,6 +42,26 @@
   window.buName = j => nameOf(DB[j].bu);
   window.saves = [];
   window.opened = [];
+  // ServiceTitan's job data, as its pages read it. window.API_DOWN = true makes it unreadable.
+  window.apiCalls = 0;
+  const realFetch = window.fetch;
+  window.fetch = async (url, opts) => {
+    const u = String(url);
+    const json = (o, st) => new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    let m = /^\/Job\/Edit\/(\d+)/.exec(u) || /^\/Job\/Index\/\?id=(\d+)/.exec(u);
+    if (!m) return realFetch(url, opts);
+    window.apiCalls++;
+    await new Promise(r => setTimeout(r, 40));
+    if (window.API_DOWN) return json({ error: 'down' }, 500);
+    const j = m[1];
+    window.NOTIF = window.NOTIF || {};
+    const job = DB[j];
+    if (/^\/Job\/Edit\//.test(u)) {
+      if (!job) return json({}, 404);
+      return json({ Id: Number(j), BusinessUnitId: job.bu, BusinessUnit: nameOf(job.bu), IsBusinessUnitReadOnly: job.mode === 'locked' });
+    }
+    return json({ Id: Number(j), NotificationsEnabled: j in window.NOTIF ? window.NOTIF[j] : true, BusinessUnit: job ? nameOf(job.bu) : 'Commercial' });
+  };
   function render() {
     const h = location.hash.split('?')[0];
     const root = document.getElementById('root');
@@ -66,6 +86,7 @@
       root.appendChild(jl);
     } else if ((m = /^#\/Job\/Edit\/(\d+)/.exec(h))) {
       const j = m[1], job = DB[j];
+      (window.editOpened = window.editOpened || []).push(j);
       setTimeout(() => {
         if (location.hash.split('?')[0] !== h) return;
         const form = document.createElement('form');
@@ -99,6 +120,7 @@
       }, 350);
     } else if ((m = /^#\/Job\/Index\/(\d+)/.exec(h))) {
       const j = m[1];
+      (window.indexOpened = window.indexOpened || []).push(j);
       window.NOTIF = window.NOTIF || {};
       if (!(j in window.NOTIF)) window.NOTIF[j] = true;
       setTimeout(() => {

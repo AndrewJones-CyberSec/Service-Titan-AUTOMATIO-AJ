@@ -37,6 +37,7 @@
     10: { name: 'Hal Fry', c: [['M', '(601) 555-0010']] },
     11: { name: 'Ivy Kim', c: [['M', '(504) 555-0001']] },
     12: { name: 'Jon Poe', c: [['M', '(601) 555-0012'], ['M', '(601) 555-0112']] },
+    13: { name: 'Pat Lowe', c: [['M', '(601) 555-0013']] },
     20: { name: 'Kim Wu', c: [['M', '(601) 555-0020']] },
     21: { name: 'Lou Ng', c: [['M', '(601) 555-0021']] },
     22: { name: 'Mo Day', c: [['M', '(601) 555-0022']] },
@@ -49,7 +50,7 @@
     [5004, 4, 'Quote - Generator'], [5005, 5, 'Non - Operational - Commercial - AC - Under 12 Years Old'],
     [5006, 6, 'Quote - HVAC - Mini Split'], [5007, 7, 'Maintenance - Summer - Residential - Under 12 Yrs'],
     [5008, 1, 'Quote - Electrical'], [5009, 9, 'Quote - Water Heater'], [5010, 10, 'Quote - Water Heater'],
-    [5011, 11, 'Quote - Duct Cleaning'], [5012, 12, 'Quote - Generator']
+    [5011, 11, 'Quote - Duct Cleaning'], [5012, 12, 'Quote - Generator'], [5013, 13, 'Quote - HVAC - Central Home System']
   ];
   // Board timeline jobs: job -> [customer, tech first name]
   const BOARD = { 6001: [20, 'Paxton'], 6002: [21, 'Paxton'], 6003: [22, ''] };
@@ -65,6 +66,14 @@
     '6015550021': { unread: false, msgs: [{ Body: RUNNING_LATE, IsOutbound: true, CreatedOn: hoursAgo(1) }] }
   };
   window.SENT = [];
+  window.chatOpened = [];
+  CHATS['6015550013'] = { unread: false, blocked: true, msgs: [] };   // blocked in ServiceTitan
+  // The chat data, as ServiceTitan's Chat Center reads it. window.CHAT_API_DOWN = true makes it unreadable.
+  const rawMsgs = (num, chat) => chat.msgs.map((x, i) => ({
+    SmsId: Number(num.slice(-4)) * 1000 + i, Body: x.Body, CreatedOn: x.CreatedOn,
+    SmsDirection: x.IsOutbound ? 1 : 0, Channel: x.IsNotification ? 7 : (x.IsOutbound ? 3 : 0),
+    SmsSendErrorCode: x.SmsSendErrorCode || 0, SmsDeliveryStatus: x.SmsSendErrorCode ? 1 : (x.late ? 2 : 0)
+  }));
   window.opened = [];
   const chatOf = n => { if (!CHATS[n]) CHATS[n] = { unread: false, msgs: [] }; return CHATS[n]; };
 
@@ -82,6 +91,19 @@
       return json({ Jobs: rows.slice(b.QueryFilter.Skip, b.QueryFilter.Skip + b.QueryFilter.Take), Count: rows.length });
     }
     let m = /^\/Job\/Index\/\?id=(\d+)/.exec(u);
+    let c;
+    if ((c = /^\/GrowthChatCenter\/ChatThread\?number=(\d+)/.exec(u))) {
+      if (window.CHAT_API_DOWN) return json({}, 500);
+      const num = c[1], chat = CHATS[num];
+      if (!chat) return json({ Threads: [], HasNoMore: true });
+      const raw = rawMsgs(num, chat);
+      return json({ Threads: [{ ThreadId: Number(num), ContactNumber: '(' + num.slice(0, 3) + ') ' + num.slice(3, 6) + '-' + num.slice(6), ReadStatus: chat.unread ? -10 : 0, BlockedStatus: chat.blocked ? 10 : 0, Messages: raw.slice(-1) }], HasNoMore: true });
+    }
+    if ((c = /^\/GrowthChatCenter\/Messages\?threadId=(\d+)/.exec(u))) {
+      if (window.CHAT_API_DOWN) return json({}, 500);
+      const num = c[1], chat = CHATS[num];
+      return json({ Messages: chat ? rawMsgs(num, chat) : [], HasNoMore: true });
+    }
     if (m) {
       const cid = JOBCUST[m[1]];
       if (!cid) return json({}, 404);
@@ -112,6 +134,7 @@
       root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => window.opened.push(a.getAttribute('data-job-id'))));
     } else if ((m = /^#\/ChatCenter\/(\d+)/.exec(h))) {
       const num = m[1];
+      window.chatOpened.push(num);
       if (num === '6015559999') return;   // a broken Chat Center: no message box
       const chat = chatOf(num);
       setTimeout(() => {
@@ -135,7 +158,8 @@
           if (!body) return;
           vm.SubmittingResponseInProgress(true);
           setTimeout(() => {
-            const msg = { Body: body, IsOutbound: true, CreatedOn: new Date().toISOString(), SmsSendErrorCode: chat.fail ? 21610 : 0 };
+            // lateFail: looks fine at first; the chat data says it failed a moment later.
+            const msg = { Body: body, IsOutbound: true, CreatedOn: new Date().toISOString(), SmsSendErrorCode: chat.fail ? 21610 : 0, late: !!chat.lateFail };
             chat.msgs.push(msg); window.SENT.push([num, body]);
             vm.MessagesByDay([{ Date: 'x', Messages: chat.msgs.map(toMsg) }]);
             vm.ResponseText(''); ta.value = ''; vm.SubmittingResponseInProgress(false);

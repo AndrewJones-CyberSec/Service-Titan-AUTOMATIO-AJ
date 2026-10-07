@@ -18,8 +18,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.5';
+  const VERSION = '1.5.1';
   const WHATS_NEW = {
+    '1.5.1': 'Faster and smarter: Check jobs in Job Notifications and Business Unit now takes seconds instead of minutes, and Customer Texts checks everyone before it starts, so you see exactly who will be texted (and who is skipped, and why). Every job-picking tool also has + All in the list.',
     '1.5': 'New: 📱 Customer Texts. Text customers a saved message from folders (Holds, Tech Updates, Reschedule). Load every hold at once and filter by job type, or pick jobs on the board. {dispatcher} fills in your first name. Also: Tech Messages can pick techs by clicking them on the board, Job Notifications can work on jobs you pick, and every tool can pick from the Unassigned / Hold list.',
     '1.4': 'New: 🏢 Business Unit. Pick jobs on the board (or type their numbers) and switch them all to Mendenhall Branch, or another branch, in one go. ↩ Put back undoes it.',
     '1.3.1': 'Tech Messages can now send to up to 57 people per run (was 50).',
@@ -90,6 +91,68 @@
   };
   const PRIMARY = 'background:#1a6ed8;color:#fff;border-color:#1a6ed8;font-weight:600;';
   const DANGER = 'background:#c62828;color:#fff;border-color:#c62828;font-weight:600;';
+  const norm = s => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  const same = (a, b) => norm(a).toLowerCase() === norm(b).toLowerCase();
+  const plural = (n, word, many) => n + ' ' + (n === 1 ? word : (many || word + 's'));
+  const last10 = s => String(s == null ? '' : s).replace(/\D/g, '').slice(-10);
+  const errText = e => (e && e.message ? e.message : String(e));
+
+  // ===================================================================
+  // Reading ServiceTitan's own data
+  // The same requests ServiceTitan's pages make to show a job or a conversation. Reading them
+  // directly takes a fraction of a second, where opening the page takes a few seconds. Nothing
+  // here changes anything; changes still go through the page, like a person would do them.
+  // ===================================================================
+  const st = (() => {
+    const HEADERS = { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' };
+    const getJSON = async (url, ms) => {
+      const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = ctl ? setTimeout(() => ctl.abort(), ms || 15000) : null;
+      try {
+        const r = await fetch(url + (url.indexOf('?') < 0 ? '?' : '&') + '_=' + Date.now(), { credentials: 'include', headers: HEADERS, signal: ctl ? ctl.signal : undefined });
+        if (!r.ok) throw new Error('ServiceTitan answered ' + r.status);
+        return await r.json();
+      } catch (e) {
+        throw e && e.name === 'AbortError' ? new Error('ServiceTitan took too long to answer') : e;
+      } finally { if (timer) clearTimeout(timer); }
+    };
+    // Runs fn on each item, a few at a time (gentle on ServiceTitan), keeping the order.
+    // A failed item gives { error } instead of stopping the rest.
+    const pool = async (items, limit, fn, progress) => {
+      const out = new Array(items.length);
+      let next = 0, done = 0;
+      const worker = async () => {
+        while (next < items.length) {
+          const i = next++;
+          try { out[i] = await fn(items[i], i); } catch (e) { out[i] = { error: e }; }
+          done++;
+          if (progress) progress(done, items.length);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+      return out;
+    };
+    const job = id => getJSON('/Job/Index/?id=' + encodeURIComponent(id) + '&skipForms=true');
+    const jobEdit = id => getJSON('/Job/Edit/' + encodeURIComponent(id));
+    // The conversation with a phone number: { ThreadId, ReadStatus, BlockedStatus, Messages: [last] },
+    // or null if there's never been one.
+    const chatThread = async num => {
+      const d = await getJSON('/GrowthChatCenter/ChatThread?number=' + encodeURIComponent(num));
+      if (!d || !Array.isArray(d.Threads)) throw new Error('the conversation came back in a shape the Toolbox doesn\'t know');
+      return d.Threads.find(t => last10(t.ContactNumber) === num) || (d.Threads.length === 1 ? d.Threads[0] : null);
+    };
+    const chatMessages = async (threadId, count) => {
+      const d = await getJSON('/GrowthChatCenter/Messages?threadId=' + encodeURIComponent(threadId) + '&skip=0&count=' + (count || 100));
+      if (!d || !Array.isArray(d.Messages)) throw new Error('the messages came back in a shape the Toolbox doesn\'t know');
+      return d.Messages;
+    };
+    // ServiceTitan's own code numbers (from the page), with the values seen in Oct 2026 as backup.
+    const code = (group, name, backup) => {
+      try { const g = window.App && window.App.Enums && window.App.Enums[group]; if (g && typeof g[name] === 'number') return g[name]; } catch (e) {}
+      return backup;
+    };
+    return { getJSON, pool, job, jobEdit, chatThread, chatMessages, code };
+  })();
 
   // The editable list used by ✏️ Edit notes and ✏️ Edit messages: a name and a text per item,
   // with ↑ ↓ to reorder and Delete. `word` is 'note' or 'message' (used in warnings).
@@ -213,6 +276,149 @@
   };
   const PRESS_EVENTS = ['pointerdown', 'mousedown', 'click'];
   PRESS_EVENTS.forEach(t => window.addEventListener(t, pressGuard, true));
+
+  // A job on the board's timeline: its customer, and the tech's first name (for {tech}).
+  const timelineJob = j => {
+    try {
+      const jl = document.querySelector('.job-list');
+      const vm = jl && window.ko && window.ko.dataFor(jl);
+      const list = (vm && window.ko.unwrap(vm.Assignments)) || [];
+      const u = window.ko.unwrap;
+      const a = list.find(x => String(u(x.JobId)) === String(j));
+      if (!a) return null;
+      const tech = norm(u(a.FirstName) || u(a.TechnicianName)).split(' ')[0] || '';
+      return { customer: norm(u(a.Customer)), customerId: u(a.CustomerId) || null, tech: tech ? tech.charAt(0).toUpperCase() + tech.slice(1).toLowerCase() : '' };
+    } catch (e) { return null; }
+  };
+
+  // ===================================================================
+  // Picking jobs: shared by Job Notifications, Business Unit and Customer Texts.
+  // With 🖱️ Pick on board on, clicking a job on the timeline, or a row in the job list at the
+  // bottom, adds it (click again to take it off). Jobs can also be typed in, or a whole list
+  // tab added at once. Picked jobs are highlighted only while their tool is open.
+  //   opts: { color, soft, max, shown() (tool open and using picked jobs), busy() (a run is
+  //           going), say(text), changed() (the list changed) }
+  // ===================================================================
+  const jobPicker = opts => {
+    const picked = new Map();   // job number -> label (usually the customer's name)
+    let picking = false, enabled = true;
+    const style = el('style');
+    (document.head || document.documentElement).appendChild(style);
+    const labelOf = j => {
+      const t = timelineJob(j); if (t && t.customer) return t.customer;
+      const l = listJob(j); if (l && l.customer) return l.customer;
+      const a = document.querySelector('a.appointment[data-job-id="' + j + '"]');
+      return a ? norm(a.innerText || a.textContent).slice(0, 38) : '';
+    };
+    const say = t => opts.say && opts.say(t);
+    const box = el('div', 'display:grid;gap:5px');
+    const head = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap');
+    const count = el('span', 'font-size:12px;font-weight:600;margin-right:auto');
+    const pickBtn = smallBtn('🖱️ Pick on board', () => setPicking(!picking));
+    const allBtn = smallBtn('+ All in the list', () => addListTab());
+    allBtn.title = 'Adds every job showing in the list at the bottom of the board (the tab and page that are open)';
+    const clearBtn = smallBtn('Clear', () => { if (opts.busy()) return; picked.clear(); changed(); say('List cleared.'); });
+    head.append(count, pickBtn, allBtn, clearBtn);
+    const list = el('div', 'max-height:150px;overflow:auto;border:1px solid #ddd;border-radius:6px;background:#fafafa');
+    const typedRow = el('div', 'display:flex;gap:6px');
+    const typed = el('input', 'flex:1;min-width:0;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
+    typed.type = 'text'; typed.placeholder = 'Or type job #s (any day)';
+    const typedAdd = smallBtn('Add', () => addTyped());
+    typed.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); addTyped(); } };
+    typedRow.append(typed, typedAdd);
+    box.append(head, list, typedRow);
+
+    const paint = () => { style.textContent = opts.shown() ? pickedCss(Array.from(picked.keys()), opts.color, opts.soft) : ''; };
+    const render = () => {
+      count.textContent = plural(picked.size, 'job') + ' picked';
+      pickBtn.textContent = picking ? '🖱️ Picking: ON' : '🖱️ Pick on board';
+      pickBtn.style.background = picking ? opts.color : '#fff';
+      pickBtn.style.color = picking ? '#fff' : '#111';
+      pickBtn.style.borderColor = picking ? opts.color : '#aaa';
+      pickBtn.style.fontWeight = picking ? '600' : '400';
+      list.textContent = '';
+      if (!picked.size) list.appendChild(el('div', 'padding:6px 8px;font-size:12px;color:#666', picking ? 'Click jobs on the board, or in the Unassigned / Hold list at the bottom, to add them. Click again to take one off.' : 'Press 🖱️ Pick on board, use + All in the list, or type job numbers.'));
+      picked.forEach((lab, j) => {
+        const r = el('div', 'display:flex;gap:6px;align-items:center;padding:3px 6px;border-bottom:1px solid #eee;font-size:12px');
+        const n = el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
+        n.append(el('b', '', '#' + j), document.createTextNode(lab ? '  ' + lab : ''));
+        n.title = lab;
+        const x = smallBtn('✕', () => { if (opts.busy()) return; picked.delete(j); changed(); }, 'padding:1px 6px');
+        x.title = 'Take this job off the list';
+        r.append(n, x);
+        list.appendChild(r);
+      });
+      [pickBtn, allBtn, clearBtn, typed, typedAdd].forEach(x => { x.disabled = !enabled; x.style.opacity = enabled ? '1' : '.5'; });
+      paint();
+    };
+    const changed = () => { render(); if (opts.changed) opts.changed(); };
+    const add = j => {
+      if (picked.has(j)) return false;
+      if (opts.max && picked.size >= opts.max) { say('⚠️ The list is full (' + opts.max + ' jobs per run).'); return false; }
+      picked.set(j, labelOf(j));
+      return true;
+    };
+    const addTyped = () => {
+      if (opts.busy()) return;
+      const nums = typed.value.match(/\d{4,}/g) || [];
+      if (!nums.length) { say('Type one or more job numbers first.'); return; }
+      let n = 0;
+      nums.forEach(j => { if (add(j)) n++; });
+      typed.value = '';
+      changed();
+      say('Added ' + plural(n, 'job') + '. ' + plural(picked.size, 'job') + ' picked.');
+    };
+    // Every job showing in the list at the bottom of the board (the open tab and page).
+    const addListTab = () => {
+      if (opts.busy()) return;
+      let caption = '', jobs = [];
+      try {
+        const jl = document.querySelector('.job-list');
+        const vm = jl && window.ko && window.ko.dataFor(jl);
+        const JL = vm && vm.JobList;
+        const view = JL && window.ko.unwrap(JL.View);
+        caption = (view && view.Caption) || '';
+        jobs = ((JL && window.ko.unwrap(JL.AllVisibleJobs)) || []).map(x => String(window.ko.unwrap(x.JobId)));
+      } catch (e) {}
+      if (!jobs.length) document.querySelectorAll('.job-list tr[class*="qa-job-"]').forEach(tr => { const j = clickedJob(tr); if (j && visible(tr)) jobs.push(j); });
+      if (!jobs.length) { say('The list at the bottom of the board is empty. Open a tab there (Unassigned, Hold, …) first.'); return; }
+      let n = 0;
+      jobs.forEach(j => { if (/^\d+$/.test(j) && add(j)) n++; });
+      changed();
+      say('Added ' + plural(n, 'job') + (caption ? ' from the ' + caption + ' list' : ' from the list') + ' (the page showing).');
+    };
+    const setPicking = on => {
+      picking = !!on && enabled && !opts.busy();
+      if (picking && !onBoard()) say('Open the Dispatch board to pick jobs there.');
+      else if (picking) say('Click jobs on the board, or in the Unassigned / Hold list at the bottom, to add them. Click one again to take it off.');
+      render();
+    };
+    const onClick = e => {
+      if (!picking || opts.busy() || !onBoard() || !opts.shown() || panel.contains(e.target)) return;
+      const j = clickedJob(e.target);
+      if (!j) return;
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      if (picked.has(j)) { picked.delete(j); say('Took #' + j + ' off. ' + plural(picked.size, 'job') + ' picked.'); }
+      else if (add(j)) say('Added #' + j + '. ' + plural(picked.size, 'job') + ' picked.');
+      changed();
+    };
+    window.addEventListener('click', onClick, true);
+    pickers.push({ active: () => picking && !opts.busy() && opts.shown(), hit: t => !!clickedJob(t) });
+    render();
+    return {
+      box,
+      size: () => picked.size,
+      ids: () => Array.from(picked.keys()),
+      has: j => picked.has(j),
+      label: j => picked.get(j) || '',
+      remove: j => { picked.delete(j); render(); },
+      render,
+      setPicking,
+      isPicking: () => picking,
+      setEnabled: on => { enabled = !!on; if (!enabled) picking = false; render(); },
+      cleanup: () => { window.removeEventListener('click', onClick, true); style.remove(); }
+    };
+  };
   const pos = (get('stPos') || get('qnPos') || '').split(',').map(Number);
   if (pos.length === 2 && pos.every(n => isFinite(n))) {
     panel.style.left = Math.min(Math.max(0, pos[0]), innerWidth - 120) + 'px';
@@ -648,7 +854,7 @@
         await fill(note);
         if (/^✅/.test(msg.textContent)) health.clear('Notes');
       } catch (e) {
-        say('⚠️ Error: ' + (e && e.message ? e.message : e));
+        say('⚠️ Error: ' + errText(e));
       } finally {
         busy = false;
         lock = null;
@@ -873,7 +1079,14 @@
     const IN = ['.qa-job-notification-toggle input.ToggleSwitch__input', '.qa-job-notification-toggle input[type=checkbox]'];
     const LB = ['.qa-job-notification-toggle label.ToggleSwitch__html-label', '.qa-job-notification-toggle label'];
     const first = sels => { for (const s of sels) { const x = document.querySelector(s); if (x) return x; } return null; };
-    const boardDate = () => (document.body.innerText.match(/(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [A-Z][a-z]{2} \d+, \d{4}/) || ['the day shown'])[0];
+    // The day the board shows, from the board itself (e.g. "Wed, Oct 7, 2026").
+    const boardDate = () => {
+      try {
+        const d = window.ko.unwrap(window.ko.dataFor(document.querySelector('.job-list')).Date);
+        if (d && typeof d.toLocaleDateString === 'function') return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      } catch (e) {}
+      return (document.body.innerText.match(/(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [A-Z][a-z]{2} \d+, \d{4}/) || ['the day shown'])[0];
+    };
     const techsOnBoard = () => {
       const seen = new Map();
       document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
@@ -889,6 +1102,23 @@
       const ids = new Set();
       document.querySelectorAll('a.appointment[data-technician-id="' + techId + '"][data-job-id]').forEach(a => ids.add(a.getAttribute('data-job-id')));
       return Array.from(ids);
+    };
+    // How many jobs each tech has on the board, in one pass over the board.
+    const jobCounts = () => {
+      const m = new Map();
+      document.querySelectorAll('a.appointment[data-technician-id][data-job-id]').forEach(a => {
+        const id = a.getAttribute('data-technician-id');
+        let ids = m.get(id);
+        if (!ids) m.set(id, ids = new Set());
+        ids.add(a.getAttribute('data-job-id'));
+      });
+      return m;
+    };
+    // A job's notification setting from ServiceTitan's job data (no page to open): true, false,
+    // or null if it couldn't be read.
+    const apiState = async j => {
+      try { const d = await st.job(j); return typeof d.NotificationsEnabled === 'boolean' ? d.NotificationsEnabled : null; }
+      catch (e) { return null; }
     };
     const wrap = el('div', 'padding:8px 10px 10px;display:grid;gap:8px');
     const msg = el('div', 'font-size:12px;color:#444;min-height:16px');
@@ -922,122 +1152,41 @@
     const srcRadio = (val, text) => {
       const l = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer');
       const r = el('input'); r.type = 'radio'; r.name = 'st-notify-src'; r.checked = src === val;
-      r.onchange = () => { src = val; set('stNotifySrc', val); if (val !== 'picked') setPicking(false); confirmBox.style.display = 'none'; refresh(); };
+      r.onchange = () => { src = val; set('stNotifySrc', val); if (val !== 'picked') picker.setPicking(false); confirmBox.style.display = 'none'; refresh(); };
       l.append(r, document.createTextNode(text));
       return { l, r };
     };
     const srcTech = srcRadio('tech', '👷 A tech\'s jobs'), srcPicked = srcRadio('picked', '🖱️ Jobs I pick (board, Unassigned / Hold list, or job #)');
     srcRow.append(srcTech.l, srcPicked.l);
-    const pickedBox = el('div', 'display:none;gap:5px');
-    const pickedHead = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap');
-    const pickedCount = el('span', 'font-size:12px;font-weight:600;margin-right:auto', '');
-    const pickOnBtn = smallBtn('🖱️ Pick on board', () => setPicking(!picking));
-    const listAllBtn = smallBtn('+ All in the list', () => addListTab());
-    listAllBtn.title = 'Adds every job showing in the list at the bottom of the board (the tab and page that are open)';
-    const pickedClear = smallBtn('Clear', () => { if (running) return; picked.clear(); paint(); refresh(); });
-    pickedHead.append(pickedCount, pickOnBtn, listAllBtn, pickedClear);
-    const pickedList = el('div', 'max-height:140px;overflow:auto;border:1px solid #ddd;border-radius:6px;background:#fafafa');
-    const typedRow = el('div', 'display:flex;gap:6px');
-    const typedBox = el('input', 'flex:1;min-width:0;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
-    typedBox.type = 'text'; typedBox.placeholder = 'Or type job #s';
-    const typedAdd = smallBtn('Add', () => addTyped());
-    typedBox.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); addTyped(); } };
-    typedRow.append(typedBox, typedAdd);
-    pickedBox.append(pickedHead, pickedList, typedRow);
+    const pickedBox = el('div', 'display:none');
     wrap.append(msg, srcRow, pickRow, pickedBox, actions, confirmBox, progress, navRow);
     jobsPane.appendChild(wrap);
     let running = false, stop = false;
     const add = s => { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
 
-    // ---- Jobs you pick ----
-    const picked = new Map();   // job number -> label
-    let picking = false;
-    const paintStyle = el('style');
-    (document.head || document.documentElement).appendChild(paintStyle);
-    // Highlights only show while this tool is open and set to "Jobs I pick".
-    const paint = () => { paintStyle.textContent = jobsPane.style.display !== 'none' && src === 'picked' ? pickedCss(Array.from(picked.keys()), '#ef6c00', 'rgba(239,108,0,.22)') : ''; };
-    const labelOf = j => {
-      const l = listJob(j);
-      if (l && l.customer) return l.customer;
-      const a = document.querySelector('a.appointment[data-job-id="' + j + '"]');
-      return a ? String(a.innerText || a.textContent).replace(/\s+/g, ' ').trim().slice(0, 38) : '';
-    };
-    const setPicking = on => {
-      picking = !!on && !running;
-      pickOnBtn.textContent = picking ? '🖱️ Picking: ON' : '🖱️ Pick on board';
-      pickOnBtn.style.background = picking ? '#ef6c00' : '#fff';
-      pickOnBtn.style.color = picking ? '#fff' : '#111';
-      pickOnBtn.style.borderColor = picking ? '#ef6c00' : '#aaa';
-      pickOnBtn.style.fontWeight = picking ? '600' : '400';
-      if (src === 'picked') renderPicked();
-    };
-    const onPickClick = e => {
-      if (!picking || running || !onBoard() || panel.contains(e.target)) return;
-      const j = clickedJob(e.target);
-      if (!j) return;
-      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      if (picked.has(j)) picked.delete(j); else picked.set(j, labelOf(j));
-      paint(); refresh();
-    };
-    window.addEventListener('click', onPickClick, true);
-    pickers.push({ active: () => picking && !running, hit: t => !!clickedJob(t) });
-    const addTyped = () => {
-      if (running) return;
-      const nums = typedBox.value.match(/\d{4,}/g) || [];
-      if (!nums.length) { say('Type one or more job numbers first.'); return; }
-      let n = 0;
-      nums.forEach(j => { if (!picked.has(j)) { picked.set(j, labelOf(j)); n++; } });
-      typedBox.value = '';
-      paint(); refresh(); say('Added ' + n + ' job' + (n === 1 ? '' : 's') + '.');
-    };
-    // Every job showing in the list at the bottom of the board (the open tab and page).
-    const addListTab = () => {
-      if (running) return;
-      let caption = '', jobs = [];
-      try {
-        const jl = document.querySelector('.job-list');
-        const vm = jl && window.ko && window.ko.dataFor(jl);
-        const JL = vm && vm.JobList;
-        const view = JL && window.ko.unwrap(JL.View);
-        caption = (view && view.Caption) || '';
-        jobs = (JL && window.ko.unwrap(JL.AllVisibleJobs)) || [];
-      } catch (e) {}
-      if (!jobs.length) {
-        // Fall back to the rows showing in the list.
-        document.querySelectorAll('.job-list tr[class*="qa-job-"]').forEach(tr => { const j = clickedJob(tr); if (j && visible(tr)) jobs.push({ JobId: j }); });
-      }
-      if (!jobs.length) { say('The list at the bottom of the board is empty. Open a tab there (Unassigned, Hold, …) first.'); return; }
-      let n = 0;
-      jobs.forEach(x => { const j = String(window.ko ? window.ko.unwrap(x.JobId) : x.JobId); if (/^\d+$/.test(j) && !picked.has(j)) { picked.set(j, labelOf(j)); n++; } });
-      paint(); refresh();
-      say('Added ' + n + ' job' + (n === 1 ? '' : 's') + (caption ? ' from the ' + caption + ' list' : ' from the list') + ' (the page showing).');
-    };
-    const renderPicked = () => {
-      pickedCount.textContent = picked.size + ' job' + (picked.size === 1 ? '' : 's') + ' picked';
-      pickedList.textContent = '';
-      if (!picked.size) pickedList.appendChild(el('div', 'padding:6px 8px;font-size:12px;color:#666', picking ? 'Click jobs on the board, or in the Unassigned / Hold list at the bottom, to add them. Click again to take one off.' : 'Press 🖱️ Pick on board, use + All in the list, or type job numbers.'));
-      picked.forEach((lab, j) => {
-        const r = el('div', 'display:flex;gap:6px;align-items:center;padding:3px 6px;border-bottom:1px solid #eee;font-size:12px');
-        const n = el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
-        n.append(el('b', '', '#' + j), document.createTextNode(lab ? '  ' + lab : ''));
-        r.append(n, smallBtn('✕', () => { if (running) return; picked.delete(j); paint(); refresh(); }, 'padding:1px 6px'));
-        pickedList.appendChild(r);
-      });
-    };
+    // ---- Jobs you pick (orange outline while this tool is open on "Jobs I pick") ----
+    const picker = jobPicker({
+      color: '#ef6c00', soft: 'rgba(239,108,0,.22)',
+      shown: () => jobsPane.style.display !== 'none' && src === 'picked',
+      busy: () => running,
+      say: t => say(t),
+      changed: () => refresh(true)
+    });
+    pickedBox.appendChild(picker.box);
+
     const setEnabled = on => {
-      [pick, refreshBtn, checkBtn, offBtn, pickOnBtn, listAllBtn, pickedClear, typedBox, typedAdd].forEach(x => { x.disabled = !on; x.style.opacity = on ? '1' : '.5'; });
+      [pick, refreshBtn, checkBtn, offBtn].forEach(x => { x.disabled = !on; x.style.opacity = on ? '1' : '.5'; });
+      picker.setEnabled(on);
       // Switching between "a tech's jobs" and "jobs I pick" only locks during a run.
       [srcTech.r, srcPicked.r].forEach(x => { x.disabled = running; });
     };
     const refresh = keepMsg => {
       if (running) return;
-      paint();
       pickRow.style.display = src === 'tech' ? 'flex' : 'none';
-      pickedBox.style.display = src === 'picked' ? 'grid' : 'none';
+      pickedBox.style.display = src === 'picked' ? 'block' : 'none';
+      setEnabled(true);   // also redraws the picked list and its highlights
       if (src === 'picked') {
-        renderPicked();
-        setEnabled(true);
-        if (!picked.size) [checkBtn, offBtn].forEach(x => { x.disabled = true; x.style.opacity = '.5'; });
+        if (!picker.size()) [checkBtn, offBtn].forEach(x => { x.disabled = true; x.style.opacity = '.5'; });
         if (!keepMsg && !msg.textContent) say(onBoard() ? 'Pick jobs, then check them or turn their notifications off.' : 'Open the Dispatch board to pick jobs there, or type job numbers.');
         return;
       }
@@ -1049,8 +1198,9 @@
       }
       const prev = pick.value || get('stNotifyTech') || '';
       const techs = techsOnBoard();
+      const counts = jobCounts();
       const rows = [];
-      techs.forEach((name, id) => { const n = jobsFor(id).length; if (n) rows.push({ id, name, n }); });
+      techs.forEach((name, id) => { const n = counts.has(id) ? counts.get(id).size : 0; if (n) rows.push({ id, name, n }); });
       pick.textContent = '';
       if (!rows.length) {
         setEnabled(false);
@@ -1069,8 +1219,8 @@
     };
     const askConfirm = () => {
       if (src === 'picked') {
-        if (!picked.size) return;
-        confirmText.textContent = 'Turn OFF notifications on ' + picked.size + ' picked job' + (picked.size === 1 ? '' : 's') + '?';
+        if (!picker.size()) return;
+        confirmText.textContent = 'Turn OFF notifications on ' + plural(picker.size(), 'picked job') + '?';
         confirmBox.style.display = 'flex';
         return;
       }
@@ -1094,9 +1244,9 @@
     };
     const start = async real => {
       const usePicked = src === 'picked';
-      if (running || (usePicked ? !picked.size : !pick.value)) return;
+      if (running || (usePicked ? !picker.size() : !pick.value)) return;
       if (lock) return say('Wait for ' + lock + ' to finish first.');
-      if (usePicked) setPicking(false);
+      picker.setPicking(false);
       running = true; stop = false; lock = 'Job Notifications';
       setEnabled(false);
       confirmBox.style.display = 'none';
@@ -1119,11 +1269,11 @@
           location.hash = '#/Job/Index/' + j;
           const found = await until(() => { const x = first(IN); return x && document.body.innerText.indexOf(j) > -1 ? x : null; }, 12000, 300);
           if (!found) return res(NO_SWITCH, 'problem');
-          let st = !!(first(IN) || {}).checked, calm = 0;
+          let state = !!(first(IN) || {}).checked, calm = 0;
           for (let w = 0; calm < 3 && w < 3000; w += 250) {
             await wait(250);
             const c = !!(first(IN) || {}).checked;
-            if (c === st) calm++; else { st = c; calm = 0; }
+            if (c === state) calm++; else { state = c; calm = 0; }
           }
           const inp = first(IN);
           if (!inp) return res(NO_SWITCH, 'problem');
@@ -1132,18 +1282,24 @@
           (first(LB) || inp).click();
           const off = await until(() => { const x = first(IN); return x && !x.checked; }, 4000, 250);
           if (!off) return res('FAILED, still on', 'problem');
-          await wait(1500);
+          // Saved? The job data says so as soon as ServiceTitan has it. Until then, keep an eye on
+          // the switch for a moment in case it flips back.
+          const t0 = Date.now();
+          while (Date.now() - t0 < 1500) {
+            await wait(300);
+            if (await apiState(j) === false) { const y = first(IN); if (!y || !y.checked) return res('turned off', 'turned off'); }
+          }
           const x = first(IN);
           if (x && x.checked) return res('FLIPPED BACK ON (save may have failed)', 'problem');
           return res('turned off', 'turned off');
         } catch (e) {
-          return res('ERROR: ' + (e && e.message ? e.message : e), 'problem');
+          return res('ERROR: ' + errText(e), 'problem');
         }
       };
       try {
         let list;
         if (usePicked) {
-          list = Array.from(picked.keys());
+          list = picker.ids();
           add(techName + ' (' + list.length + ')' + (real ? '' : ' (checking only, nothing changed)'));
         } else {
           say('Finding ' + techName + '\'s jobs...');
@@ -1151,9 +1307,15 @@
           if (!list.length) { say('No jobs found for ' + techName + ' on ' + date + '.'); return; }
           add(date + ' - ' + techName + (real ? '' : ' (checking only, nothing changed)'));
         }
+        // Read every job's setting first, a few at a time. Jobs that are already off (and, when
+        // only checking, every job) need no page at all. The rest are opened one at a time.
+        say('Reading ' + plural(list.length, 'job') + '...');
+        const pre = await st.pool(list, 4, apiState, (d, t) => say('Reading jobs... ' + d + ' of ' + t));
         for (let n = 0; n < list.length; n++) {
           if (stop) { add('Stopped. ' + (list.length - n) + ' job(s) not checked.'); break; }
           const j = list[n];
+          if (pre[n] === false) { record(j, { text: 'already off', kind: 'already off' }); continue; }
+          if (pre[n] === true && !real) { record(j, { text: 'ON (left alone)', kind: 'on' }); continue; }
           say((real ? 'Turning off ' : 'Checking ') + (n + 1) + ' of ' + list.length + ' (job ' + j + ')');
           record(j, await doJob(j));
         }
@@ -1176,7 +1338,7 @@
           add(still.length ? 'Still a problem after retry: ' + still.join(', ') : 'All retried jobs worked.');
         }
         // Picked jobs that are now off come off the list; anything with a problem stays.
-        if (usePicked && real) results.forEach((r, j) => { if (r.kind === 'turned off' || r.kind === 'already off') picked.delete(j); });
+        if (usePicked && real) results.forEach((r, j) => { if (r.kind === 'turned off' || r.kind === 'already off') picker.remove(j); });
         const tally = {};
         let noSwitch = 0;
         results.forEach(r => { tally[r.kind] = (tally[r.kind] || 0) + 1; if (r.text === NO_SWITCH) noSwitch++; });
@@ -1190,22 +1352,20 @@
           say('Done: ' + summary + '.');
         }
       } catch (e) {
-        say('⚠️ Stopped by an error: ' + (e && e.message ? e.message : e));
+        say('⚠️ Stopped by an error: ' + errText(e));
       } finally {
         if (location.hash !== home) { location.hash = home; await wait(800); }
         running = false; lock = null;
         stopBtn.style.display = 'none';
-        paint();
         refresh(true);
       }
     };
-    setPicking(false);
     return {
       refresh,
-      leave: () => { if (picking) setPicking(false); paintStyle.textContent = ''; },
+      leave: () => picker.setPicking(false),
       isRunning: () => running,
       stop: requestStop,
-      cleanup: () => { window.removeEventListener('click', onPickClick, true); paintStyle.remove(); }
+      cleanup: () => picker.cleanup()
     };
   })();
 
@@ -1241,7 +1401,6 @@
     let pickIdx = Math.max(0, Math.min(parseInt(get(K.pick) || '0', 10) || 0, list.length - 1));
 
     // ---- Reading the board ----
-    const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
     const liveTeamOf = id => {
       const row = document.getElementById('team-timeline-row-' + id);
       const tc = row && row.closest('.team-container');
@@ -1267,14 +1426,19 @@
     const boardTechs = () => {
       const out = new Map();
       teamMapDirty = false;
+      // Job bubbles per tech, counted in one pass over the board.
+      const jobCount = new Map();
+      document.querySelectorAll('a.appointment[data-technician-id][data-job-id]').forEach(a => {
+        const id = a.getAttribute('data-technician-id');
+        jobCount.set(id, (jobCount.get(id) || 0) + 1);
+      });
       document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
         const id = t.getAttribute('data-technician-id');
         if (out.has(id)) return;
         const n = t.querySelector('.name');
         const name = norm(n ? n.textContent : '');
         if (!name) return;
-        const jobs = document.querySelectorAll('a.appointment[data-technician-id="' + id + '"][data-job-id]').length;
-        out.set(id, { id, name, team: teamOf(id), jobs, hidden: true });
+        out.set(id, { id, name, team: teamOf(id), jobs: jobCount.get(id) || 0, hidden: true });
       });
       // Everyone stays in the list. "hidden" just notes who a board filter is hiding right now.
       document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
@@ -1795,7 +1959,7 @@
         const summary = Object.keys(tally).map(k => tally[k] + ' ' + k).join(', ') || 'nothing done';
         runMsg.textContent = 'Done: ' + summary + '.';
       } catch (e) {
-        runMsg.textContent = '⚠️ Stopped by an error: ' + (e && e.message ? e.message : e);
+        runMsg.textContent = '⚠️ Stopped by an error: ' + errText(e);
       } finally {
         running = false; lock = null;
         stopBtn.style.display = 'none'; doneBtn.style.display = 'inline-block';
@@ -1829,10 +1993,7 @@
     const MAX_PER_RUN = 50;
     const TOOL = 'Business Unit';
     const BU_SEL = 'select[name="BusinessUnit"]';
-    const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
-    const same = (a, b) => norm(a).toLowerCase() === norm(b).toLowerCase();
     const isBranch = name => /\bbranch\b/i.test(name);
-    const s1 = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
     const ko = () => window.ko && typeof window.ko.dataFor === 'function' ? window.ko : null;
     const vmOf = s => { try { const k = ko(); return k ? k.dataFor(s) || null : null; } catch (e) { return null; } };
     const unwrap = v => { try { return typeof v === 'function' ? v() : v; } catch (e) { return v; } };
@@ -1851,16 +2012,6 @@
       return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b));
     };
 
-    // ---------- Picked jobs ----------
-    const picked = new Map();   // job number -> short label from the board
-    const bubble = j => document.querySelector('a.appointment[data-job-id="' + j + '"]');
-    const labelFor = j => { const b = bubble(j); if (b) return norm(b.innerText || b.textContent).slice(0, 38); const l = listJob(j); return l ? l.customer : ''; };
-    // Picked jobs get a blue outline on the board (and a blue band in the job list).
-    const paintStyle = el('style');
-    // Highlights only show while this tool is open.
-    const paint = () => { paintStyle.textContent = bizPane.style.display !== 'none' ? pickedCss(Array.from(picked.keys()), '#1a6ed8', 'rgba(26,110,216,.25)') : ''; };
-    (document.head || document.documentElement).appendChild(paintStyle);
-
     // ---------- Pane ----------
     const wrap = el('div', 'padding:8px 10px 10px;display:grid;gap:8px');
     const msg = el('div', 'font-size:12px;color:#444;min-height:16px');
@@ -1871,18 +2022,14 @@
     branchPick.id = 'st-biz-branch';
     toRow.append(toLabel, branchPick);
 
-    const jobsHead = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap');
-    const jobsTitle = el('span', 'font-size:12px;font-weight:600;margin-right:auto', 'Jobs');
-    const pickBtn = smallBtn('', () => setPicking(!picking));
-    const clearBtn = smallBtn('Clear', () => { if (running) return; picked.clear(); paint(); renderJobs(); say('List cleared.'); });
-    jobsHead.append(jobsTitle, pickBtn, clearBtn);
-    const jobList = el('div', 'max-height:150px;overflow:auto;border:1px solid #ddd;border-radius:6px;background:#fafafa');
-    const addRow = el('div', 'display:flex;gap:6px');
-    const addBox = el('input', 'flex:1;min-width:0;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
-    addBox.type = 'text'; addBox.placeholder = 'Or type job #s (comma or space between)';
-    const addBtn = smallBtn('Add', () => addTyped());
-    addBox.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); addTyped(); } };
-    addRow.append(addBox, addBtn);
+    // The jobs to change: picked on the board or typed in. Blue outline while this tool is open.
+    const picker = jobPicker({
+      color: '#1a6ed8', soft: 'rgba(26,110,216,.25)', max: MAX_PER_RUN,
+      shown: () => bizPane.style.display !== 'none',
+      busy: () => running,
+      say: t => say(t),
+      changed: () => updateButtons()
+    });
 
     const actions = el('div', 'display:flex;flex-wrap:wrap;gap:6px');
     const checkBtn = smallBtn('Check jobs (changes nothing)', () => startRun('check'), PRIMARY);
@@ -1907,10 +2054,10 @@
     progress.append(log, progRow);
     const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
     navRow.append(smallBtn('← Menu', () => { if (!running) showView('menu'); }));
-    wrap.append(msg, toRow, jobsHead, jobList, addRow, actions, confirmBox, progress, navRow);
+    wrap.append(msg, toRow, picker.box, actions, confirmBox, progress, navRow);
     bizPane.appendChild(wrap);
 
-    let running = false, stop = false, picking = false;
+    let running = false, stop = false;
     let undo = [];      // [{ job, from }] for the jobs the last run changed
     let details = [];   // extra lines for "Copy results" (what happened after each Save)
     const add = s => { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
@@ -1927,90 +2074,28 @@
     };
     branchPick.onchange = () => { set('stBizBranch', branchPick.value); updateButtons(); };
 
-    const renderJobs = () => {
-      jobList.textContent = '';
-      jobsTitle.textContent = 'Jobs (' + picked.size + ')';
-      if (!picked.size) {
-        jobList.appendChild(el('div', 'padding:8px;font-size:12px;color:#666', picking ? 'Click jobs on the board, or in the Unassigned / Hold list at the bottom, to add them. Click again to take one off.' : 'No jobs yet. Press 🖱️ Pick on board, or type job numbers below.'));
-      }
-      picked.forEach((label, j) => {
-        const row = el('div', 'display:flex;gap:6px;align-items:center;padding:4px 6px;border-bottom:1px solid #eee;font-size:12px');
-        const name = el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
-        name.append(el('b', '', '#' + j), document.createTextNode(label ? '  ' + label : ''));
-        name.title = label;
-        const x = smallBtn('✕', () => { if (running) return; picked.delete(j); paint(); renderJobs(); }, 'padding:1px 6px');
-        x.title = 'Take this job off the list';
-        row.append(name, x);
-        jobList.appendChild(row);
-      });
-      updateButtons();
-    };
     const updateButtons = () => {
       const on = !running;
       changeBtn.textContent = 'Change to ' + target() + '…';
-      [branchPick, pickBtn, clearBtn, addBox, addBtn].forEach(x => { x.disabled = !on; x.style.opacity = on ? '1' : '.5'; });
-      [checkBtn, changeBtn].forEach(x => { const ok = on && picked.size > 0; x.disabled = !ok; x.style.opacity = ok ? '1' : '.5'; });
+      branchPick.disabled = !on; branchPick.style.opacity = on ? '1' : '.5';
+      [checkBtn, changeBtn].forEach(x => { const ok = on && picker.size() > 0; x.disabled = !ok; x.style.opacity = ok ? '1' : '.5'; });
       undoBtn.style.display = !running && undo.length ? 'inline-block' : 'none';
       undoBtn.textContent = '↩ Put back (' + undo.length + ')';
     };
-
-    const addJob = (j, quiet) => {
-      if (!/^\d{4,}$/.test(j)) return false;
-      if (picked.has(j)) return false;
-      if (picked.size >= MAX_PER_RUN) { say('⚠️ The list is full (' + MAX_PER_RUN + ' jobs per run).'); return false; }
-      picked.set(j, labelFor(j));
-      if (!quiet) say('Added #' + j + '. ' + s1(picked.size, 'job') + ' picked.');
-      return true;
-    };
-    const addTyped = () => {
-      if (running) return;
-      const nums = (addBox.value.match(/\d{4,}/g) || []);
-      if (!nums.length) { say('Type one or more job numbers first.'); return; }
-      let n = 0;
-      nums.forEach(j => { if (addJob(j, true)) n++; });
-      addBox.value = '';
-      paint(); renderJobs();
-      say('Added ' + s1(n, 'job') + '. ' + s1(picked.size, 'job') + ' picked.');
-    };
-
-    // Picking: while it's on, clicking a job on the board adds it (or takes it off) instead
-    // of opening it. It turns itself off when you leave this tool.
-    const setPicking = on => {
-      picking = !!on && !running;
-      pickBtn.textContent = picking ? '🖱️ Picking: ON' : '🖱️ Pick on board';
-      pickBtn.style.background = picking ? '#1a6ed8' : '#fff';
-      pickBtn.style.color = picking ? '#fff' : '#111';
-      pickBtn.style.borderColor = picking ? '#1a6ed8' : '#aaa';
-      pickBtn.style.fontWeight = picking ? '600' : '400';
-      if (picking && !onBoard()) say('Open the Dispatch board to pick jobs there.');
-      else if (picking) say('Click jobs on the board, or in the Unassigned / Hold list at the bottom, to add them. Click one again to take it off.');
-      renderJobs();
-    };
-    const onClick = e => {
-      if (!picking || running || !onBoard() || panel.contains(e.target)) return;
-      const j = clickedJob(e.target);
-      if (!j) return;
-      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      if (picked.has(j)) { picked.delete(j); say('Took #' + j + ' off. ' + s1(picked.size, 'job') + ' picked.'); }
-      else addJob(j);
-      paint(); renderJobs();
-    };
-    window.addEventListener('click', onClick, true);
-    pickers.push({ active: () => picking && !running, hit: t => !!clickedJob(t) });
 
     // ---------- Confirm ----------
     const askConfirm = mode => {
       if (running) return;
       if (lock) return say('Wait for ' + lock + ' to finish first.');
       if (mode === 'change') {
-        if (!picked.size) return;
-        confirmText.textContent = 'Change the Business Unit on ' + s1(picked.size, 'job') + ' to ' + target() +
+        if (!picker.size()) return;
+        confirmText.textContent = 'Change the Business Unit on ' + plural(picker.size(), 'job') + ' to ' + target() +
           '? Each job is saved in ServiceTitan. Jobs already on ' + target() + ' are left alone.';
         confirmYes.textContent = 'Yes, change them';
         confirmYes.onclick = () => { confirmBox.style.display = 'none'; startRun('change'); };
       } else {
         if (!undo.length) return;
-        confirmText.textContent = 'Put back ' + s1(undo.length, 'job') + ' to the Business Unit each one had before the last run?';
+        confirmText.textContent = 'Put back ' + plural(undo.length, 'job') + ' to the Business Unit each one had before the last run?';
         confirmYes.textContent = 'Yes, put them back';
         confirmYes.onclick = () => { confirmBox.style.display = 'none'; startRun('putback'); };
       }
@@ -2063,9 +2148,26 @@
       return s.value === opt.value;
     };
 
-    // Opens one job and checks or changes its Business Unit. Returns { text, kind, from, stopRun }.
+    const res = (text, kind, extra) => Object.assign({ text, kind }, extra || {});
+    // A job's Business Unit from ServiceTitan's job data, without opening the page: { from, locked }.
+    const readJob = async j => {
+      const d = await st.jobEdit(j);
+      if (!d || typeof d.BusinessUnit !== 'string') throw new Error('no Business Unit in the job data');
+      return { from: norm(d.BusinessUnit), locked: !!d.IsBusinessUnitReadOnly };
+    };
+    // Waits (up to a few seconds) for the job data to show the new branch. True once it does.
+    const confirmedByData = async (j, to) => {
+      for (let w = 0; w < 5000; w += 400) {
+        await wait(400);
+        let now;
+        try { now = (await readJob(j)).from; } catch (e) { return false; }
+        if (same(now, to)) return true;
+      }
+      return false;
+    };
+
+    // Opens one job's Edit page and checks or changes its Business Unit. Returns { text, kind, from, stopRun }.
     const doJob = async (j, to, real) => {
-      const res = (text, kind, extra) => Object.assign({ text, kind }, extra || {});
       try {
         const s = await openEdit(j);
         if (!s) {
@@ -2106,8 +2208,13 @@
           const back = buSelect(j); if (back) choose(back, from);
           return res('NOT SAVED: ' + outcome.text.slice(0, 160), 'problem', { from });
         }
-        // Open the job again to make sure the change stuck.
-        await wait(outcome.how === 'left' ? 800 : 0);
+        // Make sure the change stuck: the job data should now show the new branch (quick).
+        if (await confirmedByData(j, to)) {
+          details.push('#' + j + ' confirmed: the job data shows ' + to);
+          health.clear(TOOL);
+          return res(from + ' → ' + to, 'changed', { from, changed: true });
+        }
+        // Couldn't confirm it from the data: open the job again and look (slower).
         const again = await openEdit(j);
         if (!again) return res('saved, but COULD NOT RE-OPEN TO CHECK', 'problem', { from, changed: true });
         const now = selectedName(again);
@@ -2116,8 +2223,20 @@
         if (same(now, from)) return res('NOT SAVED, still ' + from, 'problem', { from });
         return res('SAVED BUT SHOWS ' + now, 'problem', { from, changed: true });
       } catch (e) {
-        return res('ERROR: ' + (e && e.message ? e.message : e), 'problem');
+        return res('ERROR: ' + errText(e), 'problem');
       }
+    };
+    // What to do with one job, using what its job data already says when possible: jobs already
+    // on the branch, or locked, are reported without opening anything, and Check jobs only reads.
+    const handle = async (it, real, pre) => {
+      if (pre && !pre.error) {
+        if (same(pre.from, it.to)) return res('already ' + it.to, 'already');
+        if (pre.locked) return res('locked in ServiceTitan (shows ' + pre.from + ')', 'locked');
+        if (!real) return res(pre.from + ' → would change to ' + it.to, 'would change', { from: pre.from });
+      } else if (pre && pre.error) {
+        details.push('#' + it.job + ' job data not readable (' + errText(pre.error) + '), opened the page instead');
+      }
+      return doJob(it.job, it.to, real);
     };
 
     // ---------- A run ----------
@@ -2126,12 +2245,13 @@
       if (running) return;
       if (lock) return say('Wait for ' + lock + ' to finish first.');
       const to = target();
-      const items = mode === 'putback' ? undo.map(u => ({ job: u.job, to: u.from })) : Array.from(picked.keys()).map(j => ({ job: j, to }));
+      const items = mode === 'putback' ? undo.map(u => ({ job: u.job, to: u.from })) : picker.ids().map(j => ({ job: j, to }));
       if (!items.length) return;
       if (items.length > MAX_PER_RUN) return say('⚠️ ' + MAX_PER_RUN + ' jobs per run at most.');
       const real = mode !== 'check';
-      setPicking(false);
+      picker.setPicking(false);
       running = true; stop = false; lock = TOOL;
+      picker.setEnabled(false);
       confirmBox.style.display = 'none';
       log.textContent = ''; details = [];
       progress.style.display = 'grid';
@@ -2144,20 +2264,23 @@
       const verb = mode === 'check' ? 'Checking' : mode === 'putback' ? 'Putting back' : 'Changing';
       try {
         add(mode === 'check' ? 'Check for ' + to + ' (nothing is changed)' : mode === 'putback' ? 'Put back to how they were' : 'Change to ' + to);
+        // Read every job's Business Unit first, a few at a time. No pages to open for that.
+        say('Reading ' + plural(items.length, 'job') + '...');
+        const pre = await st.pool(items, 4, it => readJob(it.job), (d, t) => say('Reading jobs... ' + d + ' of ' + t));
         let halted = false;
         for (let n = 0; n < items.length; n++) {
-          if (stop) { add('Stopped. ' + s1(items.length - n, 'job') + ' not done.'); break; }
+          if (stop) { add('Stopped. ' + plural(items.length - n, 'job') + ' not done.'); break; }
           const it = items[n];
           say(verb + ' ' + (n + 1) + ' of ' + items.length + ' (job ' + it.job + ')');
-          const r = await doJob(it.job, it.to, real);
+          const r = await handle(it, real, pre[n]);
           record(it, r);
-          if (r.stopRun) { halted = true; add('Run stopped so you can answer ServiceTitan. ' + s1(items.length - n - 1, 'job') + ' not done.'); break; }
+          if (r.stopRun) { halted = true; add('Run stopped so you can answer ServiceTitan. ' + plural(items.length - n - 1, 'job') + ' not done.'); break; }
         }
         // One more try for jobs that had a problem, after the rest are done.
         const failed = items.filter(it => results.has(it.job) && results.get(it.job).kind === 'problem' && !results.get(it.job).noRetry && !results.get(it.job).changed);
         if (failed.length && !stop && !halted) {
           add('');
-          add('Retrying ' + s1(failed.length, 'job') + ' that had a problem...');
+          add('Retrying ' + plural(failed.length, 'job') + ' that had a problem...');
           location.hash = home;
           await wait(2000);
           for (let n = 0; n < failed.length; n++) {
@@ -2173,7 +2296,7 @@
           undo = [];
           results.forEach((r, j) => { if (r.changed && r.from) undo.push({ job: j, from: r.from }); });
           // Done jobs come off the list; anything with a problem stays so you can try again.
-          results.forEach((r, j) => { if (r.kind === 'changed' || r.kind === 'already') picked.delete(j); });
+          results.forEach((r, j) => { if (r.kind === 'changed' || r.kind === 'already') picker.remove(j); });
         } else if (mode === 'putback') {
           undo = undo.filter(u => { const r = results.get(u.job); return !(r && (r.kind === 'changed' || r.kind === 'already')); });
         }
@@ -2182,29 +2305,29 @@
         const summary = Object.keys(tally).map(k => tally[k] + ' ' + k).join(', ') || 'nothing done';
         const left = Array.from(results.entries()).filter(e => e[1].kind === 'problem').map(e => '#' + e[0]);
         if (left.length) add('Needs a look: ' + left.join(', '));
-        if (undo.length && mode !== 'check') add('↩ Put back can undo ' + s1(undo.length, 'job') + '.');
+        if (undo.length && mode !== 'check') add('↩ Put back can undo ' + plural(undo.length, 'job') + '.');
         say('Done: ' + summary + '.');
       } catch (e) {
-        say('⚠️ Stopped by an error: ' + (e && e.message ? e.message : e));
+        say('⚠️ Stopped by an error: ' + errText(e));
       } finally {
         // Leave a pop-up for the person to answer; otherwise go back to the board.
         const popupOpen = shown(POPUP_SEL).length > 0;
         if (!popupOpen && location.hash !== home) { location.hash = home; await wait(800); }
         running = false; lock = null;
         stopBtn.style.display = 'none';
-        paint(); renderJobs();
+        picker.setEnabled(true);
+        updateButtons();
       }
     };
 
-    const refresh = () => { if (running) return; paint(); renderBranches(); renderJobs(); if (!onBoard() && !msg.textContent) say('Open the Dispatch board to pick jobs.'); };
-    setPicking(false);
+    const refresh = () => { if (running) return; renderBranches(); picker.render(); if (!onBoard() && !msg.textContent) say('Open the Dispatch board to pick jobs.'); };
     renderBranches();
     return {
       refresh,
-      leave: () => { if (picking) setPicking(false); paintStyle.textContent = ''; },
+      leave: () => picker.setPicking(false),
       isRunning: () => running,
       stop: requestStop,
-      cleanup: () => { window.removeEventListener('click', onClick, true); paintStyle.remove(); }
+      cleanup: () => picker.cleanup()
     };
   })();
 
@@ -2227,11 +2350,8 @@
     const BOX = 'textarea.cht-response-input';
     const K = { folders: 'stCtFolders', folder: 'stCtFolder', pick: 'stCtPick', mode: 'stCtMode', name: 'stCtName', all: 'stCtAllMobiles', never: 'stCtNever', types: 'stCtTypes', source: 'stCtSource' };
     const loadJSON = (k, d) => { try { const v = JSON.parse(get(k)); return v == null ? d : v; } catch (e) { return d; } };
-    const norm = s => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
-    const digits = s => String(s == null ? '' : s).replace(/\D/g, '');
-    const last10 = s => digits(s).slice(-10);
     const showNum = d => d ? '…' + String(d).slice(-4) : '?';
-    const s1 = (n, w, pl) => n + ' ' + (n === 1 ? w : (pl || w + 's'));
+    const s1 = plural;
     const kov = () => window.ko && typeof window.ko.dataFor === 'function' ? window.ko : null;
     const vmOf = x => { try { const k = kov(); return k ? k.dataFor(x) || null : null; } catch (e) { return null; } };
     // Unwraps a Knockout observable; leaves anything else (including plain functions) alone.
@@ -2288,17 +2408,6 @@
 
     // ---------- Reading the board ----------
     const boardVM = () => { const jl = document.querySelector('.job-list'); return jl ? vmOf(jl) : null; };
-    // A job that's on the board's timeline: customer, and the tech's first name for {tech}.
-    const boardJob = jobId => {
-      const vm = boardVM();
-      const list = (vm && un(vm.Assignments)) || [];
-      for (let i = 0; i < list.length; i++) {
-        const a = list[i];
-        if (String(un(a.JobId)) !== String(jobId)) continue;
-        return { customer: norm(un(a.Customer)), customerId: un(a.CustomerId), tech: titleCase(firstWord(un(a.FirstName) || un(a.TechnicianName))) };
-      }
-      return null;
-    };
     const boardDateISO = () => {
       try { const d = un(boardVM().Date); if (d && typeof d.toISOString === 'function') return d.toISOString(); } catch (e) {}
       const d = new Date(); d.setHours(0, 0, 0, 0); return d.toISOString();
@@ -2319,51 +2428,41 @@
     let holdsLoading = false;
     let typeSel = new Set(loadJSON(K.types, []) || []);
     const saveTypes = () => set(K.types, JSON.stringify(Array.from(typeSel)));
+    // The Hold list, 500 at a time: the first page says how many there are, then the rest load
+    // a few at a time.
     const loadHolds = async () => {
       const ids = boardBUs();
       const date = boardDateISO();
-      const seen = new Set(), jobs = [];
-      let total = 0;
-      for (let skip = 0; skip < 20000; skip += 500) {
+      const PAGE = 500;
+      const page = async skip => {
         const r = await fetch('/Dispatch/GetJobs', { method: 'POST', credentials: 'include',
           headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, xhrHeaders),
-          body: JSON.stringify({ JobType: 'Hold', Date: date, QueryFilter: { Skip: skip, Take: 500, Start: {}, Created: {}, BusinessUnitIds: ids } }) });
+          body: JSON.stringify({ JobType: 'Hold', Date: date, QueryFilter: { Skip: skip, Take: PAGE, Start: {}, Created: {}, BusinessUnitIds: ids } }) });
         if (!r.ok) throw new Error('ServiceTitan answered ' + r.status);
         const d = await r.json();
         if (!d || !Array.isArray(d.Jobs)) { health.flag(TOOL, 'the Hold list came back in a shape the Toolbox doesn\'t know', '/Dispatch/GetJobs'); throw new Error('unexpected reply'); }
-        total = d.Count || 0;
-        d.Jobs.forEach(j => {
-          if (!j || !j.JobId || seen.has(j.JobId)) return;
-          seen.add(j.JobId);
-          jobs.push({ jobId: j.JobId, customer: norm(j.Customer), customerId: j.CustomerId, type: norm(j.Type) || '(no type)' });
-        });
-        if (!d.Jobs.length || skip + 500 >= total) break;
-      }
+        return d;
+      };
+      const seen = new Set(), jobs = [];
+      const take = d => d.Jobs.forEach(j => {
+        if (!j || !j.JobId || seen.has(j.JobId)) return;
+        seen.add(j.JobId);
+        jobs.push({ jobId: j.JobId, customer: norm(j.Customer), customerId: j.CustomerId, type: norm(j.Type) || '(no type)' });
+      });
+      const firstPage = await page(0);
+      const total = firstPage.Count || 0;
+      take(firstPage);
+      const skips = [];
+      for (let skip = PAGE; skip < Math.min(total, 20000); skip += PAGE) skips.push(skip);
+      const rest = await st.pool(skips, 3, page);
+      rest.forEach(d => { if (d && d.error) throw d.error; take(d); });
       health.clear(TOOL);
       return { jobs, total, bus: buNames(ids), at: new Date() };
     };
 
     // ---------- Jobs picked on the board ----------
-    const picked = new Map();   // job number -> label
-    let picking = false;
-    const paintStyle = el('style');
-    (document.head || document.documentElement).appendChild(paintStyle);
-    // Highlights only show while this tool is open and set to "Jobs I pick".
-    const paint = () => { paintStyle.textContent = textsPane.style.display !== 'none' && source === 'picked' ? pickedCss(Array.from(picked.keys()), '#2e7d32', 'rgba(46,125,50,.22)') : ''; };
     // Customer and tech: from the timeline if the job is on it, else from the job list at the bottom.
-    const jobInfo = j => boardJob(j) || listJob(j);
-    const labelFor = j => { const b = jobInfo(j); if (b && b.customer) return b.customer; const a = document.querySelector('a.appointment[data-job-id="' + j + '"]'); return a ? norm(a.innerText || a.textContent).slice(0, 38) : ''; };
-    const onBoardClick = e => {
-      if (!picking || running || !onBoard() || panel.contains(e.target)) return;
-      const j = clickedJob(e.target);
-      if (!j) return;
-      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      if (picked.has(j)) picked.delete(j); else picked.set(j, labelFor(j));
-      paint(); renderMain();
-    };
-    window.addEventListener('click', onBoardClick, true);
-    pickers.push({ active: () => picking && !running, hit: t => !!clickedJob(t) });
-    const setPicking = on => { picking = !!on && !running; renderMain(); };
+    const jobInfo = j => timelineJob(j) || listJob(j);
 
     // ---------- UI ----------
     const pane = el('div', 'padding:8px 10px 10px');
@@ -2417,6 +2516,14 @@
 
     let stopRun = false, running = false, stepResolve = null;
     let source = get(K.source) === 'picked' ? 'picked' : 'holds';
+    // Jobs you pick: green outline while this tool is open on "Jobs I pick".
+    const picker = jobPicker({
+      color: '#2e7d32', soft: 'rgba(46,125,50,.22)',
+      shown: () => textsPane.style.display !== 'none' && source === 'picked',
+      busy: () => running,
+      say: t => say(t),
+      changed: () => renderMain()
+    });
     let mode = get(K.mode) === 'auto' ? 'auto' : 'type';
     const openGroups = new Set();
 
@@ -2428,7 +2535,7 @@
         if (!holds) return out;
         holds.jobs.forEach(h => { if (typeSel.has(h.type)) addOne({ jobId: h.jobId, customer: h.customer, customerId: h.customerId, tech: '' }); });
       } else {
-        picked.forEach((lab, j) => { const b = jobInfo(j) || {}; addOne({ jobId: j, customer: b.customer || lab || '', customerId: b.customerId || null, tech: b.tech || '' }); });
+        picker.ids().forEach(j => { const b = jobInfo(j) || {}; addOne({ jobId: j, customer: b.customer || picker.label(j) || '', customerId: b.customerId || null, tech: b.tech || '' }); });
       }
       return out;
     };
@@ -2481,37 +2588,13 @@
       if (!onBoard()) { say('Open the Dispatch board first.'); return; }
       holdsLoading = true; renderMain();
       try { holds = await loadHolds(); say('Loaded ' + s1(holds.jobs.length, 'hold') + '. Tick the kinds to text.'); }
-      catch (e) { say('⚠️ Couldn\'t load the Hold list: ' + (e && e.message ? e.message : e)); }
+      catch (e) { say('⚠️ Couldn\'t load the Hold list: ' + errText(e)); }
       finally { holdsLoading = false; renderMain(); }
     };
 
-    const addBox = el('input', 'flex:1;min-width:0;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
-    addBox.type = 'text'; addBox.placeholder = 'Or type job #s';
-    const addTyped = () => {
-      const nums = addBox.value.match(/\d{4,}/g) || [];
-      nums.forEach(j => { if (!picked.has(j)) picked.set(j, labelFor(j)); });
-      addBox.value = ''; paint(); renderMain();
-    };
-    addBox.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); addTyped(); } };
     const renderPicked = () => {
       whoBox.textContent = '';
-      const top = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap');
-      const pb = smallBtn(picking ? '🖱️ Picking: ON' : '🖱️ Pick on board', () => setPicking(!picking), picking ? 'background:#2e7d32;color:#fff;border-color:#2e7d32;font-weight:600' : '');
-      top.append(el('span', 'font-size:12px;flex:1', s1(picked.size, 'job') + ' picked'), pb, smallBtn('Clear', () => { picked.clear(); paint(); renderMain(); }));
-      whoBox.appendChild(top);
-      const list = el('div', 'max-height:130px;overflow:auto;border:1px solid #ddd;border-radius:6px;background:#fafafa;margin-top:5px');
-      if (!picked.size) list.appendChild(el('div', 'padding:6px 8px;font-size:12px;color:#666', picking ? 'Click jobs on the board, or in the Unassigned / Hold list at the bottom, to add them. Click again to take one off.' : 'Press 🖱️ Pick on board, or type job numbers below.'));
-      picked.forEach((lab, j) => {
-        const r = el('div', 'display:flex;gap:6px;align-items:center;padding:3px 6px;border-bottom:1px solid #eee;font-size:12px');
-        const n = el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
-        n.append(el('b', '', '#' + j), document.createTextNode(lab ? '  ' + lab : ''));
-        r.append(n, smallBtn('✕', () => { picked.delete(j); paint(); renderMain(); }, 'padding:1px 6px'));
-        list.appendChild(r);
-      });
-      whoBox.appendChild(list);
-      const ar = el('div', 'display:flex;gap:6px;margin-top:4px');
-      ar.append(addBox, smallBtn('Add', () => addTyped()));
-      whoBox.appendChild(ar);
+      whoBox.appendChild(picker.box);
     };
 
     const renderMain = () => {
@@ -2521,7 +2604,7 @@
         fIdx = i; set(K.folder, String(i));
         // The Holds folder usually goes with the Hold list; the others with picked jobs.
         const want = /hold/i.test(f.name) ? 'holds' : 'picked';
-        if (want !== source) { source = want; set(K.source, source); if (source !== 'picked') picking = false; }
+        if (want !== source) { source = want; set(K.source, source); if (source !== 'picked') picker.setPicking(false); }
         renderMain();
       })));
       const f = curFolder();
@@ -2538,10 +2621,10 @@
       });
       whoRow.textContent = '';
       whoRow.append(
-        radio('st-ct-src', 'holds', source, '⏸️ Hold list (filter by job type)', v => { source = v; set(K.source, v); picking = false; renderMain(); }),
+        radio('st-ct-src', 'holds', source, '⏸️ Hold list (filter by job type)', v => { source = v; set(K.source, v); picker.setPicking(false); renderMain(); }),
         radio('st-ct-src', 'picked', source, '🖱️ Jobs I pick', v => { source = v; set(K.source, v); renderMain(); })
       );
-      if (source === 'holds') { picking = false; renderHolds(); } else renderPicked();
+      if (source === 'holds') { picker.setPicking(false); renderHolds(); } else renderPicked();
       modeRow.textContent = '';
       modeRow.append(
         radio('st-ct-mode', 'type', mode, 'Type only: I press Send for each one', v => { mode = v; set(K.mode, v); renderMain(); }),
@@ -2552,7 +2635,7 @@
       const ok = onBoard() && r.length > 0 && !!m;
       startBtn.disabled = !ok; startBtn.style.opacity = ok ? '1' : '.5';
       startBtn.textContent = (mode === 'auto' ? 'Review and send to ' : 'Start (type only): ') + s1(r.length, 'customer');
-      paint();
+      picker.render();   // the list and its highlights
       if (!onBoard()) say('Open the Dispatch board to use this.');
       else if (m && uses(m[1], 'dispatcher') && !myName()) say('⚠️ This message uses {dispatcher}, but your name couldn\'t be found. Set it in ⚙️ Settings.');
       else if (!mainMsg.textContent || /^(Open the Dispatch|⚠️ This message uses)/.test(mainMsg.textContent)) say(myName() ? 'Texts are signed as ' + myName() + '.' : '');
@@ -2594,14 +2677,14 @@
         days.type = 'number'; days.min = '0'; days.max = '365'; days.value = String(f.days);
         days.oninput = () => { f.days = Math.max(0, Math.min(365, parseInt(days.value, 10) || 0)); };
         rule.append(document.createTextNode('Skip if texted in the last'), days, document.createTextNode('days (0 = never skip, 1 = today)'));
-        const same = check('Only count this same message (not other texts)', f.same, v => { f.same = v; });
-        same.l.style.marginTop = '3px';
+        const sameOnly = check('Only count this same message (not other texts)', f.same, v => { f.same = v; });
+        sameOnly.l.style.marginTop = '3px';
         const tools = el('div', 'display:flex;gap:4px;margin-top:5px;align-items:center');
         const mv = d => () => { const j = i + d; if (j < 0 || j >= draftF.length) return; const t = draftF[i]; draftF[i] = draftF[j]; draftF[j] = t; renderFolders(); };
         tools.append(smallBtn('↑', mv(-1), i === 0 ? 'opacity:.4' : ''), smallBtn('↓', mv(1), i === draftF.length - 1 ? 'opacity:.4' : ''),
           el('span', 'flex:1;color:#666;padding-left:4px', s1(f.msgs.length, 'message')),
           smallBtn('Delete', () => { draftF.splice(i, 1); renderFolders(); }, 'color:#b00020;border-color:#e0a0a8'));
-        r.append(nm, rule, same.l, tools);
+        r.append(nm, rule, sameOnly.l, tools);
         foldBox.appendChild(r);
       });
     };
@@ -2665,50 +2748,79 @@
     };
 
     // ===== Confirm =====
+    // Before anything is typed, every customer is checked without opening their conversation:
+    // their Bill To numbers, then each number's history (STOP, unread replies, the folder's
+    // repeat rule, blocked in ServiceTitan). This screen then shows exactly who will be texted.
     const vConfirm = mkView('confirm');
+    const confHead = head('Check before texting');
     const confText = el('div', 'font-size:12px;white-space:pre-wrap;max-height:calc(100vh - 340px);overflow:auto;border:1px solid #ddd;border-radius:6px;padding:6px;background:#fafafa');
     const confAsk = el('div', 'font-size:12px;margin-top:8px');
     const confInput = el('input', 'width:70px;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff;margin-left:6px');
     confInput.type = 'text'; confInput.inputMode = 'numeric'; confInput.id = 'st-ct-confirm-count';
     const confGo = smallBtn('Send', () => go(), DANGER);
     const confNav = row();
-    confNav.append(confGo, smallBtn('Cancel', () => { sub('main'); renderMain(); }));
-    vConfirm.append(head('Check before texting'), confText, confAsk, confNav);
-    let pending = [];
-    const openConfirm = () => {
+    let checkId = 0;   // a newer check (or Cancel) makes an older one stop updating the screen
+    confNav.append(confGo, smallBtn('Cancel', () => { checkId++; sub('main'); renderMain(); }));
+    vConfirm.append(confHead, confText, confAsk, confNav);
+    let planned = null;   // { sends: [...], skips: [...], customers }
+    const openConfirm = async () => {
       if (running) return;
       if (lock) return say('Wait for ' + lock + ' to finish first.');
       const m = curMsg();
       if (!m) return say('Pick a message first.');
       if (uses(m[1], 'dispatcher') && !myName()) return say('⚠️ Set your name in ⚙️ Settings first (the message uses {dispatcher}).');
-      pending = recipients();
+      const pending = recipients();
       if (!pending.length) return say(source === 'holds' ? 'Load the holds and tick at least one kind.' : 'Pick some jobs first.');
-      setPicking(false);
-      const f = curFolder();
-      const sample = pending[0];
+      picker.setPicking(false);
+      const f = curFolder(), tmpl = m[1];
+      const id = ++checkId;
+      planned = null;
+      confHead.textContent = 'Checking before texting';
+      confText.textContent = 'Checking ' + s1(pending.length, 'customer') + '…';
+      confAsk.textContent = ''; confGo.style.display = 'none';
+      sub('confirm');
+      const t0 = Date.now();
+      const result = await plan(pending, f, tmpl, (d, t) => { if (id === checkId) confText.textContent = 'Checking customers… ' + d + ' of ' + t; });
+      if (id !== checkId) return;   // cancelled
+      planned = Object.assign(result, { customers: pending.length });
+      const sends = result.sends, skips = result.skips;
+      const sample = sends[0] || null;
+      const why = {};
+      skips.forEach(x => { const k = x.why.replace(/ (today|yesterday|\d+ days ago)$/, ' recently'); why[k] = (why[k] || 0) + 1; });
       const lines = [
         'Folder: ' + f.name + '   🔁 ' + ruleText(f),
-        'Message (as the first customer will see it):',
-        '"' + fill(m[1], { first: titleCase(firstWord(sample.customer)), tech: sample.tech || '{tech}' }) + '"',
+        'Message' + (sample ? ' (as the first customer will see it)' : '') + ':',
+        '"' + (sample ? sample.text : tmpl) + '"',
         '',
         'Numbers: ' + (allMobiles ? 'every mobile on the Bill To' : 'Bill To primary (their first mobile if the primary is a landline)'),
-        'To ' + s1(pending.length, 'customer') + (source === 'holds' ? ' from the Hold list' : '') + ':'
+        'Checked ' + s1(pending.length, 'customer') + (source === 'holds' ? ' from the Hold list' : '') + ' in ' + Math.max(1, Math.round((Date.now() - t0) / 1000)) + 's.',
+        '',
+        '✅ Will text ' + s1(sends.length, 'number') + ':'
       ];
-      pending.slice(0, 40).forEach(r => lines.push('• ' + (r.customer || 'job #' + r.jobId) + '  (#' + r.jobId + ')'));
-      if (pending.length > 40) lines.push('…and ' + (pending.length - 40) + ' more');
-      if (uses(m[1], 'tech')) lines.push('', 'Jobs with no tech on the board are skipped, because the message uses {tech}.');
+      sends.slice(0, 40).forEach(x => lines.push('• ' + (x.r.customer || 'job #' + x.r.jobId) + ' ' + showNum(x.num) + '  (#' + x.r.jobId + ')' + (x.unchecked ? '  (checked on its page instead)' : '')));
+      if (sends.length > 40) lines.push('…and ' + (sends.length - 40) + ' more');
+      if (skips.length) {
+        lines.push('', '⏭️ Skipping ' + skips.length + ': ' + Object.keys(why).map(k => why[k] + ' ' + k).join(', '));
+        skips.slice(0, 40).forEach(x => lines.push('• ' + (x.r.customer || 'job #' + x.r.jobId) + (x.num ? ' ' + showNum(x.num) : '') + ': ' + x.why));
+        if (skips.length > 40) lines.push('…and ' + (skips.length - 40) + ' more (all listed in the results)');
+      }
+      confHead.textContent = 'Check before texting';
       confText.textContent = lines.join('\n');
       confAsk.textContent = ''; confInput.value = '';
+      if (!sends.length) {
+        confAsk.textContent = 'Nobody to text: everyone was skipped.';
+        return;
+      }
+      confGo.style.display = 'inline-block';
       if (mode === 'auto') {
-        confAsk.append(document.createTextNode('Auto-send is on. To confirm, type how many customers this texts (' + pending.length + '):'), confInput);
-        confGo.textContent = 'Text ' + s1(pending.length, 'customer');
+        confAsk.append(document.createTextNode('Auto-send is on. To confirm, type how many texts this sends (' + sends.length + '):'), confInput);
+        confGo.textContent = 'Send ' + s1(sends.length, 'text');
         setTimeout(() => confInput.focus(), 0);
       } else {
         confAsk.textContent = 'Type only: it opens each conversation and types the message. You press Send, and it moves to the next one.';
         confGo.textContent = 'Start';
       }
-      confAsk.appendChild(el('div', 'color:#666;margin-top:4px', 'Keep this tab on screen while it runs (browsers slow down hidden tabs). It takes about 4–5 seconds per text.'));
-      sub('confirm');
+      confAsk.appendChild(el('div', 'color:#666;margin-top:4px', 'Keep this tab on screen while it runs (browsers slow down hidden tabs). About 4 seconds per text.'));
     };
     confInput.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); go(); } };
 
@@ -2739,9 +2851,8 @@
     // ---------- Talking to ServiceTitan ----------
     // The Bill To's phone numbers, from the job's own data. Primary first.
     const billTo = async jobId => {
-      const r = await fetch('/Job/Index/?id=' + encodeURIComponent(jobId) + '&skipForms=true', { credentials: 'include', headers: xhrHeaders });
-      if (!r.ok) throw new Error('the job didn\'t load (' + r.status + ')');
-      const j = await r.json();
+      let j;
+      try { j = await st.job(jobId); } catch (e) { throw new Error('the job didn\'t load (' + errText(e) + ')'); }
       const c = j && j.Customer;
       if (!c || !Array.isArray(c.Contacts)) { health.flag(TOOL, 'can\'t read the Bill To phone numbers from a job', 'Job/Index Customer.Contacts'); throw new Error('no Bill To contacts in the job data'); }
       const phones = c.Contacts.filter(x => x && /phone/i.test(x.Type || '') && last10(x.Value).length === 10)
@@ -2820,6 +2931,75 @@
       c.box.dispatchEvent(new Event('change', { bubbles: true }));
       if (typeof c.vm.ResponseText === 'function') c.vm.ResponseText('');
     };
+    // ServiceTitan's chat data (no page): raw messages turned into the same shape the Chat
+    // Center page uses, so the same rules work on both.
+    const codes = () => ({
+      out: st.code('SmsDirection', 'Outbound', 1),
+      chat: st.code('SmsChannel', 'CustomerChat', 3),
+      none: st.code('SmsChannel', 'Undefined', 0),
+      unread: st.code('ChatThreadReadStatus', 'Unread', -10),
+      blocked: st.code('ChatThreadBlockedStatus', 'Blocked', 10),
+      sendErr: st.code('SmsDeliveryStatus', 'SmsSendingError', 1),
+      deliveryErr: st.code('SmsDeliveryStatus', 'SmsDeliveryError', 2)
+    });
+    const asPageMsgs = (raw, c) => raw.map(m => {
+      const outbound = m.SmsDirection === c.out;
+      return {
+        Body: m.Body, CreatedOn: m.CreatedOn, SmsId: m.SmsId,
+        IsOutbound: outbound, IsInbound: !outbound,
+        // Reminders, confirmations, review requests and the like are automatic, not texts from us.
+        IsNotification: outbound && m.Channel !== c.chat && m.Channel !== c.none,
+        SmsSendErrorCode: m.SmsSendErrorCode || 0,
+        HasNotBeenDelivered: m.SmsDeliveryStatus === c.sendErr || m.SmsDeliveryStatus === c.deliveryErr
+      };
+    });
+    // One number, checked from the chat data: { ok } or { skip: reason, kind }.
+    const checkNumber = async (num, f, text) => {
+      const c = codes();
+      const t = await st.chatThread(num);
+      if (!t) return { ok: true };   // never texted before
+      if (t.BlockedStatus === c.blocked) return { skip: 'blocked in ServiceTitan (opted out)', kind: 'skipped' };
+      if (t.ReadStatus === c.unread) return { skip: 'they have an unread reply. Read it first', kind: 'look' };
+      const hist = asPageMsgs(await st.chatMessages(t.ThreadId, 100), c);
+      if (optedOut(hist)) return { skip: 'they replied STOP', kind: 'skipped' };
+      const recent = recentText(hist, f, text);
+      if (recent) return { skip: (f.same ? 'got this message ' : 'texted ') + ago(recent), kind: 'skipped' };
+      return { ok: true };
+    };
+    // Everyone in the list, checked a few at a time: who gets a text and who's skipped (and why).
+    const plan = async (list, f, tmpl, progress) => {
+      const results = await st.pool(list, 4, async r => {
+        if (uses(tmpl, 'tech') && !r.tech) return { skips: [{ why: 'no tech on the board for {tech}', kind: 'skipped' }] };
+        const info = await billTo(r.jobId);
+        const name = info.name || r.customer;
+        const pickN = pickNumbers(info.phones);
+        if (!pickN.nums.length) return { info, skips: [{ why: 'no mobile number on the Bill To', kind: 'skipped' }] };
+        if (uses(tmpl, 'first') && !firstWord(name)) return { info, skips: [{ why: 'no customer name for {first}', kind: 'skipped' }] };
+        const text = fill(tmpl, { first: titleCase(firstWord(name)), tech: r.tech });
+        const nums = await Promise.all(pickN.nums.map(async num => {
+          if (never.indexOf(num) > -1) return { num, skip: 'on your 🚫 never-text list', kind: 'skipped' };
+          // If the chat data can't be read, the conversation's own page is checked during the run.
+          try { return Object.assign({ num }, await checkNumber(num, f, text)); }
+          catch (e) { return { num, ok: true, unchecked: errText(e) }; }
+        }));
+        return { info, text, note: pickN.note, nums };
+      }, progress);
+      const sends = [], skips = [], seen = new Set();
+      list.forEach((r, i) => {
+        const x = results[i] || {};
+        if (x.error) { skips.push({ r, num: '', why: errText(x.error), kind: 'problem' }); return; }
+        if (x.info && !r.customer) r.customer = x.info.name;
+        (x.skips || []).forEach(k => skips.push(Object.assign({ r, num: '' }, k)));
+        (x.nums || []).forEach(n => {
+          if (n.skip) { skips.push({ r, num: n.num, why: n.skip, kind: n.kind }); return; }
+          if (seen.has(n.num)) { skips.push({ r, num: n.num, why: 'same number as another customer in this run (texted once)', kind: 'skipped' }); return; }
+          seen.add(n.num);
+          sends.push({ r, num: n.num, text: x.text, note: x.note, unchecked: n.unchecked || '' });
+        });
+      });
+      return { sends, skips };
+    };
+
     // True once our text shows in the conversation as sent and the box has emptied.
     const wentOut = (num, text, before) => {
       const c = chatFor(num);
@@ -2832,9 +3012,11 @@
 
     // ---------- The run ----------
     const go = async () => {
-      if (running) return;
-      if (mode === 'auto' && confInput.value.trim() !== String(pending.length)) {
-        if (confAsk.firstChild) confAsk.firstChild.textContent = '⚠️ That number doesn\'t match. Type ' + pending.length + ' to text ' + s1(pending.length, 'customer') + ':';
+      if (running || !planned) return;
+      const sends = planned.sends;
+      if (!sends.length) return;
+      if (mode === 'auto' && confInput.value.trim() !== String(sends.length)) {
+        if (confAsk.firstChild) confAsk.firstChild.textContent = '⚠️ That number doesn\'t match. Type ' + sends.length + ' to send ' + s1(sends.length, 'text') + ':';
         return;
       }
       if (lock) { sub('main'); return say('Wait for ' + lock + ' to finish first.'); }
@@ -2842,129 +3024,142 @@
       if (!m) { sub('main'); return; }
       running = true; stopRun = false; lock = TOOL;
       const auto = mode === 'auto';
-      const tmpl = m[1];
-      const list = pending.slice();
       const home = onBoard() ? location.hash : '#/DispatchBoard';
       runLog.textContent = ''; runMsg.textContent = '';
       stopBtn.disabled = false; stopBtn.textContent = 'Stop'; stopBtn.style.display = 'inline-block';
       doneBtn.style.display = 'none'; copyBtn.textContent = 'Copy results';
       sub('run');
-      add((auto ? 'Auto-send' : 'Type only') + ' · ' + f.name + ' · "' + m[0] + '" · ' + s1(list.length, 'customer'));
+      add((auto ? 'Auto-send' : 'Type only') + ' · ' + f.name + ' · "' + m[0] + '" · ' + s1(planned.customers, 'customer') + ' checked, ' + s1(sends.length, 'text') + ' to send');
       const tally = {}, look = [];
-      const done = new Set();   // numbers texted this run
       let failsInRow = 0;
       const out = (r, num, text, kind) => {
         tally[kind] = (tally[kind] || 0) + 1;
         add('#' + r.jobId + ' ' + (r.customer || '') + (num ? ' ' + showNum(num) : '') + ': ' + text);
         if (kind === 'problem' || kind === 'look') look.push('#' + r.jobId + ' ' + (r.customer || '') + ': ' + text);
       };
+      if (planned.skips.length) {
+        add('Skipped before starting:');
+        planned.skips.forEach(x => out(x.r, x.num, 'skipped: ' + x.why, x.kind));
+        add('');
+      }
+      // A few seconds after each text, ServiceTitan's chat data says whether it really went out.
+      // That's checked in the background so the next text doesn't have to wait for it.
+      const checks = [];
+      const failed = (r, num, code) => {
+        tally.sent = Math.max(0, (tally.sent || 0) - 1);
+        out(r, num, 'ServiceTitan says it failed to send (code ' + (code || '?') + ')', 'problem');
+        failsInRow++;
+        if (failsInRow >= 3 && !stopRun) { add('3 failures in a row. Stopped to be safe.'); stopRun = true; }
+      };
+      const deliveryCheck = (r, num, text, sentAt) => {
+        checks.push((async () => {
+          await wait(4000);
+          try {
+            const t = await st.chatThread(num);
+            if (!t) return;
+            const mine = asPageMsgs(await st.chatMessages(t.ThreadId, 10), codes())
+              .filter(x => x.IsOutbound && norm(x.Body) === norm(text) && timeOf(x) >= sentAt - 120000)
+              .sort((a, z) => timeOf(z) - timeOf(a))[0];
+            if (!mine) return;
+            if (mine.SmsSendErrorCode || mine.HasNotBeenDelivered) failed(r, num, mine.SmsSendErrorCode);
+            else failsInRow = 0;
+          } catch (e) { /* the result just isn't known; the text did leave the Chat Center */ }
+        })());
+      };
       try {
-        for (let n = 0; n < list.length; n++) {
-          if (stopRun) { add('Stopped. ' + s1(list.length - n, 'customer') + ' not texted.'); break; }
-          const r = list[n];
-          runMsg.textContent = (auto ? 'Texting ' : 'Typing ') + (n + 1) + ' of ' + list.length + ': ' + (r.customer || '#' + r.jobId);
-          if (uses(tmpl, 'tech') && !r.tech) { out(r, '', 'skipped: no tech on the board for {tech}', 'skipped'); continue; }
-          let info;
-          try { info = await billTo(r.jobId); }
-          catch (e) { out(r, '', 'skipped: ' + (e && e.message ? e.message : e), 'problem'); if (/no Bill To contacts/.test(String(e && e.message))) { add('Stopped the run.' + CHANGED); break; } continue; }
-          if (!r.customer) r.customer = info.name;
-          const pickN = pickNumbers(info.phones);
-          if (!pickN.nums.length) { out(r, '', 'skipped: no mobile number on the Bill To', 'skipped'); continue; }
-          const text = fill(tmpl, { first: titleCase(firstWord(info.name || r.customer)), tech: r.tech });
-          if (uses(tmpl, 'first') && !firstWord(info.name || r.customer)) { out(r, '', 'skipped: no customer name for {first}', 'skipped'); continue; }
-          for (const num of pickN.nums) {
-            if (stopRun) break;
-            if (never.indexOf(num) > -1) { out(r, num, 'skipped: on your 🚫 never-text list', 'skipped'); continue; }
-            if (done.has(num)) { out(r, num, 'skipped: already texted this number in this run', 'skipped'); continue; }
-            const c = await openChat(num, r.jobId);
-            if (!c) {
-              if (!document.querySelector(BOX)) {
-                health.flag(TOOL, 'the Chat Center\'s message box didn\'t show up', BOX);
-                out(r, num, 'stopped: the Chat Center didn\'t open.', 'problem');
-                add('Stopped the run.' + CHANGED);
-                stopRun = true; break;
-              }
-              out(r, num, 'skipped: the conversation didn\'t load', 'problem'); continue;
-            }
-            const hist = messagesOf(c.vm);
-            if (optedOut(hist)) { out(r, num, 'skipped: they replied STOP', 'skipped'); continue; }
-            if (un(c.vm.IsUnread)) { out(r, num, 'skipped: they have an unread reply. Read it first', 'look'); continue; }
-            const recent = recentText(hist, f, text);
-            if (recent) { out(r, num, 'skipped: ' + (f.same ? 'got this message ' : 'texted ') + ago(recent), 'skipped'); continue; }
-            if (norm(c.box.value) || norm(un(c.vm.ResponseText))) { out(r, num, 'skipped: the message box already had unsent text', 'problem'); continue; }
-            const before = outCount(c.vm, text);
-            if (!typeIn(c, text)) {
-              clearIn(c);
-              health.flag(TOOL, 'the Chat Center\'s message box won\'t take typed text', BOX);
-              out(r, num, 'stopped: could not type the message.', 'problem');
+        for (let n = 0; n < sends.length; n++) {
+          if (stopRun) { add('Stopped. ' + s1(sends.length - n, 'text') + ' not sent.'); break; }
+          const x = sends[n], r = x.r, num = x.num, text = x.text;
+          runMsg.textContent = (auto ? 'Texting ' : 'Typing ') + (n + 1) + ' of ' + sends.length + ': ' + (r.customer || '#' + r.jobId);
+          // A quick fresh look (no page): anything new since the check, like a reply or a STOP?
+          if (!x.unchecked) {
+            let fresh = null;
+            try { fresh = await checkNumber(num, f, text); } catch (e) { /* the page's own checks below still run */ }
+            if (fresh && fresh.skip) { out(r, num, 'skipped: ' + fresh.skip, fresh.kind); continue; }
+          }
+          const c = await openChat(num, r.jobId);
+          if (!c) {
+            if (!document.querySelector(BOX)) {
+              health.flag(TOOL, 'the Chat Center\'s message box didn\'t show up', BOX);
+              out(r, num, 'stopped: the Chat Center didn\'t open.', 'problem');
               add('Stopped the run.' + CHANGED);
               stopRun = true; break;
             }
-            health.clear(TOOL);
-
-            if (!auto) {
-              // Wait for the person to press Send (noticed automatically), or Skip / Stop.
-              let watch = true;
-              const watcher = (async () => {
-                while (watch) { if (wentOut(num, text, before)) return 'sent'; await wait(300); }
-                return null;
-              })();
-              const ans = await Promise.race([
-                askStep('Typed to ' + (r.customer || 'customer') + ' ' + showNum(num) + '. Press Send in the chat. It moves on by itself once it\'s sent (or press Next if you changed the text first).', [['Next', 'next', PRIMARY], ['Skip', 'skip'], ['Stop', 'stop']]),
-                watcher
-              ]);
-              watch = false;
-              if (stepResolve) stepResolve(null);
-              if (ans === 'sent') { done.add(num); failsInRow = 0; out(r, num, 'sent by you' + pickN.note, 'sent'); await wait(800); continue; }
-              const cNow = chatFor(num);
-              if (ans === 'next') {
-                if (cNow && norm(cNow.box.value)) { out(r, num, 'not sent? the text is still in the box', 'problem'); continue; }
-                done.add(num); out(r, num, 'sent by you' + pickN.note, 'sent'); continue;
-              }
-              if (cNow && norm(cNow.box.value) === norm(text)) clearIn(cNow);
-              if (ans === 'stop') { stopRun = true; add('Stopped. ' + s1(list.length - n, 'customer') + ' not texted.'); break; }
-              out(r, num, 'skipped by you (text cleared)', 'skipped');
-              continue;
-            }
-
-            // Auto-send: last checks, press Send, then make sure it went out.
-            const c2 = chatFor(num);
-            const form = c2 && c2.box.closest('form');
-            const send = form && Array.from(form.querySelectorAll('button[type="submit"], button')).find(b => visible(b) && /^\s*send\s*$/i.test(b.innerText || ''));
-            if (!c2 || c2.box !== c.box || norm(c2.box.value) !== norm(text) || !send) {
-              if (c2 && norm(c2.box.value) === norm(text)) clearIn(c2);
-              if (!send && c2) { health.flag(TOOL, 'can\'t find the Send button in the Chat Center', 'form button "Send"'); out(r, num, 'stopped: no Send button. Nothing sent.', 'problem'); add('Stopped the run.' + CHANGED); stopRun = true; break; }
-              out(r, num, 'skipped: final check failed, nothing sent', 'problem'); continue;
-            }
-            send.click();
-            const sent = await until(() => wentOut(num, text, before), 15000, 300);
-            if (!sent) {
-              out(r, num, 'NOT CONFIRMED: it may not have sent. Stopping to be safe.', 'problem');
-              stopRun = true; break;
-            }
-            await wait(1200);
-            const last = messagesOf(chatFor(num) ? chatFor(num).vm : c.vm).filter(x => x.IsOutbound && norm(x.Body) === norm(text)).pop() || sent;
-            if (last.SmsSendErrorCode || last.HasNotBeenDelivered) {
-              failsInRow++;
-              out(r, num, 'ServiceTitan says it failed to send (code ' + (last.SmsSendErrorCode || '?') + ')', 'problem');
-              if (failsInRow >= 3) { add('3 failures in a row. Stopped to be safe.'); stopRun = true; break; }
-            } else {
-              failsInRow = 0;
-              out(r, num, 'sent' + pickN.note, 'sent');
-            }
-            done.add(num);
-            await wait(800);
+            out(r, num, 'skipped: the conversation didn\'t load', 'problem'); continue;
           }
+          // The same checks again on the open conversation, as a last guard.
+          const hist = messagesOf(c.vm);
+          if (optedOut(hist)) { out(r, num, 'skipped: they replied STOP', 'skipped'); continue; }
+          if (un(c.vm.IsUnread)) { out(r, num, 'skipped: they have an unread reply. Read it first', 'look'); continue; }
+          const recent = recentText(hist, f, text);
+          if (recent) { out(r, num, 'skipped: ' + (f.same ? 'got this message ' : 'texted ') + ago(recent), 'skipped'); continue; }
+          if (norm(c.box.value) || norm(un(c.vm.ResponseText))) { out(r, num, 'skipped: the message box already had unsent text', 'problem'); continue; }
+          const before = outCount(c.vm, text);
+          if (!typeIn(c, text)) {
+            clearIn(c);
+            health.flag(TOOL, 'the Chat Center\'s message box won\'t take typed text', BOX);
+            out(r, num, 'stopped: could not type the message.', 'problem');
+            add('Stopped the run.' + CHANGED);
+            stopRun = true; break;
+          }
+          health.clear(TOOL);
+
+          if (!auto) {
+            // Wait for the person to press Send (noticed automatically), or Next / Skip / Stop.
+            let watch = true;
+            const watcher = (async () => {
+              while (watch) { if (wentOut(num, text, before)) return 'sent'; await wait(300); }
+              return null;
+            })();
+            const ans = await Promise.race([
+              askStep('Typed to ' + (r.customer || 'customer') + ' ' + showNum(num) + '. Press Send in the chat. It moves on by itself once it\'s sent (or press Next if you changed the text first).', [['Next', 'next', PRIMARY], ['Skip', 'skip'], ['Stop', 'stop']]),
+              watcher
+            ]);
+            watch = false;
+            if (stepResolve) stepResolve(null);
+            if (ans === 'sent') { out(r, num, 'sent by you' + x.note, 'sent'); deliveryCheck(r, num, text, Date.now()); await wait(300); continue; }
+            const cNow = chatFor(num);
+            if (ans === 'next') {
+              if (cNow && norm(cNow.box.value)) { out(r, num, 'not sent? the text is still in the box', 'problem'); continue; }
+              out(r, num, 'sent by you' + x.note, 'sent'); continue;
+            }
+            if (cNow && norm(cNow.box.value) === norm(text)) clearIn(cNow);
+            if (ans === 'stop') { stopRun = true; add('Stopped. ' + s1(sends.length - n, 'text') + ' not sent.'); break; }
+            out(r, num, 'skipped by you (text cleared)', 'skipped');
+            continue;
+          }
+
+          // Auto-send: last checks, press Send, then make sure it left the Chat Center.
+          const c2 = chatFor(num);
+          const form = c2 && c2.box.closest('form');
+          const send = form && Array.from(form.querySelectorAll('button[type="submit"], button')).find(bt => visible(bt) && /^\s*send\s*$/i.test(bt.innerText || ''));
+          if (!c2 || c2.box !== c.box || norm(c2.box.value) !== norm(text) || !send) {
+            if (c2 && norm(c2.box.value) === norm(text)) clearIn(c2);
+            if (!send && c2) { health.flag(TOOL, 'can\'t find the Send button in the Chat Center', 'form button "Send"'); out(r, num, 'stopped: no Send button. Nothing sent.', 'problem'); add('Stopped the run.' + CHANGED); stopRun = true; break; }
+            out(r, num, 'skipped: final check failed, nothing sent', 'problem'); continue;
+          }
+          const sentAt = Date.now();
+          send.click();
+          const sent = await until(() => wentOut(num, text, before), 15000, 300);
+          if (!sent) {
+            out(r, num, 'NOT CONFIRMED: it may not have sent. Stopping to be safe.', 'problem');
+            stopRun = true; break;
+          }
+          if (sent.SmsSendErrorCode || sent.HasNotBeenDelivered) { tally.sent = (tally.sent || 0) + 1; failed(r, num, sent.SmsSendErrorCode); }
+          else { out(r, num, 'sent' + x.note, 'sent'); deliveryCheck(r, num, text, sentAt); }
+          await wait(300);
         }
-        const summary = Object.keys(tally).map(k => tally[k] + ' ' + k).join(', ') || 'nothing done';
-        if (look.length) { add(''); add('Needs a look:'); look.forEach(x => add('• ' + x)); }
+        // Give the last few background checks a moment to come back.
+        if (checks.length) { runMsg.textContent = 'Checking the last texts went out…'; await Promise.race([Promise.all(checks), wait(8000)]); }
+        const summary = Object.keys(tally).filter(k => tally[k]).map(k => tally[k] + ' ' + k).join(', ') || 'nothing done';
+        if (look.length) { add(''); add('Needs a look:'); look.forEach(z => add('• ' + z)); }
         runMsg.textContent = 'Done: ' + summary + '.';
       } catch (e) {
-        runMsg.textContent = '⚠️ Stopped by an error: ' + (e && e.message ? e.message : e);
+        runMsg.textContent = '⚠️ Stopped by an error: ' + errText(e);
       } finally {
         if (stepResolve) stepResolve('stop');
         if (location.hash !== home) { location.hash = home; await wait(800); }
-        running = false; lock = null;
+        running = false; lock = null; planned = null;
         stopBtn.style.display = 'none'; doneBtn.style.display = 'inline-block';
       }
     };
@@ -2973,10 +3168,10 @@
     sub('main');
     return {
       refresh: () => { if (!running) { sub('main'); renderMain(); } },
-      leave: () => { if (picking) { picking = false; if (!running) renderMain(); } paintStyle.textContent = ''; },
+      leave: () => { checkId++; picker.setPicking(false); },
       isRunning: () => running,
       stop: requestStop,
-      cleanup: () => { window.removeEventListener('click', onBoardClick, true); paintStyle.remove(); }
+      cleanup: () => picker.cleanup()
     };
   })();
 

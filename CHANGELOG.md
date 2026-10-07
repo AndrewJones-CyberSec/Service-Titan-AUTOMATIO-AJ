@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.5.1
+
+Faster and steadier. Nothing works differently for you except that it's quicker and tells you more.
+
+- **Check jobs is much faster** in 🔕 Job Notifications and 🏢 Business Unit. It reads ServiceTitan's job data directly (the same data the job page shows) instead of opening every job, so 50 jobs take a few seconds instead of a couple of minutes.
+- **Changes skip what's already done.** Turning off notifications skips jobs that are already off, and changing Business Units skips jobs already on that branch or locked, without opening them. After saving, the change is confirmed from the job data, which is quicker than re-opening the job.
+- **📱 Customer Texts checks everyone before it starts.** The confirm screen now shows exactly how many texts will go out and who is skipped and why (STOP, unread reply, texted recently, no mobile, same number, blocked in ServiceTitan). Auto-send asks for the number of texts. Skipped customers no longer cost a page load each, and a conversation with an unread reply is never opened, so it stays unread for you.
+- **Customer Texts confirms delivery in the background.** A few seconds after each text it checks ServiceTitan really sent it, and lists any that failed, even ones that fail a little after sending. Less waiting between texts.
+- **ServiceTitan's "blocked" flag** on a conversation is now respected, as well as STOP replies.
+- **One picking system for every job tool**: Job Notifications, Business Unit and Customer Texts all have 🖱️ Pick on board, **+ All in the list** and typed job numbers, and work the same way.
+- The Hold list loads its pages in parallel. Tech Messages counts jobs per tech in one pass.
+- If ServiceTitan's data can't be read for a job or conversation, the tool opens the page and checks it the old way, so nothing is missed.
+- Added automatic tests (`tests/`) that run every tool on a fake Dispatch board.
+
 ## 1.5
 
 - **📱 Customer Texts** (new): text customers a saved message through the Chat Center.

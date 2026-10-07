@@ -58,20 +58,24 @@ with sync_playwright() as p:
         page.click('a.appointment[data-job-id="%s"]' % j)
     check(page.evaluate("() => window.opened.length") == 0, 'board clicks are captured while picking (job not opened)')
     page.click('a.appointment[data-job-id="222222"]')
-    check('Took #222222 off' in page.locator('#st-toolbox').inner_text() and 'Jobs (4)' in page.locator('#st-toolbox').inner_text(), 'second click takes a job off')
+    check('Took #222222 off' in page.locator('#st-toolbox').inner_text() and '4 jobs picked' in page.locator('#st-toolbox').inner_text(), 'second click takes a job off')
     page.click('a.appointment[data-job-id="222222"]')
-    check('Jobs (5)' in page.locator('#st-toolbox').inner_text(), 'five jobs picked')
+    check('5 jobs picked' in page.locator('#st-toolbox').inner_text(), 'five jobs picked')
     outline = page.evaluate("() => getComputedStyle(document.querySelector('a.appointment[data-job-id=\"111111\"]')).outlineStyle")
     check(outline == 'solid', 'picked jobs are outlined on the board')
     page.fill('#st-toolbox input:visible[placeholder^="Or type job"]', '444444, 777777 12')
     page.locator('#st-toolbox button:visible', has_text='Add').filter(has_not_text='note').first.click()
     txt = page.locator('#st-toolbox').inner_text()
-    check('Jobs (7)' in txt, 'typed job numbers added (short number ignored)')
+    check('7 jobs picked' in txt, 'typed job numbers added (short number ignored)')
     check('Cust 111111' in txt, 'board label shown for picked job')
 
     # Check only
     before = page.evaluate("() => JSON.stringify(Object.keys(DB).map(j => buName(j)))")
+    page.evaluate("() => { window.editOpened = []; }")
+    t0 = time.time()
     check(run_and_wait(page, 'Check jobs'), 'check run finishes')
+    secs = time.time() - t0
+    check(page.evaluate("() => window.editOpened.length") == 0 and secs < 6, 'check run reads job data only: no pages opened, %.1fs' % secs)
     lg = log_text(page)
     print(lg)
     check(page.evaluate("() => window.saves.length") == 0, 'check run saved nothing')
@@ -83,9 +87,13 @@ with sync_playwright() as p:
     check(page.evaluate("() => window.opened.length") == 0, 'picking is off after the run started (no board opens)')
 
     # Change for real
+    page.evaluate("() => { window.editOpened = []; }")
     check(run_and_wait(page, 'Change to Mendenhall Branch', 'Yes, change them', timeout=150), 'change run finishes')
     lg = log_text(page)
     print(lg)
+    opened = page.evaluate("() => window.editOpened")
+    check('333333' not in opened and '666666' not in opened, 'locked and already-on-branch jobs not opened: %s' % opened)
+    check(opened.count('111111') == 1 and opened.count('222222') == 1, 'changed jobs confirmed from the job data, not re-opened')
     names = page.evaluate("() => ({a: buName(111111), b: buName(222222), c: buName(333333), d: buName(444444), e: buName(777777), f: buName(888888)})")
     print(names)
     check(names['a'] == 'Mendenhall Branch' and names['b'] == 'Mendenhall Branch', 'normal jobs changed')
@@ -96,7 +104,7 @@ with sync_playwright() as p:
     check('retry:' in lg, 'problem jobs retried once')
     check('Put back (3)' in page.locator('#st-toolbox').inner_text(), 'put back offered for 3 changed jobs')
     rem = page.locator('#st-toolbox').inner_text()
-    check('#111111' not in rem.split('Jobs (')[1].split('Change to')[0] and 'Jobs (3)' in rem, 'done jobs come off the list, problems stay')
+    check('#111111' not in rem.split('jobs picked')[1].split('Change to')[0] and '3 jobs picked' in rem, 'done jobs come off the list, problems stay')
     check(page.evaluate("() => location.hash").startswith('#/DispatchBoard'), 'back on the board after change')
 
     # Put back
@@ -105,6 +113,17 @@ with sync_playwright() as p:
     names = page.evaluate("() => ({a: buName(111111), b: buName(222222), f: buName(888888)})")
     check(names == {'a': 'Gulfport Branch', 'b': 'HVAC - Service', 'f': 'Commercial'}, 'put back restored departments and branches: %s' % names)
     check(page.locator('#st-toolbox button', has_text='Put back').first.is_hidden(), 'put back hidden after undo')
+
+    # Job data unreadable: falls back to opening each job, same results
+    page.evaluate("() => { window.API_DOWN = true; window.editOpened = []; }")
+    btn(page, 'Clear').click()
+    page.fill('#st-toolbox input:visible[placeholder^="Or type job"]', '111111 333333 666666')
+    page.locator('#st-toolbox button:visible', has_text='Add').filter(has_not_text='note').first.click()
+    check(run_and_wait(page, 'Check jobs'), 'check run with job data down finishes')
+    lg = log_text(page); print(lg)
+    check('#111111: Gulfport Branch → would change to Mendenhall Branch' in lg and '#333333: locked' in lg and '#666666: already Mendenhall Branch' in lg, 'fallback to pages gives the same answers')
+    check(len(page.evaluate("() => window.editOpened")) == 3, 'fallback opened each job')
+    page.evaluate("() => { window.API_DOWN = false; }")
 
     # Other branch
     page.select_option('#st-biz-branch', 'Tupelo Branch')
@@ -153,12 +172,12 @@ with sync_playwright() as p:
     page.click('.job-list tr.qa-job-901003 a')
     page.click('.job-list tr.qa-job-901004 td')
     t = page.locator('#st-toolbox').inner_text()
-    check('#901003' in t and 'Tray Cust 901003' in t and 'Jobs (2)' in t, 'jobs picked from the bottom list, with customer')
+    check('#901003' in t and 'Tray Cust 901003' in t and '2 jobs picked' in t, 'jobs picked from the bottom list, with customer')
     check(page.evaluate("() => window.opened.length") == 0, 'bottom-list clicks captured while picking (nothing opened)')
     bg = page.evaluate("() => getComputedStyle(document.querySelector('.job-list tr.qa-job-901003 > td')).backgroundColor")
     check(bg not in ('rgba(0, 0, 0, 0)', 'transparent'), 'picked rows highlighted in the list')
     page.click('.job-list tr.qa-job-901003 td')
-    check('Jobs (1)' in page.locator('#st-toolbox').inner_text(), 'second click on a row takes it off')
+    check('1 job picked' in page.locator('#st-toolbox').inner_text(), 'second click on a row takes it off')
     btn(page, 'Picking: ON').click()
     page.click('.job-list tr.qa-job-901003 td')
     check(page.evaluate("() => window.opened.length") == 1, 'rows open normally when not picking')
