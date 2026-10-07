@@ -2933,10 +2933,13 @@
     };
     // ServiceTitan's chat data (no page): raw messages turned into the same shape the Chat
     // Center page uses, so the same rules work on both.
+    // Automatic messages, exactly as the Chat Center page decides it: the ones we sent of these
+    // kinds. Texts a tech sends from his phone, and replies from customers, are not automatic.
+    const AUTO_KINDS = [['BookingConfirmation', 6], ['JobReminder', 7], ['DispatchNotification', 8], ['JobCompletionSurvey', 9],
+      ['AppointmentConfirmationResponse', 14], ['Autoresponder', 16], ['SmsCampaign', 21]];
     const codes = () => ({
       out: st.code('SmsDirection', 'Outbound', 1),
-      chat: st.code('SmsChannel', 'CustomerChat', 3),
-      none: st.code('SmsChannel', 'Undefined', 0),
+      auto: new Set(AUTO_KINDS.map(k => st.code('SmsChannel', k[0], k[1]))),
       unread: st.code('ChatThreadReadStatus', 'Unread', -10),
       blocked: st.code('ChatThreadBlockedStatus', 'Blocked', 10),
       sendErr: st.code('SmsDeliveryStatus', 'SmsSendingError', 1),
@@ -2947,8 +2950,8 @@
       return {
         Body: m.Body, CreatedOn: m.CreatedOn, SmsId: m.SmsId,
         IsOutbound: outbound, IsInbound: !outbound,
-        // Reminders, confirmations, review requests and the like are automatic, not texts from us.
-        IsNotification: outbound && m.Channel !== c.chat && m.Channel !== c.none,
+        // Reminders, confirmations, surveys and the like are automatic, not texts from us.
+        IsNotification: outbound && c.auto.has(m.Channel),
         SmsSendErrorCode: m.SmsSendErrorCode || 0,
         HasNotBeenDelivered: m.SmsDeliveryStatus === c.sendErr || m.SmsDeliveryStatus === c.deliveryErr
       };

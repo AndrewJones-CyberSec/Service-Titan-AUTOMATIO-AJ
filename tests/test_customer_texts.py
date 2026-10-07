@@ -67,9 +67,9 @@ with sync_playwright() as p:
     B(page, 'Load holds').click()
     page.wait_for_function("() => /Loaded \\d+ hold/.test(document.getElementById('st-toolbox').innerText)", timeout=10000)
     t = panel_text(page)
-    check('13 holds' in t, 'holds loaded and duplicate appointment removed')
+    check('14 holds' in t, 'holds loaded and duplicate appointment removed')
     check(page.evaluate("() => JSON.stringify(window.lastGetJobs.QueryFilter.BusinessUnitIds)") == '[621842244]', "uses the board's Business Unit filter")
-    check('Quote (10)' in t and 'Non Operational (2)' in t and 'Maintenance (1)' in t, 'groups with counts (Non - Operational merged)')
+    check('Quote (10)' in t and 'Non Operational (2)' in t and 'Maintenance (2)' in t, 'groups with counts (Non - Operational merged)')
     tick_group(page, 'Quote (10)')
     tick_group(page, 'Non Operational (2)')
     t = panel_text(page)
@@ -130,6 +130,16 @@ with sync_playwright() as p:
     new = [x[0] for x in s[n_before:]]
     check(new == ['6015550010'], 'second run only retries the failed one: %s' % new)
     check(lg.count('texted today') >= 4, 'just-texted customers skipped as texted today')
+
+    # A tech's text from his phone counts as a text from us; a customer's survey reply doesn't matter
+    back_to_main(page)
+    page.locator('#st-toolbox label:visible', has_text='Jobs I pick').locator('input').check()
+    B(page, 'Clear').click()
+    add_jobs(page, '5014')
+    t = review(page, 'Review and send to 1 customer')
+    check('Nobody to text' in t and 'Rae Moss …0014: texted 2 days ago' in t, "a tech's text counts toward the 7-day rule (like the Chat Center shows it)")
+    B(page, 'Cancel').click()
+    B(page, 'Clear').click()
 
     # Tech Updates: type only, pick on the board
     back_to_main(page)

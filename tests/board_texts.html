@@ -38,6 +38,7 @@
     11: { name: 'Ivy Kim', c: [['M', '(504) 555-0001']] },
     12: { name: 'Jon Poe', c: [['M', '(601) 555-0012'], ['M', '(601) 555-0112']] },
     13: { name: 'Pat Lowe', c: [['M', '(601) 555-0013']] },
+    14: { name: 'Rae Moss', c: [['M', '(601) 555-0014']] },
     20: { name: 'Kim Wu', c: [['M', '(601) 555-0020']] },
     21: { name: 'Lou Ng', c: [['M', '(601) 555-0021']] },
     22: { name: 'Mo Day', c: [['M', '(601) 555-0022']] },
@@ -50,7 +51,8 @@
     [5004, 4, 'Quote - Generator'], [5005, 5, 'Non - Operational - Commercial - AC - Under 12 Years Old'],
     [5006, 6, 'Quote - HVAC - Mini Split'], [5007, 7, 'Maintenance - Summer - Residential - Under 12 Yrs'],
     [5008, 1, 'Quote - Electrical'], [5009, 9, 'Quote - Water Heater'], [5010, 10, 'Quote - Water Heater'],
-    [5011, 11, 'Quote - Duct Cleaning'], [5012, 12, 'Quote - Generator'], [5013, 13, 'Quote - HVAC - Central Home System']
+    [5011, 11, 'Quote - Duct Cleaning'], [5012, 12, 'Quote - Generator'], [5013, 13, 'Quote - HVAC - Central Home System'],
+    [5014, 14, 'Maintenance - Fall - Residential - Under 12 Yrs']
   ];
   // Board timeline jobs: job -> [customer, tech first name]
   const BOARD = { 6001: [20, 'Paxton'], 6002: [21, 'Paxton'], 6003: [22, ''] };
@@ -68,10 +70,13 @@
   window.SENT = [];
   window.chatOpened = [];
   CHATS['6015550013'] = { unread: false, blocked: true, msgs: [] };   // blocked in ServiceTitan
+  // A tech texted this customer from his phone 2 days ago (counts as a text from us), and the
+  // customer answered a survey yesterday (a reply, not something we sent).
+  CHATS['6015550014'] = { unread: false, msgs: [{ Body: 'On my way! - Paxton', IsOutbound: true, tech: true, CreatedOn: daysAgo(2) }, { Body: '5', IsInbound: true, survey: true, CreatedOn: daysAgo(1) }] };
   // The chat data, as ServiceTitan's Chat Center reads it. window.CHAT_API_DOWN = true makes it unreadable.
   const rawMsgs = (num, chat) => chat.msgs.map((x, i) => ({
     SmsId: Number(num.slice(-4)) * 1000 + i, Body: x.Body, CreatedOn: x.CreatedOn,
-    SmsDirection: x.IsOutbound ? 1 : 0, Channel: x.IsNotification ? 7 : (x.IsOutbound ? 3 : 0),
+    SmsDirection: x.IsOutbound ? 1 : 0, Channel: x.IsNotification ? 7 : x.tech ? 1 : x.survey ? 9 : (x.IsOutbound ? 3 : 0),
     SmsSendErrorCode: x.SmsSendErrorCode || 0, SmsDeliveryStatus: x.SmsSendErrorCode ? 1 : (x.late ? 2 : 0)
   }));
   window.opened = [];

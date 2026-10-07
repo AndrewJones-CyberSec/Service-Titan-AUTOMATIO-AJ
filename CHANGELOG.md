@@ -9,6 +9,7 @@ Faster and steadier. Nothing works differently for you except that it's quicker 
 - **📱 Customer Texts checks everyone before it starts.** The confirm screen now shows exactly how many texts will go out and who is skipped and why (STOP, unread reply, texted recently, no mobile, same number, blocked in ServiceTitan). Auto-send asks for the number of texts. Skipped customers no longer cost a page load each, and a conversation with an unread reply is never opened, so it stays unread for you.
 - **Customer Texts confirms delivery in the background.** A few seconds after each text it checks ServiceTitan really sent it, and lists any that failed, even ones that fail a little after sending. Less waiting between texts.
 - **ServiceTitan's "blocked" flag** on a conversation is now respected, as well as STOP replies.
+- Customer Texts decides what counts as an automatic message (reminders, confirmations, surveys…) exactly the way the Chat Center page does, so a text a tech sent from his phone still counts toward the repeat rule. It also sees up to 100 messages of history, where the page shows the latest 25.
 - **One picking system for every job tool**: Job Notifications, Business Unit and Customer Texts all have 🖱️ Pick on board, **+ All in the list** and typed job numbers, and work the same way.
 - The Hold list loads its pages in parallel. Tech Messages counts jobs per tech in one pass.
 - If ServiceTitan's data can't be read for a job or conversation, the tool opens the page and checks it the old way, so nothing is missed.
