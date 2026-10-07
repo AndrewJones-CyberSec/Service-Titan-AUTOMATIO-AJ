@@ -953,7 +953,8 @@
     let picking = false;
     const paintStyle = el('style');
     (document.head || document.documentElement).appendChild(paintStyle);
-    const paint = () => { paintStyle.textContent = pickedCss(Array.from(picked.keys()), '#ef6c00', 'rgba(239,108,0,.22)'); };
+    // Highlights only show while this tool is open and set to "Jobs I pick".
+    const paint = () => { paintStyle.textContent = jobsPane.style.display !== 'none' && src === 'picked' ? pickedCss(Array.from(picked.keys()), '#ef6c00', 'rgba(239,108,0,.22)') : ''; };
     const labelOf = j => {
       const l = listJob(j);
       if (l && l.customer) return l.customer;
@@ -1029,6 +1030,7 @@
     };
     const refresh = keepMsg => {
       if (running) return;
+      paint();
       pickRow.style.display = src === 'tech' ? 'flex' : 'none';
       pickedBox.style.display = src === 'picked' ? 'grid' : 'none';
       if (src === 'picked') {
@@ -1199,7 +1201,7 @@
     setPicking(false);
     return {
       refresh,
-      leave: () => { if (picking) setPicking(false); },
+      leave: () => { if (picking) setPicking(false); paintStyle.textContent = ''; },
       isRunning: () => running,
       stop: requestStop,
       cleanup: () => { window.removeEventListener('click', onPickClick, true); paintStyle.remove(); }
@@ -1793,7 +1795,8 @@
     const labelFor = j => { const b = bubble(j); if (b) return norm(b.innerText || b.textContent).slice(0, 38); const l = listJob(j); return l ? l.customer : ''; };
     // Picked jobs get a blue outline on the board (and a blue band in the job list).
     const paintStyle = el('style');
-    const paint = () => { paintStyle.textContent = pickedCss(Array.from(picked.keys()), '#1a6ed8', 'rgba(26,110,216,.25)'); };
+    // Highlights only show while this tool is open.
+    const paint = () => { paintStyle.textContent = bizPane.style.display !== 'none' ? pickedCss(Array.from(picked.keys()), '#1a6ed8', 'rgba(26,110,216,.25)') : ''; };
     (document.head || document.documentElement).appendChild(paintStyle);
 
     // ---------- Pane ----------
@@ -2131,12 +2134,12 @@
       }
     };
 
-    const refresh = () => { if (running) return; renderBranches(); renderJobs(); if (!onBoard() && !msg.textContent) say('Open the Dispatch board to pick jobs.'); };
+    const refresh = () => { if (running) return; paint(); renderBranches(); renderJobs(); if (!onBoard() && !msg.textContent) say('Open the Dispatch board to pick jobs.'); };
     setPicking(false);
     renderBranches();
     return {
       refresh,
-      leave: () => { if (picking) setPicking(false); },
+      leave: () => { if (picking) setPicking(false); paintStyle.textContent = ''; },
       isRunning: () => running,
       stop: requestStop,
       cleanup: () => { window.removeEventListener('click', onClick, true); paintStyle.remove(); }
@@ -2283,7 +2286,8 @@
     let picking = false;
     const paintStyle = el('style');
     (document.head || document.documentElement).appendChild(paintStyle);
-    const paint = () => { paintStyle.textContent = pickedCss(Array.from(picked.keys()), '#2e7d32', 'rgba(46,125,50,.22)'); };
+    // Highlights only show while this tool is open and set to "Jobs I pick".
+    const paint = () => { paintStyle.textContent = textsPane.style.display !== 'none' && source === 'picked' ? pickedCss(Array.from(picked.keys()), '#2e7d32', 'rgba(46,125,50,.22)') : ''; };
     // Customer and tech: from the timeline if the job is on it, else from the job list at the bottom.
     const jobInfo = j => boardJob(j) || listJob(j);
     const labelFor = j => { const b = jobInfo(j); if (b && b.customer) return b.customer; const a = document.querySelector('a.appointment[data-job-id="' + j + '"]'); return a ? norm(a.innerText || a.textContent).slice(0, 38) : ''; };
@@ -2486,6 +2490,7 @@
       const ok = onBoard() && r.length > 0 && !!m;
       startBtn.disabled = !ok; startBtn.style.opacity = ok ? '1' : '.5';
       startBtn.textContent = (mode === 'auto' ? 'Review and send to ' : 'Start (type only): ') + s1(r.length, 'customer');
+      paint();
       if (!onBoard()) say('Open the Dispatch board to use this.');
       else if (m && uses(m[1], 'dispatcher') && !myName()) say('⚠️ This message uses {dispatcher}, but your name couldn\'t be found. Set it in ⚙️ Settings.');
       else if (!mainMsg.textContent || /^(Open the Dispatch|⚠️ This message uses)/.test(mainMsg.textContent)) say(myName() ? 'Texts are signed as ' + myName() + '.' : '');
@@ -2906,7 +2911,7 @@
     sub('main');
     return {
       refresh: () => { if (!running) { sub('main'); renderMain(); } },
-      leave: () => { if (picking) { picking = false; if (!running) renderMain(); } },
+      leave: () => { if (picking) { picking = false; if (!running) renderMain(); } paintStyle.textContent = ''; },
       isRunning: () => running,
       stop: requestStop,
       cleanup: () => { window.removeEventListener('click', onBoardClick, true); paintStyle.remove(); }
