@@ -11,6 +11,8 @@
   - **Type only** (you press Send; it notices and moves on) or **Auto-send** (type the count to confirm; each text is checked; stops if one can't be confirmed or 3 fail in a row). Stop button and copyable results.
 - **🔕 Job Notifications** can now work on **jobs you pick** as well as a tech's jobs: click jobs on the board or in the Unassigned / Hold list, add a whole list tab with **+ All in the list**, or type job numbers. The tech picker works the same as before.
 - **🏢 Business Unit** and **📱 Customer Texts** can pick jobs from the Unassigned / Hold list at the bottom of the board too.
+- **💬 Tech Messages**: new **🖱️ Pick on board**. Click techs' names on the board to add them, click again to take them off. The picked techs show in a list with ✕ on the main screen and are outlined on the board. 👥 Choose techs and 🛡️ Who can be messaged work as before, and blocked techs can't be added.
+- Picking fixes: picking deep in the Unassigned / Hold list no longer jumps the page back to the top, pressing a job while picking can't start a drag, and each tool's highlights only show while that tool is open.
 
 ## 1.4
 

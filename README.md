@@ -31,6 +31,7 @@ Send a saved message (for example Good Morning or ETA) to the techs you pick. It
 
 - **✏️ Edit messages** to change or add messages. Use `{first}` for the tech's first name.
 - **👥 Choose techs** by team, by name, or only techs with jobs on the board.
+- **🖱️ Pick on board**: click techs' names on the Dispatch board to add them (click again to take one off). They show in a list with ✕, and get a purple outline on the board. Techs your 🛡️ settings block can't be added.
 - **🛡️ Who can be messaged**: tick the teams that are OK to message and add anyone to a never-message list (for example the owner). Nothing can be sent until this is set up, and any new team starts blocked.
 
 Safety checks on every send: it re-checks your 🛡️ settings, closes any open job panel, confirms the message panel shows the right person and nothing is covering it, skips anyone whose message box already has text, and stops the whole run if a send can't be confirmed. Auto-send asks you to type how many people it will message, and there's a limit of 57 per run.

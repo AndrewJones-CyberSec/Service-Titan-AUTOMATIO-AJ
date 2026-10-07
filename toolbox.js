@@ -4,7 +4,7 @@
   One panel with five tools for the ServiceTitan Dispatch board:
     - Notes: adds a ready-made note (sorted into folders) to a job's customer in one click.
     - Job Notifications: checks or turns off job notifications for one tech's jobs, or jobs you pick.
-    - Tech Messages: sends a saved message (Good Morning, ETA, ...) to the techs you pick.
+    - Tech Messages: sends a saved message (Good Morning, ETA, ...) to the techs you pick (by team or on the board).
     - Business Unit: switches the jobs you pick to a branch (Mendenhall Branch by default).
     - Customer Texts: texts customers a saved message (holds, tech updates, reschedules, ...).
 
@@ -20,7 +20,7 @@
 (() => {
   const VERSION = '1.5';
   const WHATS_NEW = {
-    '1.5': 'New: 📱 Customer Texts. Text customers a saved message from folders (Holds, Tech Updates, Reschedule). Load every hold at once and filter by job type, or pick jobs on the board. {dispatcher} fills in your first name. Also: Job Notifications and Business Unit can pick jobs from the Unassigned / Hold list too.',
+    '1.5': 'New: 📱 Customer Texts. Text customers a saved message from folders (Holds, Tech Updates, Reschedule). Load every hold at once and filter by job type, or pick jobs on the board. {dispatcher} fills in your first name. Also: Tech Messages can pick techs by clicking them on the board, Job Notifications can work on jobs you pick, and every tool can pick from the Unassigned / Hold list.',
     '1.4': 'New: 🏢 Business Unit. Pick jobs on the board (or type their numbers) and switch them all to Mendenhall Branch, or another branch, in one go. ↩ Put back undoes it.',
     '1.3.1': 'Tech Messages can now send to up to 57 people per run (was 50).',
     '1.3': 'Quick Notes is now 📝 Notes, with folders: Updates, Techs and Reschedule. Your notes are in Updates. Add your own folders with ✏️ Edit folders, and move notes between folders with ✏️ Edit notes.',
@@ -186,7 +186,7 @@
   // (The job list at the bottom takes focus when pressed, and the browser then jumps back to
   // its top.) So the press is swallowed, the tool handles the click, and if anything still
   // scrolled, the scroll is put back.
-  const pickers = [];   // one function per tool: is it picking right now?
+  const pickers = [];   // one per tool: { active: is it picking right now?, hit: is this target something it picks? }
   let pressSnap = null;
   const scrollersOf = node => {
     const out = [];
@@ -199,7 +199,7 @@
   };
   const putBack = snap => snap && snap.forEach(([e, top, left]) => { if (e.scrollTop !== top) e.scrollTop = top; if (e.scrollLeft !== left) e.scrollLeft = left; });
   const pressGuard = e => {
-    if (!pickers.some(f => f()) || !onBoard() || panel.contains(e.target) || !clickedJob(e.target)) return;
+    if (!onBoard() || panel.contains(e.target) || !pickers.some(p => p.active() && p.hit(e.target))) return;
     if (e.type === 'click') {
       // Let the tool handle the click; undo any jump after the page has had its turn.
       const snap = pressSnap; pressSnap = null;
@@ -358,6 +358,7 @@
     if (name !== 'notes' && typeof notes !== 'undefined') notes.leave();
     if (name !== 'jobs' && typeof notify !== 'undefined') notify.leave();
     if (name === 'jobs' && typeof notify !== 'undefined') notify.refresh();
+    if (name !== 'msgs' && typeof msgs !== 'undefined') msgs.leave();
     if (name === 'msgs' && typeof msgs !== 'undefined') msgs.refresh();
     if (name !== 'biz' && typeof biz !== 'undefined') biz.leave();
     if (name === 'biz' && typeof biz !== 'undefined') biz.refresh();
@@ -979,7 +980,7 @@
       paint(); refresh();
     };
     window.addEventListener('click', onPickClick, true);
-    pickers.push(() => picking && !running);
+    pickers.push({ active: () => picking && !running, hit: t => !!clickedJob(t) });
     const addTyped = () => {
       if (running) return;
       const nums = typedBox.value.match(/\d{4,}/g) || [];
@@ -1402,6 +1403,12 @@
     const mainMsg = msgLine();
     const msgList = el('div', '');
     const toLine = el('div', 'font-size:12px;margin-top:8px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;background:#fafafa');
+    const toTools = el('div', 'display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap');
+    const pickTechBtn = smallBtn('🖱️ Pick on board', () => setPicking(!picking));
+    pickTechBtn.title = 'Click techs\' names on the board to add them (click again to take one off)';
+    const clearSelBtn = smallBtn('Clear', () => { if (running) return; selected.clear(); saveSel(); renderMain(); });
+    toTools.append(pickTechBtn, clearSelBtn);
+    const toList = el('div', 'display:none;max-height:130px;overflow:auto;border:1px solid #ddd;border-radius:6px;background:#fafafa;margin-top:4px');
     const modeRow = el('div', 'margin-top:8px;font-size:12px;display:grid;gap:2px');
     let mode = get(K.mode) === 'auto' ? 'auto' : 'type';
     const mkRadio = (val, label) => {
@@ -1420,7 +1427,7 @@
       smallBtn('✏️ Edit messages', () => openEditor()),
       smallBtn('🛡️ Who can be messaged', () => openSafety())
     );
-    vMain.append(mainMsg, msgList, toLine, modeRow, startBtn, mainNav);
+    vMain.append(mainMsg, msgList, toLine, toTools, toList, modeRow, startBtn, mainNav);
 
     const recipients = () => {
       const techs = boardTechs();
@@ -1438,16 +1445,67 @@
         msgList.appendChild(b);
       });
       if (!onBoard()) { say('Open the Dispatch board to send messages.'); startBtn.disabled = true; startBtn.style.opacity = '.5'; toLine.textContent = ''; return; }
-      if (!teamRules) { say('First, set up who can be messaged (🛡️ below). Nothing can be sent until you do.'); startBtn.disabled = true; startBtn.style.opacity = '.5'; toLine.textContent = 'To: nobody yet'; return; }
+      if (!teamRules) { say('First, set up who can be messaged (🛡️ below). Nothing can be sent until you do.'); startBtn.disabled = true; startBtn.style.opacity = '.5'; toLine.textContent = 'To: nobody yet'; toList.style.display = 'none'; return; }
       const r = recipients();
+      // The picked techs, each with ✕ to take them off.
+      toList.textContent = '';
+      toList.style.display = r.length ? 'block' : 'none';
+      r.forEach(t => {
+        const line = el('div', 'display:flex;gap:6px;align-items:center;padding:3px 6px;border-bottom:1px solid #eee;font-size:12px');
+        const nm = el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
+        nm.append(el('b', '', t.name), document.createTextNode('  · ' + (t.team || 'no team') + (t.hidden ? ' · hidden by board filter' : '')));
+        line.append(nm, smallBtn('✕', () => { if (running) return; selected.delete(t.id); saveSel(); renderMain(); }, 'padding:1px 6px'));
+        toList.appendChild(line);
+      });
       toLine.textContent = 'To: ' + (r.length ? r.length + ' tech' + (r.length === 1 ? '' : 's') + ' (' + r.slice(0, 4).map(t => t.name).join(', ') + (r.length > 4 ? ', …' : '') + ')' : 'nobody picked yet. Click 👥 Choose techs.');
       const hiddenPicked = r.filter(t => t.hidden).length;
       if (hiddenPicked) toLine.textContent += ' · ' + hiddenPicked + ' hidden by the board filter will be skipped';
       startBtn.disabled = !r.length; startBtn.style.opacity = r.length ? '1' : '.5';
       startBtn.textContent = mode === 'auto' ? 'Review and send…' : 'Start (type only)';
-      if (!mainMsg.textContent || /^(Open the Dispatch|First, set up)/.test(mainMsg.textContent)) say('Pick a message, choose techs, then Start.');
+      if (!mainMsg.textContent || /^(Open the Dispatch|First, set up)/.test(mainMsg.textContent)) say('Pick a message, choose techs (👥 or 🖱️ Pick on board), then Start.');
+      paintTechs();
     };
     const say = s => { mainMsg.textContent = s; };
+
+    // ---- Picking techs on the board ----
+    // While it's on, clicking a tech's name on the board adds them (or takes them off) instead
+    // of opening their menu. Only techs your 🛡️ settings allow can be added.
+    let picking = false;
+    const techStyle = el('style');
+    (document.head || document.documentElement).appendChild(techStyle);
+    const paintTechs = () => {
+      const ids = msgsPane.style.display !== 'none' ? Array.from(selected).filter(id => /^\d+$/.test(id)) : [];
+      techStyle.textContent = ids.length ? ids.map(id => '.technician[data-technician-id="' + id + '"]').join(',') +
+        '{outline:3px solid #6a1b9a !important;outline-offset:-3px !important;background:rgba(106,27,154,.14) !important}' : '';
+    };
+    const clickedTech = target => {
+      const t = target && target.closest && target.closest('.technician[data-technician-id]');
+      return t ? t.getAttribute('data-technician-id') : null;
+    };
+    const setPicking = on => {
+      if (on && !teamRules) { openSafety(); return; }
+      picking = !!on && !running;
+      pickTechBtn.textContent = picking ? '🖱️ Picking: ON' : '🖱️ Pick on board';
+      pickTechBtn.style.background = picking ? '#6a1b9a' : '#fff';
+      pickTechBtn.style.color = picking ? '#fff' : '#111';
+      pickTechBtn.style.borderColor = picking ? '#6a1b9a' : '#aaa';
+      pickTechBtn.style.fontWeight = picking ? '600' : '400';
+      if (picking) say('Click techs\' names on the board to add them. Click again to take one off.');
+    };
+    const onTechClick = e => {
+      if (!picking || running || !onBoard() || panel.contains(e.target) || views.main.style.display === 'none') return;
+      const id = clickedTech(e.target);
+      if (!id) return;
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      const t = boardTechs().get(id);
+      if (!t) return;
+      if (selected.has(id)) { selected.delete(id); say('Took ' + t.name + ' off.'); }
+      else if (!canMessage(t)) { say('🛡️ ' + t.name + ' can\'t be messaged: ' + (never[id] ? 'they\'re on the never-message list.' : !t.team ? 'their team isn\'t known yet (clear the board filter once).' : 'their team (' + t.team + ') is blocked.')); return; }
+      else { selected.add(id); say('Added ' + t.name + '.'); }
+      saveSel(); renderMain();
+    };
+    window.addEventListener('click', onTechClick, true);
+    pickers.push({ active: () => picking && !running && views.main.style.display !== 'none', hit: tg => !!clickedTech(tg) });
 
     // ===== Choose techs =====
     const vPick = mkView('pick');
@@ -1466,7 +1524,7 @@
     vPick.append(head('👥 Choose techs'), pickMsg, search, jobsOnlyRow, pickList, pickNav);
     search.oninput = () => renderPicker();
     let shown = [];
-    const saveSel = () => set(K.sel, JSON.stringify(Array.from(selected)));
+    const saveSel = () => { set(K.sel, JSON.stringify(Array.from(selected))); paintTechs(); };
     const openPicker = () => { if (!teamRules) return openSafety(); sub('pick'); renderPicker(); };
     const renderPicker = () => {
       const techs = Array.from(boardTechs().values());
@@ -1599,6 +1657,7 @@
     let pending = [];
     const openConfirm = () => {
       if (lock) return say('Wait for ' + lock + ' to finish first.');
+      setPicking(false);
       pending = recipients();
       if (!pending.length) return say('Nobody picked. Click 👥 Choose techs.');
       if (pending.length > MAX_PER_RUN) return say('⚠️ ' + pending.length + ' people picked. For safety the limit is ' + MAX_PER_RUN + ' per run.');
@@ -1651,6 +1710,7 @@
         return;
       }
       if (lock) { sub('main'); return say('Wait for ' + lock + ' to finish first.'); }
+      setPicking(false);
       running = true; stopRun = false; lock = 'Tech Messages';
       const auto = mode === 'auto';
       const tmpl = list[pickIdx][1];
@@ -1746,9 +1806,11 @@
     msgsPane.appendChild(pane);
     sub('main');
     return {
-      refresh: () => { if (!running) { sub('main'); renderMain(); } },
+      refresh: () => { if (!running) { sub('main'); renderMain(); } paintTechs(); },
+      leave: () => { if (picking) setPicking(false); techStyle.textContent = ''; },
       isRunning: () => running,
-      stop: requestStop
+      stop: requestStop,
+      cleanup: () => { window.removeEventListener('click', onTechClick, true); techStyle.remove(); }
     };
   })();
 
@@ -1934,7 +1996,7 @@
       paint(); renderJobs();
     };
     window.addEventListener('click', onClick, true);
-    pickers.push(() => picking && !running);
+    pickers.push({ active: () => picking && !running, hit: t => !!clickedJob(t) });
 
     // ---------- Confirm ----------
     const askConfirm = mode => {
@@ -2300,7 +2362,7 @@
       paint(); renderMain();
     };
     window.addEventListener('click', onBoardClick, true);
-    pickers.push(() => picking && !running);
+    pickers.push({ active: () => picking && !running, hit: t => !!clickedJob(t) });
     const setPicking = on => { picking = !!on && !running; renderMain(); };
 
     // ---------- UI ----------
@@ -2951,6 +3013,7 @@
     PRESS_EVENTS.forEach(t => window.removeEventListener(t, pressGuard, true));
     notes.cleanup();
     notify.cleanup();
+    msgs.cleanup();
     biz.cleanup();
     texts.cleanup();
     panel.remove();
