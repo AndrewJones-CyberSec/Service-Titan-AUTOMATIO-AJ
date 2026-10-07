@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Mock board techs</title>
+<style>body{font:13px sans-serif;margin:0} .technician{padding:6px;border:1px solid #ccc;width:160px;cursor:pointer} .appointment{display:inline-block;padding:4px 8px;background:#cfe;margin:2px}</style>
+<script>
+  window.opened = [];
+  const TEAMS = [['Install HVAC', [[1, 'Tech One'], [2, 'Tech Two']]], ['Leadership Team', [[3, 'Boss Man']]]];
+  function render() {
+    const root = document.getElementById('root');
+    if (!/^#\/DispatchBoard/.test(location.hash)) { root.innerHTML = ''; return; }
+    root.innerHTML = TEAMS.map(([team, techs]) => '<div class="team-header"><span class="team-name">' + team + '</span></div><div class="team-container">' +
+      techs.map(([id, name]) => '<div class="technician" id="team-technician-' + id + '" data-technician-id="' + id + '"><span class="name">' + name + '</span></div>' +
+        '<div id="team-timeline-row-' + id + '"><a class="appointment" data-job-id="' + (7000 + id) + '" data-technician-id="' + id + '">Job ' + (7000 + id) + '</a></div>').join('') + '</div>').join('');
+    root.querySelectorAll('.technician').forEach(t => t.addEventListener('click', () => window.opened.push('tech' + t.getAttribute('data-technician-id'))));
+    root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => window.opened.push('job' + a.getAttribute('data-job-id'))));
+  }
+  addEventListener('hashchange', render); addEventListener('DOMContentLoaded', render);
+</script></head><body><div id="root"></div></body></html>

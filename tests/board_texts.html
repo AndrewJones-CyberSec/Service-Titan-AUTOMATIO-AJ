@@ -1,0 +1,153 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Mock ServiceTitan texts</title>
+<style>
+  body{font:13px sans-serif;margin:0}
+  .appointment{display:inline-block;margin:4px;padding:6px 10px;background:#cfe;border:1px solid #9c9;cursor:pointer;color:#000;text-decoration:none}
+  .chat{position:fixed;left:0;top:0;bottom:0;width:320px;background:#eef;padding:8px}
+</style>
+<script>
+  // Tiny stand-in for Knockout.
+  (function () {
+    const obs = v => { const f = function (x) { if (arguments.length) { v = x; return f; } return v; }; f.__obs = true; return f; };
+    const toJS = v => { if (v && v.__obs) v = v(); if (Array.isArray(v)) return v.map(toJS); if (v && typeof v === 'object' && !(v instanceof Date)) { const o = {}; Object.keys(v).forEach(k => { o[k] = toJS(v[k]); }); return o; } return v; };
+    window.ko = { observable: obs, isObservable: f => !!(f && f.__obs), unwrap: v => (v && v.__obs) ? v() : v, toJS,
+      dataFor: e => { while (e) { if (e.__vm) return e.__vm; e = e.parentElement; } return undefined; } };
+  })();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const daysAgo = n => new Date(Date.now() - n * 86400000).toISOString();
+  const hoursAgo = n => new Date(Date.now() - n * 3600000).toISOString();
+  window.App = {
+    Notifications: { store: { userId: 42 } },
+    Data: {
+      Users: [{ Id: 42, Name: 'andrewj' }, { Id: 7, Name: 'other' }],
+      Employees: [{ Id: 900, Name: 'Someone Else', UserId: 7 }, { Id: 901, Name: 'andrew Jones', UserId: 42 }],
+      BusinessUnits: [{ Id: 621842244, Name: 'Mendenhall Branch', Active: true }]
+    }
+  };
+  // Customers and their Bill To contacts. P = landline, M = mobile.
+  const C = {
+    1: { name: 'Deede Oubre', c: [['M', '(504) 555-0001']] },
+    2: { name: 'Bob Smith', c: [['P', '(601) 555-0002'], ['M', '(601) 555-0102']] },
+    3: { name: 'Amy Lee', c: [['P', '(601) 555-0003']] },
+    4: { name: 'Carl Diaz', c: [['M', '(601) 555-0004']] },
+    5: { name: 'Dana Fox', c: [['M', '(601) 555-0005']] },
+    6: { name: 'Eve Hall', c: [['M', '(601) 555-0006']] },
+    7: { name: 'Fay Moss', c: [['M', '(601) 555-0007']] },
+    9: { name: 'Gus Ray', c: [['M', '(601) 555-0009']] },
+    10: { name: 'Hal Fry', c: [['M', '(601) 555-0010']] },
+    11: { name: 'Ivy Kim', c: [['M', '(504) 555-0001']] },
+    12: { name: 'Jon Poe', c: [['M', '(601) 555-0012'], ['M', '(601) 555-0112']] },
+    20: { name: 'Kim Wu', c: [['M', '(601) 555-0020']] },
+    21: { name: 'Lou Ng', c: [['M', '(601) 555-0021']] },
+    22: { name: 'Mo Day', c: [['M', '(601) 555-0022']] },
+    30: { name: 'Nia Ball', c: [['M', '(601) 555-9999']] }
+  };
+  // Holds: job -> [customer, type]
+  const HOLDS = [
+    [5001, 1, 'Quote - HVAC - Central Home System'], [5001, 1, 'Quote - HVAC - Central Home System'],
+    [5002, 2, 'Quote - Generator'], [5003, 3, 'Non Operational - AC - Under 12 Years Old'],
+    [5004, 4, 'Quote - Generator'], [5005, 5, 'Non - Operational - Commercial - AC - Under 12 Years Old'],
+    [5006, 6, 'Quote - HVAC - Mini Split'], [5007, 7, 'Maintenance - Summer - Residential - Under 12 Yrs'],
+    [5008, 1, 'Quote - Electrical'], [5009, 9, 'Quote - Water Heater'], [5010, 10, 'Quote - Water Heater'],
+    [5011, 11, 'Quote - Duct Cleaning'], [5012, 12, 'Quote - Generator']
+  ];
+  // Board timeline jobs: job -> [customer, tech first name]
+  const BOARD = { 6001: [20, 'Paxton'], 6002: [21, 'Paxton'], 6003: [22, ''] };
+  const JOBCUST = {}; HOLDS.forEach(h => { JOBCUST[h[0]] = h[1]; }); Object.keys(BOARD).forEach(j => { JOBCUST[j] = BOARD[j][0]; }); JOBCUST[7001] = 30;
+  // Chat history per number (last 10 digits)
+  const RUNNING_LATE = 'Hey, this is Andrew with Air South Cooling and Heating. I am reaching out about your appointment. I wanted to update as I know your time is valuable. My expert has ran into a few delays, but is still scheduled to come out to see you. He will send you a text 30 minutes before his arrival. If you have any questions or concerns, please give me a call back at 601-847-9941. Thank you for being the best part of AirSouth!';
+  window.CHATS = {
+    '6015550004': { unread: false, msgs: [{ Body: 'old promo', IsOutbound: true, CreatedOn: daysAgo(40) }, { Body: 'STOP', IsInbound: true, CreatedOn: daysAgo(39) }] },
+    '6015550005': { unread: false, msgs: [{ Body: 'Hi from AirSouth', IsOutbound: true, CreatedOn: daysAgo(3) }] },
+    '6015550006': { unread: true, msgs: [{ Body: 'Can you call me?', IsInbound: true, CreatedOn: hoursAgo(2) }] },
+    '6015550009': { unread: false, msgs: [{ Body: 'Your appointment is tomorrow', IsOutbound: true, IsNotification: true, CreatedOn: daysAgo(1) }] },
+    '6015550010': { unread: false, fail: true, msgs: [] },
+    '6015550021': { unread: false, msgs: [{ Body: RUNNING_LATE, IsOutbound: true, CreatedOn: hoursAgo(1) }] }
+  };
+  window.SENT = [];
+  window.opened = [];
+  const chatOf = n => { if (!CHATS[n]) CHATS[n] = { unread: false, msgs: [] }; return CHATS[n]; };
+
+  // Fake ServiceTitan endpoints.
+  const realFetch = window.fetch;
+  window.fetch = async (url, opts) => {
+    const u = String(url);
+    const json = (o, st) => new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    await new Promise(r => setTimeout(r, 60));
+    if (u.indexOf('/Dispatch/GetJobs') === 0) {
+      const b = JSON.parse(opts.body);
+      window.lastGetJobs = b;
+      if (b.JobType !== 'Hold') return json({ Jobs: [], Count: 0 });
+      const rows = HOLDS.map(h => ({ JobId: h[0], Customer: C[h[1]].name + ' ', CustomerId: h[1], Type: h[2], CustomerPhone: C[h[1]].c[0][1] }));
+      return json({ Jobs: rows.slice(b.QueryFilter.Skip, b.QueryFilter.Skip + b.QueryFilter.Take), Count: rows.length });
+    }
+    let m = /^\/Job\/Index\/\?id=(\d+)/.exec(u);
+    if (m) {
+      const cid = JOBCUST[m[1]];
+      if (!cid) return json({}, 404);
+      const cu = C[cid];
+      return json({ Id: Number(m[1]), Customer: { Id: cid, Name: cu.name, Contacts: cu.c.map((x, i) => ({ Id: i, Type: x[0] === 'M' ? 'MobilePhone' : 'Phone', Value: x[1] })).concat([{ Id: 99, Type: 'Email', Value: 'x@y.z' }]) }, Location: { Contacts: [] } });
+    }
+    return realFetch(url, opts);
+  };
+
+  function render() {
+    const h = location.hash.split('?')[0];
+    const root = document.getElementById('root');
+    root.innerHTML = '';
+    let m;
+    if (/^#\/DispatchBoard/.test(h)) {
+      root.innerHTML = '<div class="team-container"><div class="team-name">Install HVAC</div><div class="technician" data-technician-id="1"><span class="name">Paxton T</span></div></div>' +
+        '<div id="team-timeline-row-1">' + Object.keys(BOARD).map(j => '<a class="appointment" data-job-id="' + j + '" data-technician-id="1">Quote ' + C[BOARD[j][0]].name + '</a>').join('') + '</div>' +
+        '<div class="job-list"><div class="toolbar">Hold (13)</div><div><table class="k-grid-table"><tbody>' +
+        [5002, 5006].map(j => '<tr class="row__BK7JR qa-job-' + j + '"><td>Quote</td><td>' + C[JOBCUST[j]].name + '</td></tr>').join('') + '</tbody></table></div></div>';
+      const jl = root.querySelector('.job-list');
+      jl.querySelectorAll('tr').forEach(tr => tr.addEventListener('click', () => window.opened.push('tray')));
+      jl.__vm = {
+        JobList: { AllVisibleJobs: ko.observable([5002, 5006].map(j => ({ JobId: j, Customer: C[JOBCUST[j]].name + ' ', CustomerId: JOBCUST[j] }))) },
+        Date: ko.observable(today),
+        BusinessUnitFilter: { getIds: () => [621842244] },
+        Assignments: ko.observable(Object.keys(BOARD).map(j => ({ JobId: Number(j), Customer: C[BOARD[j][0]].name, CustomerId: BOARD[j][0], FirstName: BOARD[j][1] || null, TechnicianName: BOARD[j][1] ? BOARD[j][1] + ' T' : null })))
+      };
+      root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => window.opened.push(a.getAttribute('data-job-id'))));
+    } else if ((m = /^#\/ChatCenter\/(\d+)/.exec(h))) {
+      const num = m[1];
+      if (num === '6015559999') return;   // a broken Chat Center: no message box
+      const chat = chatOf(num);
+      setTimeout(() => {
+        if (location.hash.split('?')[0] !== h) return;
+        const wrap = document.createElement('div'); wrap.className = 'chat';
+        wrap.innerHTML = '<div class="cht-conversations"><div class="hist"></div><form><div class="cht-response-container"><textarea class="cht-response-input" placeholder="Type response..."></textarea></div><button type="submit" class="ui button">Send</button></form></div>';
+        const toMsg = x => Object.assign({ IsInbound: false, IsOutbound: false, IsNotification: false, SmsSendErrorCode: 0, HasNotBeenDelivered: false }, x);
+        const vm = {
+          ContactNumber: ko.observable('(' + num.slice(0, 3) + ') ' + num.slice(3, 6) + '-' + num.slice(6)),
+          LoadingMessages: ko.observable(false), HasFetchedMessagePage: ko.observable(true),
+          IsUnread: ko.observable(!!chat.unread), ResponseText: ko.observable(''), SubmittingResponseInProgress: ko.observable(false),
+          MessagesByDay: ko.observable([{ Date: 'x', Messages: chat.msgs.map(toMsg) }])
+        };
+        const ta = wrap.querySelector('textarea');
+        const sync = () => vm.ResponseText(ta.value);
+        ta.addEventListener('change', sync);
+        const form = wrap.querySelector('form');
+        form.addEventListener('submit', e => {
+          e.preventDefault();
+          const body = vm.ResponseText();
+          if (!body) return;
+          vm.SubmittingResponseInProgress(true);
+          setTimeout(() => {
+            const msg = { Body: body, IsOutbound: true, CreatedOn: new Date().toISOString(), SmsSendErrorCode: chat.fail ? 21610 : 0 };
+            chat.msgs.push(msg); window.SENT.push([num, body]);
+            vm.MessagesByDay([{ Date: 'x', Messages: chat.msgs.map(toMsg) }]);
+            vm.ResponseText(''); ta.value = ''; vm.SubmittingResponseInProgress(false);
+          }, 400);
+        });
+        wrap.querySelector('.cht-conversations').__vm = vm;
+        ta.__vm = vm;
+        root.appendChild(wrap);
+      }, 500);
+    }
+  }
+  addEventListener('hashchange', render);
+  addEventListener('DOMContentLoaded', render);
+</script></head>
+<body><div id="root"></div></body></html>

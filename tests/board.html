@@ -1,0 +1,114 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Mock ServiceTitan</title>
+<style>
+  body{font:13px sans-serif;margin:0}
+  .appointment{display:inline-block;margin:4px;padding:6px 10px;background:#cfe;border:1px solid #9c9;cursor:pointer;color:#000;text-decoration:none}
+  .modal{display:none}
+  .modal.in{display:block;position:fixed;top:30%;left:30%;background:#fff;border:2px solid #333;padding:20px}
+</style>
+<script>
+  // Tiny stand-in for Knockout: observables, ko.dataFor and ko.unwrap only.
+  (function () {
+    if (location.search.indexOf('noko') > -1) return;
+    const obs = v => { const f = function (x) { if (arguments.length) { v = x; return f; } return v; }; f.__obs = true; return f; };
+    window.ko = {
+      observable: obs,
+      isObservable: f => !!(f && f.__obs),
+      unwrap: v => (v && v.__obs) ? v() : v,
+      dataFor: e => { while (e) { if (e.__vm) return e.__vm; e = e.parentElement; } return undefined; }
+    };
+  })();
+  const BUS = [
+    [108733206,'Commercial'],[112072629,'Electrical - Install'],[169933113,'Electrical - Maintenance'],[409186966,'Greenville Branch'],
+    [591422337,'Gulfport Branch'],[473877668,'HCR'],[26125,'HVAC - Install'],[22018,'HVAC - Service'],[621842244,'Mendenhall Branch'],
+    [104236911,'Plumbing - Install'],[29953,'Project Coordinator'],[593928045,'Tupelo Branch'],[999,'Old Branch']
+  ];
+  window.App = { Data: { BusinessUnits: BUS.map(b => ({ Id: b[0], Name: b[1], Active: b[1] !== 'Old Branch' })) } };
+  const nameOf = id => (BUS.find(b => b[0] === id) || [0, '?'])[1];
+  const idOf = n => (BUS.find(b => b[1] === n) || [0])[0];
+  // Fake job database: job -> { bu, mode }
+  window.DB = {
+    111111: { bu: idOf('Gulfport Branch'), mode: 'ok' },
+    222222: { bu: idOf('HVAC - Service'), mode: 'ok' },
+    333333: { bu: idOf('Tupelo Branch'), mode: 'locked' },
+    444444: { bu: idOf('Greenville Branch'), mode: 'error' },
+    555555: { bu: idOf('HCR'), mode: 'popup' },
+    666666: { bu: idOf('Mendenhall Branch'), mode: 'ok' },
+    777777: { bu: idOf('Commercial'), mode: 'nosave' },
+    888888: { bu: idOf('Commercial'), mode: 'stay' },
+    901001: { bu: idOf('Commercial'), mode: 'ok' }, 901002: { bu: idOf('Commercial'), mode: 'ok' },
+    901003: { bu: idOf('Commercial'), mode: 'ok' }, 901004: { bu: idOf('Commercial'), mode: 'ok' }
+  };
+  window.buName = j => nameOf(DB[j].bu);
+  window.saves = [];
+  window.opened = [];
+  function render() {
+    const h = location.hash.split('?')[0];
+    const root = document.getElementById('root');
+    root.innerHTML = '';
+    let m;
+    if (/^#\/DispatchBoard/.test(h)) {
+      root.innerHTML = '<div class="team-container"><div class="team-name">Install HVAC</div>' +
+        '<div class="technician" data-technician-id="1"><span class="name">Tech One</span></div></div>' +
+        '<div id="team-timeline-row-1">' + Object.keys(DB).filter(j => j < 900000).map(j =>
+          '<a class="appointment" data-job-id="' + j + '" data-technician-id="1"><span>Quote</span> Cust ' + j + ' - 39180</a>').join('') + '</div>';
+      root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => { window.opened.push(a.getAttribute('data-job-id')); }));
+      const jl = document.createElement('div'); jl.className = 'job-list';
+      const filler = [];
+      for (let i = 0; i < 60; i++) filler.push(String(950000 + i));
+      jl.innerHTML = '<div style="height:1500px">(board)</div><div class="toolbar">Hold (2)</div><div><table class="k-grid-table" tabindex="0"><tbody>' +
+        ['901003', '901004'].concat(filler).map(j => '<tr class="row__BK7JR qa-job-' + j + '" style="height:40px"><td>Quote</td><td><a href="#/Customer/1">Tray Cust ' + j + '</a></td></tr>').join('') + '</tbody></table></div>';
+      jl.querySelectorAll('tr').forEach(tr => tr.addEventListener('click', () => { window.opened.push('tray'); }));
+      // Like the real list: pressing a row focuses the list and jumps back to its top.
+      const tbl = jl.querySelector('table');
+      tbl.addEventListener('mousedown', () => { tbl.focus({ preventScroll: true }); const top = tbl.getBoundingClientRect().top; if (top < 0) window.scrollTo(0, top + window.scrollY - 40); });
+      if (window.ko) jl.__vm = { JobList: { View: ko.observable({ Caption: 'Hold' }), AllVisibleJobs: ko.observable([{ JobId: 901003, Customer: 'Tray Cust 901003 ', CustomerId: 3 }, { JobId: 901004, Customer: 'Tray Cust 901004', CustomerId: 4 }]) } };
+      root.appendChild(jl);
+    } else if ((m = /^#\/Job\/Edit\/(\d+)/.exec(h))) {
+      const j = m[1], job = DB[j];
+      setTimeout(() => {
+        if (location.hash.split('?')[0] !== h) return;
+        const form = document.createElement('form');
+        form.setAttribute('data-bind', 'submit: $data.save');
+        form.innerHTML = '<label class="control-label">Business Unit</label><select name="BusinessUnit"></select>' +
+          '<div class="errs"></div><button class="btn btn-success"><i class="icon-save"></i> Save</button> <a class="btn-link muted" href="#/Job/Index/' + j + '">Cancel</a>' +
+          '<div class="modal"><div class="modal-body">Changing the business unit will update the invoice. Continue?</div><button type="button">OK</button></div>';
+        const sel = form.querySelector('select');
+        BUS.forEach(b => { const o = document.createElement('option'); o.value = String(b[0]); o.textContent = b[1]; sel.appendChild(o); });
+        const vm = {
+          Id: Number(j),
+          BusinessUnitId: window.ko ? window.ko.observable(job.bu) : null,
+          IsBusinessUnitReadOnly: job.mode === 'locked'
+        };
+        sel.value = String(job.bu);
+        sel.disabled = vm.IsBusinessUnitReadOnly;
+        sel.addEventListener('change', () => { if (vm.BusinessUnitId) vm.BusinessUnitId(Number(sel.value)); });
+        form.__vm = vm;
+        form.addEventListener('submit', e => {
+          e.preventDefault();
+          const val = vm.BusinessUnitId ? vm.BusinessUnitId() : Number(sel.value);
+          window.saves.push([j, nameOf(val)]);
+          if (job.mode === 'error') { form.querySelector('.errs').innerHTML = '<span class="field-validation-error">Summary is required.</span>'; return; }
+          if (job.mode === 'popup') { form.querySelector('.modal').classList.add('in'); return; }
+          setTimeout(() => {
+            if (job.mode !== 'nosave') job.bu = val;
+            if (job.mode !== 'stay') location.hash = '#/Job/Index/' + j;
+          }, 400);
+        });
+        root.appendChild(form);
+      }, 350);
+    } else if ((m = /^#\/Job\/Index\/(\d+)/.exec(h))) {
+      const j = m[1];
+      window.NOTIF = window.NOTIF || {};
+      if (!(j in window.NOTIF)) window.NOTIF[j] = true;
+      setTimeout(() => {
+        if (location.hash.split('?')[0] !== h) return;
+        root.innerHTML = '<h2>Job #' + j + '</h2><div class="qa-job-notification-toggle"><input id="nt" type="checkbox" class="ToggleSwitch__input"' + (window.NOTIF[j] ? ' checked' : '') + '><label for="nt" class="ToggleSwitch__html-label">Job Notifications</label></div>';
+        root.querySelector('#nt').addEventListener('change', e => { window.NOTIF[j] = e.target.checked; });
+      }, 300);
+    }
+  }
+  addEventListener('hashchange', render);
+  addEventListener('DOMContentLoaded', render);
+</script></head>
+<body><div id="root"></div></body></html>
