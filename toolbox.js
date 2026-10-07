@@ -181,6 +181,38 @@
     'background:#fff;color:#111;border:1px solid #888;border-radius:10px;box-shadow:0 5px 20px rgba(0,0,0,.3);' +
     'font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden;text-align:left');
   panel.id = ID;
+
+  // While a tool is picking jobs, pressing on a job must not start a drag or move the page.
+  // (The job list at the bottom takes focus when pressed, and the browser then jumps back to
+  // its top.) So the press is swallowed, the tool handles the click, and if anything still
+  // scrolled, the scroll is put back.
+  const pickers = [];   // one function per tool: is it picking right now?
+  let pressSnap = null;
+  const scrollersOf = node => {
+    const out = [];
+    for (let e = node; e && e !== document.documentElement; e = e.parentElement) {
+      if (e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1) out.push(e);
+    }
+    const root = document.scrollingElement || document.documentElement;
+    if (out.indexOf(root) < 0) out.push(root);
+    return out.map(e => [e, e.scrollTop, e.scrollLeft]);
+  };
+  const putBack = snap => snap && snap.forEach(([e, top, left]) => { if (e.scrollTop !== top) e.scrollTop = top; if (e.scrollLeft !== left) e.scrollLeft = left; });
+  const pressGuard = e => {
+    if (!pickers.some(f => f()) || !onBoard() || panel.contains(e.target) || !clickedJob(e.target)) return;
+    if (e.type === 'click') {
+      // Let the tool handle the click; undo any jump after the page has had its turn.
+      const snap = pressSnap; pressSnap = null;
+      requestAnimationFrame(() => putBack(snap));
+      setTimeout(() => putBack(snap), 150);
+      return;
+    }
+    if (e.type === 'pointerdown') pressSnap = scrollersOf(e.target);
+    if (e.type === 'mousedown') e.preventDefault();   // no focus change, no text selection
+    e.stopPropagation(); e.stopImmediatePropagation();
+  };
+  const PRESS_EVENTS = ['pointerdown', 'mousedown', 'click'];
+  PRESS_EVENTS.forEach(t => window.addEventListener(t, pressGuard, true));
   const pos = (get('stPos') || get('qnPos') || '').split(',').map(Number);
   if (pos.length === 2 && pos.every(n => isFinite(n))) {
     panel.style.left = Math.min(Math.max(0, pos[0]), innerWidth - 120) + 'px';
@@ -946,6 +978,7 @@
       paint(); refresh();
     };
     window.addEventListener('click', onPickClick, true);
+    pickers.push(() => picking && !running);
     const addTyped = () => {
       if (running) return;
       const nums = typedBox.value.match(/\d{4,}/g) || [];
@@ -1898,6 +1931,7 @@
       paint(); renderJobs();
     };
     window.addEventListener('click', onClick, true);
+    pickers.push(() => picking && !running);
 
     // ---------- Confirm ----------
     const askConfirm = mode => {
@@ -2262,6 +2296,7 @@
       paint(); renderMain();
     };
     window.addEventListener('click', onBoardClick, true);
+    pickers.push(() => picking && !running);
     const setPicking = on => { picking = !!on && !running; renderMain(); };
 
     // ---------- UI ----------
@@ -2908,6 +2943,7 @@
   header.after(closeBar);
   let closing = false;
   const finishClose = () => {
+    PRESS_EVENTS.forEach(t => window.removeEventListener(t, pressGuard, true));
     notes.cleanup();
     notify.cleanup();
     biz.cleanup();
