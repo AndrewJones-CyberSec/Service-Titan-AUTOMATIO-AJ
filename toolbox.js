@@ -2532,7 +2532,7 @@
       const take = d => d.Jobs.forEach(j => {
         if (!j || !j.JobId || seen.has(j.JobId)) return;
         seen.add(j.JobId);
-        jobs.push({ jobId: j.JobId, customer: norm(j.Customer), customerId: j.CustomerId, type: norm(j.Type) || '(no type)' });
+        jobs.push({ jobId: j.JobId, customer: norm(j.Customer), customerId: j.CustomerId, type: norm(j.Type) || '(no type)', status: norm(j.JobStatus) });
       });
       const firstPage = await page(0);
       const total = firstPage.Count || 0;
@@ -2619,7 +2619,7 @@
       const addOne = r => { const key = r.customerId ? 'c' + r.customerId : 'j' + r.jobId; if (seen.has(key)) return; seen.add(key); out.push(r); };
       if (source === 'holds') {
         if (!holds) return out;
-        holds.jobs.forEach(h => { if (typeSel.has(h.type)) addOne({ jobId: h.jobId, customer: h.customer, customerId: h.customerId, tech: '', hold: true }); });
+        holds.jobs.forEach(h => { if (typeSel.has(h.type)) addOne({ jobId: h.jobId, customer: h.customer, customerId: h.customerId, tech: '', hold: true, listStatus: h.status }); });
       } else {
         picker.ids().forEach(j => { const b = jobInfo(j) || {}; addOne({ jobId: j, customer: b.customer || picker.label(j) || '', customerId: b.customerId || null, tech: b.tech || '' }); });
       }
@@ -2950,8 +2950,14 @@
         .map(x => ({ num: last10(x.Value), mobile: /mobile/i.test(x.Type || '') }));
       return { name: norm(c.Name), phones, status: typeof j.Status === 'string' ? j.Status : '' };
     };
-    // A job from the Hold list that has since been booked (or cancelled) isn't a hold any more.
-    const notHold = status => status && !/^hold$/i.test(status) ? 'no longer on hold (now ' + status + ')' : '';
+    // A job from the Hold list whose status has changed since the list was loaded (booked,
+    // started, cancelled…) is skipped. Almost every job on the Hold list is "Hold" itself; a few
+    // are on it because one of their appointments is on hold while the job is "Scheduled" or
+    // "InProgress". Those are only skipped if their status changes too.
+    const holdGone = (r, now) => {
+      if (!r.hold || !r.listStatus || !now || same(now, r.listStatus)) return '';
+      return /^hold$/i.test(r.listStatus) ? 'no longer on hold (now ' + now + ')' : 'changed since the Hold list was loaded (was ' + r.listStatus + ', now ' + now + ')';
+    };
     const pickNumbers = phones => {
       const mobiles = phones.filter(p => p.mobile);
       if (allMobiles) return { nums: Array.from(new Set(mobiles.map(p => p.num))), note: '' };
@@ -3073,7 +3079,7 @@
         if (uses(tmpl, 'tech') && !r.tech) return { skips: [{ why: 'no tech on the board for {tech}', kind: 'skipped' }] };
         const info = await billTo(r.jobId);
         if (!alive()) return null;
-        if (r.hold && notHold(info.status)) return { info, skips: [{ why: notHold(info.status), kind: 'skipped' }] };
+        if (holdGone(r, info.status)) return { info, skips: [{ why: holdGone(r, info.status), kind: 'skipped' }] };
         const name = info.name || r.customer;
         const pickN = pickNumbers(info.phones);
         if (!pickN.nums.length) return { info, skips: [{ why: 'no mobile number on the Bill To', kind: 'skipped' }] };
@@ -3187,7 +3193,7 @@
           // reply or a STOP? If ServiceTitan has signed you out, stop here.
           let fresh = null;
           try {
-            if (r.hold) { const j = await st.job(r.jobId); const why = notHold(j && typeof j.Status === 'string' ? j.Status : ''); if (why) fresh = { skip: why, kind: 'skipped' }; }
+            if (r.hold && r.listStatus) { const j = await st.job(r.jobId); const why = holdGone(r, j && typeof j.Status === 'string' ? j.Status : ''); if (why) fresh = { skip: why, kind: 'skipped' }; }
             if (!fresh && !x.unchecked) fresh = await checkNumber(num, f, text);
           } catch (e) {
             if (st.isSignedOut(e)) { signedOut = true; add('⚠️ ' + e.message + ' Stopped. ' + s1(sends.length - n, 'text') + ' not sent.'); break; }

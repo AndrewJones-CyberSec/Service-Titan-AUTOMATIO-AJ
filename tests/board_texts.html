@@ -86,9 +86,10 @@
   const realFetch = window.fetch;
   // API_DELAY = ms makes every request slow (the caller can still cut it off), API_401 = true
   // answers like a signed-out session, JOB_API_DOWN = true breaks only the job data.
-  // JOB_STATUS[job] overrides a job's Status (holds are 'Hold', board jobs 'Scheduled').
+  // JOB_STATUS[job] overrides a job's Status (holds are 'Hold', board jobs 'Scheduled'), and
+  // LIST_STATUS[job] the JobStatus the Hold list shows for it (like the real list, normally 'Hold').
   // apiCalls counts requests; apiLog lists them.
-  window.apiCalls = 0; window.apiLog = []; window.JOB_STATUS = {};
+  window.apiCalls = 0; window.apiLog = []; window.JOB_STATUS = {}; window.LIST_STATUS = {};
   const pause = (ms, signal) => new Promise((res, rej) => {
     const t = setTimeout(res, ms);
     if (signal) signal.addEventListener('abort', () => { clearTimeout(t); rej(new DOMException('The user aborted a request.', 'AbortError')); });
@@ -103,7 +104,7 @@
       const b = JSON.parse(opts.body);
       window.lastGetJobs = b;
       if (b.JobType !== 'Hold') return json({ Jobs: [], Count: 0 });
-      const rows = HOLDS.map(h => ({ JobId: h[0], Customer: C[h[1]].name + ' ', CustomerId: h[1], Type: h[2], CustomerPhone: C[h[1]].c[0][1] }));
+      const rows = HOLDS.map(h => ({ JobId: h[0], Customer: C[h[1]].name + ' ', CustomerId: h[1], Type: h[2], CustomerPhone: C[h[1]].c[0][1], JobStatus: LIST_STATUS[h[0]] || 'Hold', AppointmentStatus: 'Hold' }));
       return json({ Jobs: rows.slice(b.QueryFilter.Skip, b.QueryFilter.Skip + b.QueryFilter.Take), Count: rows.length });
     }
     let m = /^\/Job\/Index\/\?id=(\d+)/.exec(u);

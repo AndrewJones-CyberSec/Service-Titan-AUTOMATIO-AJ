@@ -244,8 +244,10 @@ with sync_playwright() as p:
     check(errors == [], 'Texts failing: no page errors: %s' % errors)
     page.close()
 
-    # A hold that's been booked: skipped when checking, and right before its text
+    # A hold that's been booked: skipped when checking, and right before its text. A job that is on
+    # the Hold list for one of its appointments while the job itself is "Scheduled" is still texted.
     page, errors = fresh(b, TEXTS)
+    ev(page, "() => { LIST_STATUS[5002] = 'Scheduled'; JOB_STATUS[5002] = 'Scheduled'; }")
     texts_ready(page)
     pick_mode(page, 'Auto-send')
     ev(page, "() => { JOB_STATUS[5009] = 'Scheduled'; }")   # booked after the Hold list was loaded
@@ -253,6 +255,7 @@ with sync_playwright() as p:
     print(t)
     check('Gus Ray' in t.split('Skipping')[1] and 'no longer on hold' in t, 'Texts stale: a hold booked since loading is skipped when checking')
     check('Will text 4 numbers' in t, 'Texts stale: 4 to text')
+    check('Bob Smith' in t.split('Will text')[1].split('Skipping')[0], 'Texts stale: a Hold-list job that is "Scheduled" with an appointment on hold is still texted')
     ev(page, "() => { JOB_STATUS[5012] = 'Scheduled'; }")   # booked while the confirm screen is up
     page.fill('#st-ct-confirm-count', '4')
     B(page, 'Send 4 texts').click()
