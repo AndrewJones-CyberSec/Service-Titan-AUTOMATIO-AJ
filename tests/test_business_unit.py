@@ -154,7 +154,7 @@ with sync_playwright() as p:
     page.locator('#st-toolbox button:visible', has_text='Add').filter(has_not_text='note').first.click()
     btn(page, 'Change to Mendenhall Branch').click(); btn(page, 'Yes, change them').click()
     time.sleep(1.5)
-    page.locator('#st-toolbox span', has_text='✕').first.click()
+    page.locator('#st-toolbox [data-act="close"]').click()
     check('Business Unit is still running' in page.locator('#st-toolbox').inner_text(), 'closing mid-run asks first')
     btn(page, 'Keep running').click()
     btn(page, 'Stop').click()
@@ -184,12 +184,11 @@ with sync_playwright() as p:
     page.evaluate("() => { window.opened = []; }")
 
     # Other tools still open
-    btn(page, '← Menu').click()
+    page.locator('#st-toolbox [data-nav="menu"]').click()
     for t in ['Notes', 'Job Notifications', 'Tech Messages']:
-        btn(page, t).click()
-        check(page.locator('#st-toolbox').is_visible(), t + ' view opens')
-        page.locator('#st-toolbox button', has_text='Menu').first.click() if page.locator('#st-toolbox button', has_text='← Menu').first.is_visible() else None
-        page.evaluate("() => { const b = Array.from(document.querySelectorAll('#st-toolbox button')).find(b => /Menu/.test(b.textContent) && b.offsetParent); if (b) b.click(); }")
+        page.locator('#st-toolbox .st-card', has_text=t).click()
+        check(page.locator('#st-toolbox').is_visible() and t in page.locator('#st-toolbox .st-title').inner_text(), t + ' view opens')
+        page.locator('#st-toolbox [data-nav="menu"]').click()
 
     # Closing removes the board hook
     page.evaluate("() => window.__stToolbox.close()")

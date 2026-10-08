@@ -2,6 +2,13 @@
 
 A small panel of time-savers for the ServiceTitan Dispatch board. It runs from a browser bookmark, works in Chrome, Edge, Firefox and Safari, and updates itself: everyone who installs it gets the newest version the next time they click the bookmark.
 
+## The panel
+
+- **Tabs** across the top (Notes, Notify, Techs, Units, Texts) switch tools in one click. **⌂** goes to Home, which lists every tool with a line on what it does. While a tool is running, the other tabs wait until it's done.
+- **Move it** by dragging the title bar. **Resize it** by dragging the bottom-right corner (double-click the corner for the normal size). **– Minimize** (or double-click the title bar) shrinks it to just the title bar; runs keep going, and **● Running** shows while one is.
+- It remembers where you put it, its size and the tool you were on, and always stays fully on screen. Near the bottom of the screen it grows upward; near the top it grows downward. Long screens scroll inside the panel.
+- Less-used buttons are under **⋯ More**.
+
 ## Tools
 
 **📝 Notes**
@@ -29,10 +36,10 @@ Any job that has a problem gets one more try after the rest of the run is done. 
 **💬 Tech Messages**
 Send a saved message (for example Good Morning or ETA) to the techs you pick. It opens each tech's Send Message panel, types the message, and either waits for you to press Send (**Type only**) or sends it for you (**Auto-send**).
 
-- **✏️ Edit messages** to change or add messages. Use `{first}` for the tech's first name.
+- **✏️ Edit messages** (under ⋯ More) to change or add messages. Use `{first}` for the tech's first name.
 - **👥 Choose techs** by team, by name, or only techs with jobs on the board.
 - **🖱️ Pick on board**: click techs' names on the Dispatch board to add them (click again to take one off). They show in a list with ✕, and get a purple outline on the board. Techs your 🛡️ settings block can't be added.
-- **🛡️ Who can be messaged**: tick the teams that are OK to message and add anyone to a never-message list (for example the owner). Nothing can be sent until this is set up, and any new team starts blocked.
+- **🛡️ Who can be messaged** (under ⋯ More; the first time, the **🛡️ Set up** button): tick the teams that are OK to message and add anyone to a never-message list (for example the owner). Nothing can be sent until this is set up, and any new team starts blocked.
 
 Safety checks on every send: it re-checks your 🛡️ settings, closes any open job panel, confirms the message panel shows the right person and nothing is covering it, skips anyone whose message box already has text, and stops the whole run if a send can't be confirmed. Auto-send asks you to type how many people it will message, and there's a limit of 57 per run.
 
@@ -56,10 +63,11 @@ Text customers a saved message through ServiceTitan's Chat Center. Messages are 
 - **Repeat rules per folder:** Holds skips anyone who got a text from us in the last 7 days. Tech Updates and Reschedule skip anyone who already got that same message today. Change them in 📁 Edit folders. Automatic notifications and texts that failed don't count.
 - **Skipped every time:** anyone who replied STOP or is blocked in ServiceTitan, anyone with an unread reply (listed so you can read it; their conversation isn't opened, so it stays unread), numbers on your 🚫 never-text list, and a number shared with another customer in the same run (texted once).
 - **Type only:** it opens each conversation and types the message. You press Send and it moves on by itself. **Auto-send:** you confirm by typing how many texts it will send, and it checks each text went out. A few seconds after each text it also checks ServiceTitan really delivered it, and lists any that failed. It stops if a text can't be confirmed or 3 fail in a row.
-- **✏️ Edit messages**, **📁 Edit folders** and **⚙️ Settings** are saved in your own browser. About 4 seconds per text; keep the tab on screen while it runs.
+- The screen is in three steps you can fold up: **① Message**, **② Who** and **③ How** (Type only or Auto-send). A folded step shows a one-line summary.
+- **✏️ Edit messages**, **📁 Edit folders** and **⚙️ Settings** are under ⋯ More, and are saved in your own browser. About 4 seconds per text; keep the tab on screen while it runs.
 
 **🩺 Health check**
-If ServiceTitan changes something a tool relies on, a yellow bar at the top of the Toolbox says which tool is affected and what's missing, instead of the tool failing quietly. Use **Copy report** to pass the details along, or **🩺 Check** in the menu to check any time.
+If ServiceTitan changes something a tool relies on, a yellow bar at the top of the Toolbox says which tool is affected and what's missing, instead of the tool failing quietly. Use **Copy report** to pass the details along, or **🩺 Check** on the Home screen to check any time.
 
 ## Install
 

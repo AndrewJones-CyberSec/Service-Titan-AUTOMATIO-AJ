@@ -1,7 +1,7 @@
 /*
   ServiceTitan Toolbox
   ====================
-  One panel with five tools for the ServiceTitan Dispatch board:
+  One panel with five tools for the ServiceTitan Dispatch board (tabs across the top switch between them):
     - Notes: adds a ready-made note (sorted into folders) to a job's customer in one click.
     - Job Notifications: checks or turns off job notifications for one tech's jobs, or jobs you pick.
     - Tech Messages: sends a saved message (Good Morning, ETA, ...) to the techs you pick (by team or on the board).
@@ -18,8 +18,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.5.1';
+  const VERSION = '1.5.2';
   const WHATS_NEW = {
+    '1.5.2': 'New look: tabs switch tools in one click, ⌂ goes Home, – shrinks the Toolbox to its title bar, and the corner resizes it. It stays where you put it, always on screen. Less-used buttons are under ⋯ More.',
     '1.5.1': 'Faster and smarter: Check jobs in Job Notifications and Business Unit now takes seconds instead of minutes, and Customer Texts checks everyone before it starts, so you see exactly who will be texted (and who is skipped, and why). Every job-picking tool also has + All in the list.',
     '1.5': 'New: 📱 Customer Texts. Text customers a saved message from folders (Holds, Tech Updates, Reschedule). Load every hold at once and filter by job type, or pick jobs on the board. {dispatcher} fills in your first name. Also: Tech Messages can pick techs by clicking them on the board, Job Notifications can work on jobs you pick, and every tool can pick from the Unassigned / Hold list.',
     '1.4': 'New: 🏢 Business Unit. Pick jobs on the board (or type their numbers) and switch them all to Mendenhall Branch, or another branch, in one go. ↩ Put back undoes it.',
@@ -238,12 +239,57 @@
   };
 
   // ===================================================================
-  // Panel shell: header and the main menu
+  // Panel shell: header, tool tabs, Home screen; moving, resizing and minimizing
   // ===================================================================
-  const panel = el('div', 'position:fixed;right:16px;bottom:16px;z-index:2147483647;width:290px;max-width:calc(100vw - 32px);' +
-    'background:#fff;color:#111;border:1px solid #888;border-radius:10px;box-shadow:0 5px 20px rgba(0,0,0,.3);' +
+  const panel = el('div', 'position:fixed;right:16px;bottom:16px;z-index:2147483647;width:300px;box-sizing:border-box;display:flex;flex-direction:column;' +
+    'background:#fff;color:#111;border:1px solid #8a9099;border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.24),0 2px 6px rgba(0,0,0,.12);' +
     'font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden;text-align:left');
   panel.id = ID;
+  // The look of the panel's frame. Everything is scoped to the panel, so the page is untouched.
+  const sheet = el('style');
+  sheet.textContent = [
+    '#ID button:focus-visible{outline:2px solid #1a6ed8;outline-offset:1px}',
+    '#ID button:disabled{cursor:default}',
+    '#ID .st-head{display:flex;align-items:center;gap:2px;padding:6px 6px 6px 12px;background:#1f2933;color:#fff;cursor:move;user-select:none;flex:none}',
+    '#ID .st-title{flex:1;min-width:0;display:flex;align-items:baseline;gap:6px;font-weight:700;white-space:nowrap;overflow:hidden}',
+    '#ID .st-title>span:first-child{overflow:hidden;text-overflow:ellipsis}',
+    '#ID .st-ver{font-weight:400;font-size:11px;opacity:.65}',
+    '#ID .st-run{display:none;flex:none;margin-right:4px;padding:1px 7px;border-radius:9px;background:#f9a825;color:#1f2933;font-size:11px;font-weight:700}',
+    '#ID .st-hbtn{flex:none;width:28px;height:26px;padding:0;border:0;border-radius:6px;background:transparent;color:#fff;font:inherit;font-size:15px;line-height:26px;text-align:center;cursor:pointer;opacity:.85}',
+    '#ID .st-hbtn:hover:not(:disabled){background:rgba(255,255,255,.16);opacity:1}',
+    '#ID .st-hbtn:disabled{opacity:.3}',
+    '#ID .st-hbtn.on{background:rgba(255,255,255,.14)}',
+    '#ID .st-tabs{display:flex;gap:2px;padding:4px 5px;background:#eef0f3;border-bottom:1px solid #dde0e5;flex:none}',
+    '#ID .st-tab{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:1px;padding:4px 1px 3px;border:0;border-radius:7px;background:transparent;color:#4a5361;font:inherit;font-size:10.5px;line-height:1.2;cursor:pointer}',
+    '#ID .st-tab b{font-size:15px;line-height:1.1;font-weight:400}',
+    '#ID .st-tab:hover:not(:disabled){background:#e1e4e9;color:#111}',
+    '#ID .st-tab.on{background:#fff;color:#111;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.14),inset 0 -2px 0 #1a6ed8}',
+    '#ID .st-tab:disabled{opacity:.35;cursor:not-allowed}',
+    '#ID .st-body{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}',
+    '#ID .st-body::-webkit-scrollbar{width:9px}',
+    '#ID .st-body::-webkit-scrollbar-thumb{background:#c5cad2;border-radius:9px;border:2px solid #fff}',
+    '#ID .st-grip{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;z-index:2;' +
+      'background:linear-gradient(135deg,transparent 0 55%,#9aa1ab 55% 61%,transparent 61% 71%,#9aa1ab 71% 77%,transparent 77%)}',
+    '#ID.st-min .st-tabs,#ID.st-min .st-body,#ID.st-min .st-grip,#ID.st-min .st-bar{display:none !important}',
+    '#ID .st-cards{display:grid;gap:6px}',
+    '#ID .st-card{display:grid;grid-template-columns:30px 1fr;align-items:center;column-gap:8px;width:100%;padding:8px 10px;border:1px solid #d5d9df;border-radius:9px;background:#f8f9fb;color:#111;font:inherit;text-align:left;cursor:pointer}',
+    '#ID .st-card:hover{background:#eef3fb;border-color:#9dbbe8}',
+    '#ID .st-card b{grid-row:span 2;font-size:20px;font-weight:400;text-align:center}',
+    '#ID .st-card strong{font-size:13px}',
+    '#ID .st-card small{font-size:11.5px;color:#5a6270}',
+    '#ID .st-tip{font-size:11px;color:#6b7280}',
+    '#ID .st-sec{border:1px solid #dfe2e7;border-radius:8px;margin-top:8px}',
+    '#ID .st-sec-head{display:flex;align-items:center;gap:6px;width:100%;padding:6px 8px;border:0;border-radius:8px;background:#f5f6f8;color:#111;font:inherit;font-size:12px;text-align:left;cursor:pointer}',
+    '#ID .st-sec-head:hover{background:#eceef2}',
+    '#ID .st-sec-head[aria-expanded="true"]{border-radius:8px 8px 0 0;border-bottom:1px solid #dfe2e7}',
+    '#ID .st-sec-head span:nth-child(2){font-weight:700;flex:none}',
+    '#ID .st-sec-sum{flex:1;min-width:0;text-align:right;color:#5a6270;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '#ID .st-sec-body{padding:4px 8px 8px}'
+  ].join('\n').replace(/#ID/g, '#' + ID);
+  panel.appendChild(sheet);
+  // Most screens scroll inside the panel; long lists use this much of its height (it follows the
+  // panel's size, see place() below).
+  const room = px => 'max(110px,calc(var(--st-h,100vh) - ' + (px + 40) + 'px))';
 
   // While a tool is picking jobs, pressing on a job must not start a drag or move the page.
   // (The job list at the bottom takes focus when pressed, and the browser then jumps back to
@@ -419,23 +465,49 @@
       cleanup: () => { window.removeEventListener('click', onClick, true); style.remove(); }
     };
   };
-  const pos = (get('stPos') || get('qnPos') || '').split(',').map(Number);
-  if (pos.length === 2 && pos.every(n => isFinite(n))) {
-    panel.style.left = Math.min(Math.max(0, pos[0]), innerWidth - 120) + 'px';
-    panel.style.top = Math.min(Math.max(0, pos[1]), innerHeight - 60) + 'px';
-    panel.style.right = panel.style.bottom = 'auto';
-  }
-
-  const header = el('div', 'padding:10px 12px;font-weight:700;background:#222;color:#fff;display:flex;justify-content:space-between;align-items:center;cursor:move;user-select:none');
-  const titleWrap = el('span', 'display:flex;align-items:baseline;gap:6px');
+  // Header: the tool's name, then ⌂ Home, – Minimize and ✕ Close. Drag it to move the panel;
+  // double-click it to minimize.
+  const header = el('div');
+  header.className = 'st-head';
+  const titleWrap = el('div');
+  titleWrap.className = 'st-title';
   const titleText = el('span', '', '🧰 Toolbox');
-  titleWrap.append(titleText, el('span', 'font-weight:400;font-size:11px;opacity:.7', 'v' + VERSION));
-  const closeX = el('span', 'cursor:pointer;padding:0 4px', '✕');
-  closeX.title = 'Close';
-  header.append(titleWrap, closeX);
+  const verText = el('span', '', 'v' + VERSION);
+  verText.className = 'st-ver';
+  titleWrap.append(titleText, verText);
+  const runBadge = el('span', '', '● Running');
+  runBadge.className = 'st-run';
+  const headBtn = (text, title, act) => {
+    const b = el('button', '', text);
+    b.type = 'button'; b.className = 'st-hbtn'; b.title = title;
+    b.setAttribute(act[0], act[1]);
+    b.addEventListener('mousedown', e => e.preventDefault());
+    return b;
+  };
+  const homeBtn = headBtn('⌂', 'Home: all tools', ['data-nav', 'menu']);
+  const minBtn = headBtn('–', 'Minimize (double-click the title bar works too)', ['data-act', 'min']);
+  const closeX = headBtn('✕', 'Close', ['data-act', 'close']);
+  header.append(titleWrap, runBadge, homeBtn, minBtn, closeX);
+
+  // One tab per tool, so any tool is one click away.
+  const TABS = [['notes', '📝', 'Notes', 'Notes'], ['jobs', '🔕', 'Notify', 'Job Notifications'], ['msgs', '💬', 'Techs', 'Tech Messages'],
+    ['biz', '🏢', 'Units', 'Business Unit'], ['texts', '📱', 'Texts', 'Customer Texts']];
+  const tabBar = el('div');
+  tabBar.className = 'st-tabs';
+  const tabs = {};
+  TABS.forEach(([key, icon, short, full]) => {
+    const b = el('button');
+    b.type = 'button'; b.className = 'st-tab'; b.title = full;
+    b.setAttribute('data-nav', key);
+    b.append(el('b', '', icon), el('span', '', short));
+    b.addEventListener('mousedown', e => e.preventDefault());
+    tabBar.appendChild(b);
+    tabs[key] = b;
+  });
 
   // "What's new" line, shown once after an update.
-  const news = el('div', 'display:none;padding:7px 12px;background:#e8f4ea;color:#1b5e20;font-size:12px;border-bottom:1px solid #cfe5d2');
+  const news = el('div', 'display:none;padding:7px 12px;background:#e8f4ea;color:#1b5e20;font-size:12px;border-bottom:1px solid #cfe5d2;flex:none');
+  news.className = 'st-bar';
   const lastSeen = get('stSeenVersion');
   if (lastSeen !== VERSION) {
     news.textContent = (lastSeen ? '✨ Updated to v' + VERSION + ': ' : '✨ ') + (WHATS_NEW[VERSION] || 'New version.');
@@ -450,7 +522,8 @@
   // ===================================================================
   const health = (() => {
     const issues = new Map();   // key -> { tool, what, detail }
-    const bar = el('div', 'display:none;padding:7px 12px;background:#fff4e5;color:#6b3f00;font-size:12px;border-bottom:1px solid #f0d3a6');
+    const bar = el('div', 'display:none;padding:7px 12px;background:#fff4e5;color:#6b3f00;font-size:12px;border-bottom:1px solid #f0d3a6;flex:none;max-height:40%;overflow:auto');
+    bar.className = 'st-bar';
     const barText = el('div', 'white-space:pre-wrap');
     const barBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap;margin-top:6px');
     bar.append(barText, barBtns);
@@ -536,20 +609,7 @@
   })();
   const CHANGED = ' ServiceTitan may have changed (see the yellow bar).';
 
-  // Same look as the note buttons.
-  const menuBtn = (label, onClick) => {
-    const b = el('button', FULL + 'margin:5px 0;padding:8px 9px;cursor:pointer;border:1px solid #aaa;' +
-      'border-radius:6px;background:#f5f5f5;color:#111;text-align:left;font:inherit', label);
-    b.type = 'button';
-    b.addEventListener('mousedown', e => e.preventDefault());
-    b.onmouseenter = () => { b.style.background = '#e8e8e8'; };
-    b.onmouseleave = () => { b.style.background = '#f5f5f5'; };
-    b.onclick = onClick;
-    return b;
-  };
-
-  const menuPane = el('div', 'display:none;padding:8px 10px 10px');
-  const menuMsg = el('div', 'font-size:12px;color:#444;margin-bottom:4px;min-height:16px', 'Pick a tool.');
+  const menuPane = el('div', 'display:none;padding:10px');
   const notesPane = el('div', 'display:none');
   const jobsPane = el('div', 'display:none');
   const msgsPane = el('div', 'display:none');
@@ -557,10 +617,62 @@
   const textsPane = el('div', 'display:none');
   const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane, texts: textsPane };
   const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts' };
+  // The screens scroll in here; the header, tabs and warning bars stay put.
+  const body = el('div');
+  body.className = 'st-body';
+  const toTop = () => { body.scrollTop = 0; };
+  // A row of buttons with the less-used ones tucked behind ⋯ More.
+  const moreRow = (main, extra) => {
+    const wrap = el('div', 'margin-top:10px');
+    const top = el('div', 'display:flex;flex-wrap:wrap;gap:6px;align-items:center');
+    const rest = el('div', 'display:none;flex-wrap:wrap;gap:6px;margin-top:6px;padding-top:6px;border-top:1px dashed #d5d9df');
+    let open = false;
+    const toggle = smallBtn('', () => { open = !open; paint(); }, 'margin-left:auto');
+    toggle.setAttribute('data-act', 'more');
+    const paint = () => {
+      rest.style.display = open ? 'flex' : 'none';
+      toggle.textContent = open ? '▴ Less' : '⋯ More';
+      toggle.title = open ? 'Hide these buttons' : extra.map(b => b.textContent.replace(/^\S+\s/, '')).join(', ');
+    };
+    extra.forEach(b => {
+      const run = b.onclick;
+      b.onclick = e => { open = false; paint(); run(e); toTop(); };
+    });
+    top.append(...main, toggle);
+    rest.append(...extra);
+    wrap.append(top, rest);
+    paint();
+    return wrap;
+  };
+  // While a tool is running, the other tools wait (only one can drive the page at a time).
+  const LOCK_VIEW = { 'Notes': 'notes', 'Job Notifications': 'jobs', 'Tech Messages': 'msgs', 'Business Unit': 'biz', 'Customer Texts': 'texts' };
+  let current = 'menu';
+  const blocked = name => !!lock && LOCK_VIEW[lock] !== name;
+  let navKey = '';
+  const syncNav = () => {
+    const key = (lock || '') + '|' + current;
+    if (key === navKey) return;   // nothing changed since last time
+    navKey = key;
+    Object.keys(tabs).forEach(k => {
+      const t = tabs[k], no = blocked(k) && k !== current;
+      t.classList.toggle('on', k === current);
+      t.disabled = no;
+      t.title = no ? 'Wait for ' + lock + ' to finish' : TITLES[k].replace(/^\S+\s/, '');
+    });
+    homeBtn.disabled = !!lock && current !== 'menu';
+    homeBtn.classList.toggle('on', current === 'menu');
+    homeBtn.title = homeBtn.disabled ? 'Wait for ' + lock + ' to finish' : 'Home: all tools';
+    runBadge.style.display = lock ? 'inline-block' : 'none';
+    runBadge.title = lock ? lock + ' is running' : '';
+  };
+  const go = name => { if (name === current || blocked(name)) return; showView(name); };
   const showView = name => {
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
     titleText.textContent = TITLES[name];
+    current = name;
     set('stView', name);
+    toTop();
+    syncNav();
     if (name !== 'notes' && typeof notes !== 'undefined') notes.leave();
     if (name !== 'jobs' && typeof notify !== 'undefined') notify.leave();
     if (name === 'jobs' && typeof notify !== 'undefined') notify.refresh();
@@ -572,18 +684,39 @@
     if (name === 'texts' && typeof texts !== 'undefined') texts.refresh();
   };
 
-  menuPane.append(
-    menuMsg,
-    menuBtn('📝 Notes', () => showView('notes')),
-    menuBtn('🔕 Job Notifications', () => showView('jobs')),
-    menuBtn('💬 Tech Messages', () => showView('msgs')),
-    menuBtn('🏢 Business Unit', () => showView('biz')),
-    menuBtn('📱 Customer Texts', () => showView('texts'))
-  );
-  const checkRow = el('div', 'display:flex;justify-content:flex-end;margin-top:4px');
-  checkRow.append(smallBtn('🩺 Check', () => health.checkBoard(true)));
-  menuPane.appendChild(checkRow);
-  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane);
+  // Home: every tool with a line on what it does.
+  const ABOUT = {
+    notes: 'Add a ready-made note to a job\'s customer.',
+    jobs: 'Check or turn off job notifications.',
+    msgs: 'Send Good Morning or ETA messages to techs.',
+    biz: 'Switch jobs to Mendenhall or another branch.',
+    texts: 'Text customers about holds, updates and reschedules.'
+  };
+  const cards = el('div');
+  cards.className = 'st-cards';
+  TABS.forEach(([key, icon, , full]) => {
+    const c = el('button');
+    c.type = 'button'; c.className = 'st-card';
+    c.setAttribute('data-nav', key);
+    c.append(el('b', '', icon), el('strong', '', full), el('small', '', ABOUT[key]));
+    c.addEventListener('mousedown', e => e.preventDefault());
+    cards.appendChild(c);
+  });
+  const homeFoot = el('div', 'display:flex;gap:8px;align-items:center;margin-top:10px');
+  const tip = el('span', 'flex:1', 'Drag the top bar to move me, the corner to resize, – to shrink.');
+  tip.className = 'st-tip';
+  homeFoot.append(tip, smallBtn('🩺 Check', () => health.checkBoard(true)));
+  menuPane.append(cards, homeFoot);
+  body.append(menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane);
+  const grip = el('div');
+  grip.className = 'st-grip';
+  grip.title = 'Drag to resize. Double-click to go back to the normal size.';
+  panel.append(header, tabBar, news, health.bar, body, grip);
+  // Tabs, Home cards and ⌂ all switch tools the same way.
+  panel.addEventListener('click', e => {
+    const b = e.target.closest && e.target.closest('[data-nav]');
+    if (b && panel.contains(b) && !b.disabled) go(b.getAttribute('data-nav'));
+  });
 
   // ===================================================================
   // Tool 1: Notes
@@ -671,7 +804,7 @@
     const crumb = el('div', 'display:none;align-items:center;gap:8px;margin-bottom:2px');
     const crumbName = el('span', 'font-weight:700');
     crumb.append(smallBtn('← Folders', () => openFolder(-1)), crumbName);
-    const btnList = el('div', 'max-height:calc(100vh - 290px);overflow:auto');
+    const btnList = el('div', 'max-height:' + room(290) + ';overflow:auto');
     const stampRow = el('label', 'display:flex;gap:6px;align-items:center;margin-top:6px;font-size:12px;cursor:pointer');
     stampRow.addEventListener('mousedown', e => e.preventDefault());
     const stamp = el('input');
@@ -716,7 +849,7 @@
           const n = f.notes.length;
           btnList.appendChild(listBtn(num(i) + (f.name || '(no name)') + '  (' + n + ')', 'Open this folder' + keyHint(i), () => openFolder(i)));
         });
-        bottomRow.append(smallBtn('← Menu', () => showView('menu')), smallBtn('✏️ Edit folders', () => openFolderEditor()), backBtn);
+        bottomRow.append(smallBtn('✏️ Edit folders', () => openFolderEditor()), backBtn);
         return;
       }
       // Inside a folder.
@@ -729,7 +862,7 @@
         btnList.appendChild(listBtn((isArmed ? '👉 ' : '') + num(i) + (name || '(no name)'), text + keyHint(i), () => run(text), isArmed));
       });
       if (!list.length) btnList.appendChild(el('div', 'font-size:12px;color:#666;padding:6px 0', 'No notes in this folder yet. Click ✏️ Edit notes to add some.'));
-      bottomRow.append(smallBtn('← Menu', () => showView('menu')), smallBtn('✏️ Edit notes', () => openEditor()), backBtn);
+      bottomRow.append(smallBtn('✏️ Edit notes', () => openEditor()), backBtn);
     };
     const openFolder = i => {
       open = i;
@@ -881,7 +1014,7 @@
     };
 
     let editing = false;
-    const showOnly = x => { [main, editor, folderEditor].forEach(v => { v.style.display = v === x ? 'block' : 'none'; }); };
+    const showOnly = x => { [main, editor, folderEditor].forEach(v => { v.style.display = v === x ? 'block' : 'none'; }); toTop(); };
     const closeEditors = () => { editing = false; showOnly(main); renderList(); };
 
     // ---- Edit notes (the notes in the open folder) ----
@@ -902,7 +1035,7 @@
       sel.onchange = () => { const v = parseInt(sel.value, 10); if (v === open) delete n.to; else n.to = v; };
       return sel;
     };
-    const ed = listEditor('note', 'Button name (e.g. 📞 No Answer)', 'Note text that gets typed in', 'calc(100vh - 300px)', { allowEmpty: true, rowExtra: moveTo });
+    const ed = listEditor('note', 'Button name (e.g. 📞 No Answer)', 'Note text that gets typed in', room(300), { allowEmpty: true, rowExtra: moveTo });
     const openEditor = () => {
       if (open < 0) return;
       editing = true;
@@ -936,7 +1069,7 @@
     const folderEditor = el('div', 'display:none;padding:8px 10px 10px');
     const FOLDERS_HINT = 'Rename, reorder, add or delete folders. Saved in this browser.';
     const fMsg = el('div', 'font-size:12px;color:#444;margin-bottom:6px', FOLDERS_HINT);
-    const fList = el('div', 'max-height:calc(100vh - 300px);overflow:auto;margin:0 -4px;padding:0 4px');
+    const fList = el('div', 'max-height:' + room(300) + ';overflow:auto;margin:0 -4px;padding:0 4px');
     // Draft rows: { name, notes, src } where src is the folder it came from (null for new ones).
     let fDraft = [];
     const renderFolders = () => {
@@ -1144,8 +1277,6 @@
     const copyBtn = smallBtn('Copy results', async () => { if (await copy(log.textContent)) copyBtn.textContent = 'Copied'; });
     progRow.append(stopBtn, copyBtn);
     progress.append(log, progRow);
-    const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
-    navRow.append(smallBtn('← Menu', () => { if (!running) showView('menu'); }));
     // Which jobs: one tech's jobs (the list above), or jobs you pick yourself.
     let src = get('stNotifySrc') === 'picked' ? 'picked' : 'tech';
     const srcRow = el('div', 'display:grid;gap:1px;font-size:12px');
@@ -1159,7 +1290,7 @@
     const srcTech = srcRadio('tech', '👷 A tech\'s jobs'), srcPicked = srcRadio('picked', '🖱️ Jobs I pick (board, Unassigned / Hold list, or job #)');
     srcRow.append(srcTech.l, srcPicked.l);
     const pickedBox = el('div', 'display:none');
-    wrap.append(msg, srcRow, pickRow, pickedBox, actions, confirmBox, progress, navRow);
+    wrap.append(msg, srcRow, pickRow, pickedBox, actions, confirmBox, progress);
     jobsPane.appendChild(wrap);
     let running = false, stop = false;
     const add = s => { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
@@ -1548,12 +1679,12 @@
     // ---- UI pieces ----
     const pane = el('div', 'padding:8px 10px 10px');
     const views = {};
-    const sub = name => { Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; }); };
+    const sub = name => { Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; }); toTop(); };
     const mkView = name => { views[name] = el('div', 'display:none'); pane.appendChild(views[name]); return views[name]; };
     const msgLine = () => el('div', 'font-size:12px;color:#444;margin-bottom:6px;min-height:16px;white-space:pre-wrap');
     const head = text => el('div', 'font-weight:700;margin-bottom:4px', text);
     const row = () => el('div', 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px');
-    const scrollBox = css => el('div', 'max-height:calc(100vh - 300px);overflow:auto;border:1px solid #ddd;border-radius:6px;padding:4px 6px;background:#fafafa;' + (css || ''));
+    const scrollBox = css => el('div', 'max-height:' + room(300) + ';overflow:auto;border:1px solid #ddd;border-radius:6px;padding:4px 6px;background:#fafafa;' + (css || ''));
     const check = (label, checked, onChange, disabled) => {
       const l = el('label', 'display:flex;gap:6px;align-items:center;padding:3px 0;cursor:' + (disabled ? 'not-allowed' : 'pointer') + ';font-size:12px;' + (disabled ? 'color:#999' : ''));
       const c = el('input'); c.type = 'checkbox'; c.checked = !!checked; c.disabled = !!disabled;
@@ -1584,12 +1715,12 @@
     };
     modeRow.append(mkRadio('type', 'Type only: I press Send for each person'), mkRadio('auto', 'Auto-send: sends to everyone picked'));
     const startBtn = smallBtn('Start', () => openConfirm(), PRIMARY + 'margin-top:8px;' + FULL + 'padding:8px');
-    const mainNav = row();
-    mainNav.append(
-      smallBtn('← Menu', () => showView('menu')),
-      smallBtn('👥 Choose techs', () => openPicker()),
-      smallBtn('✏️ Edit messages', () => openEditor()),
-      smallBtn('🛡️ Who can be messaged', () => openSafety())
+    // Shown until the safety settings are set up (the same screen as 🛡️ Who can be messaged).
+    const setupBtn = smallBtn('🛡️ Set up', () => openSafety(), PRIMARY + 'display:none');
+    setupBtn.title = 'Choose which teams can be messaged';
+    const mainNav = moreRow(
+      [setupBtn, smallBtn('👥 Choose techs', () => openPicker())],
+      [smallBtn('✏️ Edit messages', () => openEditor()), smallBtn('🛡️ Who can be messaged', () => openSafety())]
     );
     vMain.append(mainMsg, msgList, toLine, toTools, toList, modeRow, startBtn, mainNav);
 
@@ -1608,8 +1739,9 @@
         b.onclick = () => { pickIdx = i; set(K.pick, String(i)); renderMain(); };
         msgList.appendChild(b);
       });
+      setupBtn.style.display = teamRules ? 'none' : 'inline-block';
       if (!onBoard()) { say('Open the Dispatch board to send messages.'); startBtn.disabled = true; startBtn.style.opacity = '.5'; toLine.textContent = ''; return; }
-      if (!teamRules) { say('First, set up who can be messaged (🛡️ below). Nothing can be sent until you do.'); startBtn.disabled = true; startBtn.style.opacity = '.5'; toLine.textContent = 'To: nobody yet'; toList.style.display = 'none'; return; }
+      if (!teamRules) { say('First, set up who can be messaged (🛡️ Set up, below). Nothing can be sent until you do.'); startBtn.disabled = true; startBtn.style.opacity = '.5'; toLine.textContent = 'To: nobody yet'; toList.style.display = 'none'; return; }
       const r = recipients();
       // The picked techs, each with ✕ to take them off.
       toList.textContent = '';
@@ -1722,7 +1854,7 @@
     // ===== Who can be messaged (safety settings) =====
     const vSafe = mkView('safe');
     const safeMsg = msgLine();
-    const teamList = scrollBox('max-height:calc(50vh - 120px)');
+    const teamList = scrollBox('max-height:max(90px,calc(var(--st-h,100vh) / 2 - 140px))');
     const neverHead = el('div', 'font-weight:700;margin-top:10px', '🚫 Never message these people');
     const neverList = el('div', 'font-size:12px;margin:4px 0');
     const neverAdd = el('input', FULL + 'padding:6px 7px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff');
@@ -1791,7 +1923,7 @@
     const editMsg = msgLine();
     const EDIT_HINT = 'Use {first} for the tech\'s first name. Saved in this browser.';
     editMsg.textContent = EDIT_HINT;
-    const ed = listEditor('message', 'Button name (e.g. ☀️ Good Morning)', 'Message text', 'calc(100vh - 300px)');
+    const ed = listEditor('message', 'Button name (e.g. ☀️ Good Morning)', 'Message text', room(300));
     const openEditor = () => { ed.load(list); sub('edit'); };
     const editNav = row();
     editNav.append(
@@ -1810,7 +1942,7 @@
 
     // ===== Confirm =====
     const vConfirm = mkView('confirm');
-    const confText = el('div', 'font-size:12px;white-space:pre-wrap;max-height:calc(100vh - 330px);overflow:auto;border:1px solid #ddd;border-radius:6px;padding:6px;background:#fafafa');
+    const confText = el('div', 'font-size:12px;white-space:pre-wrap;max-height:' + room(330) + ';overflow:auto;border:1px solid #ddd;border-radius:6px;padding:6px;background:#fafafa');
     const confAsk = el('div', 'font-size:12px;margin-top:8px');
     const confInput = el('input', 'width:70px;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff;margin-left:6px');
     confInput.type = 'text'; confInput.id = 'st-msg-confirm-count'; confInput.inputMode = 'numeric';
@@ -2052,9 +2184,7 @@
     const undoBtn = smallBtn('↩ Put back', () => askConfirm('putback'));
     progRow.append(stopBtn, copyBtn, undoBtn);
     progress.append(log, progRow);
-    const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
-    navRow.append(smallBtn('← Menu', () => { if (!running) showView('menu'); }));
-    wrap.append(msg, toRow, picker.box, actions, confirmBox, progress, navRow);
+    wrap.append(msg, toRow, picker.box, actions, confirmBox, progress);
     bizPane.appendChild(wrap);
 
     let running = false, stop = false;
@@ -2348,7 +2478,7 @@
   const texts = (() => {
     const TOOL = 'Customer Texts';
     const BOX = 'textarea.cht-response-input';
-    const K = { folders: 'stCtFolders', folder: 'stCtFolder', pick: 'stCtPick', mode: 'stCtMode', name: 'stCtName', all: 'stCtAllMobiles', never: 'stCtNever', types: 'stCtTypes', source: 'stCtSource' };
+    const K = { folders: 'stCtFolders', folder: 'stCtFolder', pick: 'stCtPick', mode: 'stCtMode', name: 'stCtName', all: 'stCtAllMobiles', never: 'stCtNever', types: 'stCtTypes', source: 'stCtSource', sections: 'stCtSec' };
     const loadJSON = (k, d) => { try { const v = JSON.parse(get(k)); return v == null ? d : v; } catch (e) { return d; } };
     const showNum = d => d ? '…' + String(d).slice(-4) : '?';
     const s1 = plural;
@@ -2467,7 +2597,7 @@
     // ---------- UI ----------
     const pane = el('div', 'padding:8px 10px 10px');
     const views = {};
-    const sub = name => { Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; }); };
+    const sub = name => { Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; }); toTop(); };
     const mkView = name => { views[name] = el('div', 'display:none'); pane.appendChild(views[name]); return views[name]; };
     const msgLine = () => el('div', 'font-size:12px;color:#444;margin-bottom:6px;min-height:16px;white-space:pre-wrap');
     const head = text => el('div', 'font-weight:700;margin-bottom:4px', text);
@@ -2504,14 +2634,45 @@
     const whoBox = el('div', 'margin-top:4px');
     const modeRow = el('div', 'display:grid;gap:1px');
     const startBtn = smallBtn('Start', () => openConfirm(), PRIMARY + 'margin-top:10px;' + FULL + 'padding:8px');
-    const mainNav = row();
-    mainNav.append(
-      smallBtn('← Menu', () => { if (!running) showView('menu'); }),
+    const mainNav = moreRow([], [
       smallBtn('✏️ Edit messages', () => openEditor()),
       smallBtn('📁 Edit folders', () => openFolders()),
       smallBtn('⚙️ Settings', () => openSettings())
-    );
-    vMain.append(mainMsg, label('Folder'), folderRow, ruleLine, label('Message'), msgList, label('Who'), whoRow, whoBox, label('How'), modeRow, startBtn, mainNav);
+    ]);
+    // Three steps you can fold up: ① Message ② Who ③ How. A folded step shows a summary.
+    const secOpen = Object.assign({ msg: true, who: true, how: false }, loadJSON(K.sections, {}) || {});
+    const section = (key, title) => {
+      const wrap = el('div');
+      wrap.className = 'st-sec';
+      const headBtn = el('button');
+      headBtn.type = 'button'; headBtn.className = 'st-sec-head';
+      headBtn.setAttribute('data-sec', key);
+      const arrow = el('span', 'width:10px;flex:none;color:#5a6270');
+      const sum = el('span');
+      sum.className = 'st-sec-sum';
+      headBtn.append(arrow, el('span', '', title), sum);
+      headBtn.addEventListener('mousedown', e => e.preventDefault());
+      const inner = el('div');
+      inner.className = 'st-sec-body';
+      const paint = () => {
+        const on = !!secOpen[key];
+        inner.style.display = on ? 'block' : 'none';
+        arrow.textContent = on ? '▾' : '▸';
+        headBtn.setAttribute('aria-expanded', String(on));
+        headBtn.title = on ? 'Fold this step up' : 'Open this step';
+        sum.style.visibility = on ? 'hidden' : 'visible';
+      };
+      headBtn.onclick = () => { secOpen[key] = !secOpen[key]; set(K.sections, JSON.stringify(secOpen)); paint(); };
+      wrap.append(headBtn, inner);
+      paint();
+      return { wrap, inner, sum };
+    };
+    const secMsg = section('msg', '① Message'), secWho = section('who', '② Who'), secHow = section('how', '③ How');
+    msgList.style.marginTop = '6px';
+    secMsg.inner.append(folderRow, ruleLine, msgList);
+    secWho.inner.append(whoRow, whoBox);
+    secHow.inner.append(modeRow);
+    vMain.append(mainMsg, secMsg.wrap, secWho.wrap, secHow.wrap, startBtn, mainNav);
     const say = s => { mainMsg.textContent = s; };
 
     let stopRun = false, running = false, stepResolve = null;
@@ -2635,6 +2796,9 @@
       const ok = onBoard() && r.length > 0 && !!m;
       startBtn.disabled = !ok; startBtn.style.opacity = ok ? '1' : '.5';
       startBtn.textContent = (mode === 'auto' ? 'Review and send to ' : 'Start (type only): ') + s1(r.length, 'customer');
+      secMsg.sum.textContent = f.name + ' · ' + (m ? m[0] || '(no name)' : 'no message');
+      secWho.sum.textContent = (source === 'holds' ? (holds ? 'Hold list' : 'Hold list (not loaded)') : 'Jobs I pick') + ' · ' + s1(r.length, 'customer');
+      secHow.sum.textContent = mode === 'auto' ? 'Auto-send' : 'Type only';
       picker.render();   // the list and its highlights
       if (!onBoard()) say('Open the Dispatch board to use this.');
       else if (m && uses(m[1], 'dispatcher') && !myName()) say('⚠️ This message uses {dispatcher}, but your name couldn\'t be found. Set it in ⚙️ Settings.');
@@ -2646,7 +2810,7 @@
     const editHead = head('');
     const editMsg = msgLine();
     const EDIT_HINT = 'Fill-ins: {dispatcher} = your first name, {first} = customer\'s first name, {tech} = the tech\'s first name (jobs on the board only). Saved in this browser.';
-    const ed = listEditor('message', 'Button name (e.g. 🆓 Free quote)', 'Message text', 'calc(100vh - 320px)', { allowEmpty: true });
+    const ed = listEditor('message', 'Button name (e.g. 🆓 Free quote)', 'Message text', room(320), { allowEmpty: true });
     const editNav = row();
     editNav.append(
       smallBtn('Save', () => {
@@ -2664,7 +2828,7 @@
     // ===== Edit folders =====
     const vFolders = mkView('folders');
     const foldMsg = msgLine();
-    const foldBox = el('div', 'max-height:calc(100vh - 300px);overflow:auto;margin:0 -4px;padding:0 4px');
+    const foldBox = el('div', 'max-height:' + room(300) + ';overflow:auto;margin:0 -4px;padding:0 4px');
     let draftF = [];
     const renderFolders = () => {
       foldBox.textContent = '';
@@ -2753,7 +2917,7 @@
     // repeat rule, blocked in ServiceTitan). This screen then shows exactly who will be texted.
     const vConfirm = mkView('confirm');
     const confHead = head('Check before texting');
-    const confText = el('div', 'font-size:12px;white-space:pre-wrap;max-height:calc(100vh - 340px);overflow:auto;border:1px solid #ddd;border-radius:6px;padding:6px;background:#fafafa');
+    const confText = el('div', 'font-size:12px;white-space:pre-wrap;max-height:' + room(340) + ';overflow:auto;border:1px solid #ddd;border-radius:6px;padding:6px;background:#fafafa');
     const confAsk = el('div', 'font-size:12px;margin-top:8px');
     const confInput = el('input', 'width:70px;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff;margin-left:6px');
     confInput.type = 'text'; confInput.inputMode = 'numeric'; confInput.id = 'st-ct-confirm-count';
@@ -3179,29 +3343,135 @@
   })();
 
   // ===================================================================
-  // Dragging, closing, and starting up
+  // Moving, resizing, minimizing, closing, and starting up
+  // The panel hangs from the screen edge it's nearest to (top or bottom), so it grows away from
+  // that edge and never runs off the screen. Its place, size and minimized state are remembered.
   // ===================================================================
+  const M = 8;                              // gap kept between the panel and the window's edge
+  const W0 = 300, MIN_W = 260, MIN_H = 160; // normal width; smallest size the corner can drag to
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  let size = (() => { const s = (get('stSize') || '').split(',').map(Number); return { w: s[0] > 0 ? s[0] : 0, h: s[1] > 0 ? s[1] : 0 }; })();
+  // Where it sits: { x, top } or { x, bottom } (px from that edge). null = bottom-right corner.
+  let spot = (() => {
+    const p = (get('stPos') || get('qnPos') || '').split(',').map(Number);
+    if (p.length !== 2 || !p.every(n => isFinite(n))) return null;
+    const d = get('stDock') || '';
+    if (/^b:\d+$/.test(d)) return { x: p[0], bottom: Number(d.slice(2)) };
+    return { x: p[0], top: p[1], old: d !== 't' };   // old: saved by an older version (top-left corner)
+  })();
+  let minimized = get('stMin') === '1';
+  const place = () => {
+    const W = innerWidth, H = innerHeight;
+    const w = Math.min(Math.max(size.w || W0, MIN_W), Math.max(200, W - 2 * M));
+    panel.style.width = w + 'px';
+    panel.style.left = clamp(spot ? spot.x : W - w - 16, M, Math.max(M, W - w - M)) + 'px';
+    panel.style.right = 'auto';
+    const keep = Math.min(240, H - 2 * M);   // always leave at least this much height to show
+    let roomH;
+    if (spot && spot.top != null) {
+      const y = clamp(spot.top, M, Math.max(M, H - M - keep));
+      panel.style.top = y + 'px'; panel.style.bottom = 'auto';
+      roomH = H - y - M;
+    } else {
+      const b = clamp(spot ? spot.bottom : 16, M, Math.max(M, H - M - keep));
+      panel.style.bottom = b + 'px'; panel.style.top = 'auto';
+      roomH = H - b - M;
+    }
+    panel.style.maxHeight = roomH + 'px';
+    const h = size.h && !minimized ? Math.min(Math.max(size.h, MIN_H), roomH) : 0;
+    panel.style.height = h ? h + 'px' : '';
+    panel.style.setProperty('--st-h', (h || roomH) + 'px');
+  };
+  const saveSpot = () => {
+    const r = panel.getBoundingClientRect();
+    set('stPos', Math.round(r.left) + ',' + Math.round(r.top));
+    set('stDock', spot.top != null ? 't' : 'b:' + Math.round(spot.bottom));
+  };
+  // Hang from the nearer edge (when it's about the same, keep the edge it had).
+  const dockNearest = () => {
+    const r = panel.getBoundingClientRect(), H = innerHeight;
+    const up = r.top, down = H - r.bottom;
+    const wasTop = !!(spot && spot.top != null);
+    const top = Math.abs(up - down) < 60 ? wasTop : up < down;
+    spot = top ? { x: Math.round(r.left), top: Math.round(r.top) } : { x: Math.round(r.left), bottom: Math.round(down) };
+    saveSpot();
+  };
+  const onResize = () => place();
+  window.addEventListener('resize', onResize);
+
+  // Move: drag the title bar.
   header.addEventListener('mousedown', e => {
-    if (e.target === closeX) return;
+    if (e.button !== 0 || (e.target.closest && e.target.closest('button'))) return;
     e.preventDefault();
     const r = panel.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+    let moved = false;
     const move = ev => {
-      panel.style.left = Math.min(Math.max(0, ev.clientX - dx), innerWidth - 120) + 'px';
-      panel.style.top = Math.min(Math.max(0, ev.clientY - dy), innerHeight - 40) + 'px';
-      panel.style.right = panel.style.bottom = 'auto';
+      if (!moved && Math.abs(ev.clientX - e.clientX) + Math.abs(ev.clientY - e.clientY) < 3) return;
+      if (!moved) { moved = true; panel.style.top = r.top + 'px'; panel.style.bottom = 'auto'; }   // held by its top-left corner while moving
+      panel.style.left = clamp(ev.clientX - dx, M, Math.max(M, innerWidth - r.width - M)) + 'px';
+      panel.style.top = clamp(ev.clientY - dy, M, Math.max(M, innerHeight - r.height - M)) + 'px';
     };
     const up = () => {
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
-      set('stPos', parseInt(panel.style.left, 10) + ',' + parseInt(panel.style.top, 10));
+      if (moved) { dockNearest(); place(); }
     };
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
   });
 
+  // Resize: drag the bottom-right corner. Double-click it to go back to the normal size.
+  grip.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    const r = panel.getBoundingClientRect(), sx = e.clientX, sy = e.clientY;
+    const maxW = Math.max(MIN_W, innerWidth - r.left - M), maxH = Math.max(MIN_H, innerHeight - r.top - M);
+    let w = r.width, h = r.height, moved = false;
+    const move = ev => {
+      if (!moved && Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 3) return;
+      if (!moved) { moved = true; panel.style.top = r.top + 'px'; panel.style.bottom = 'auto'; panel.style.maxHeight = maxH + 'px'; }
+      w = clamp(r.width + ev.clientX - sx, MIN_W, maxW);
+      h = clamp(r.height + ev.clientY - sy, MIN_H, maxH);
+      panel.style.width = w + 'px'; panel.style.height = h + 'px';
+      panel.style.setProperty('--st-h', h + 'px');
+    };
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      if (!moved) return;
+      size = { w: Math.round(w), h: Math.round(h) };
+      set('stSize', size.w + ',' + size.h);
+      // Stay hung from the same edge.
+      const b = panel.getBoundingClientRect();
+      spot = spot && spot.top != null ? { x: Math.round(b.left), top: Math.round(b.top) } : { x: Math.round(b.left), bottom: Math.round(innerHeight - b.bottom) };
+      saveSpot();
+      place();
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
+  grip.addEventListener('dblclick', () => { size = { w: 0, h: 0 }; set('stSize', ''); place(); });
+
+  // Minimize: just the title bar shows (runs keep going). – or double-click the title bar.
+  const setMin = on => {
+    minimized = !!on;
+    panel.classList.toggle('st-min', minimized);
+    minBtn.textContent = minimized ? '▢' : '–';
+    minBtn.title = minimized ? 'Restore' : 'Minimize (double-click the title bar works too)';
+    set('stMin', minimized ? '1' : '0');
+    place();
+  };
+  minBtn.onclick = () => setMin(!minimized);
+  header.addEventListener('dblclick', e => { if (!(e.target.closest && e.target.closest('button'))) setMin(!minimized); });
+  // Picking a tool while minimized opens the panel back up.
+  homeBtn.addEventListener('click', () => { if (minimized) setMin(false); });
+
+  // Keeps the tabs in step with runs (a running tool locks the others).
+  const navTimer = setInterval(syncNav, 400);
+
   // Closing while a tool is running (Job Notifications, Tech Messages, Business Unit or Customer Texts) would
   // hide the panel but leave the run going in the background. So ask first, stop the run, then close.
-  const closeBar = el('div', 'display:none;padding:8px 12px;background:#fdecec;color:#7a1010;font-size:12px;border-bottom:1px solid #e0a0a8');
+  const closeBar = el('div', 'display:none;padding:8px 12px;background:#fdecec;color:#7a1010;font-size:12px;border-bottom:1px solid #e0a0a8;flex:none');
   const closeText = el('div', 'margin-bottom:6px');
   const closeBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
   closeBar.append(closeText, closeBtns);
@@ -3209,6 +3479,8 @@
   let closing = false;
   const finishClose = () => {
     PRESS_EVENTS.forEach(t => window.removeEventListener(t, pressGuard, true));
+    window.removeEventListener('resize', onResize);
+    clearInterval(navTimer);
     notes.cleanup();
     notify.cleanup();
     msgs.cleanup();
@@ -3242,7 +3514,10 @@
   window.__stToolbox = { version: VERSION, close };
 
   document.body.appendChild(panel);
+  setMin(minimized);
   const startView = get('stView');
   showView(['notes', 'jobs', 'msgs', 'biz', 'texts'].indexOf(startView) > -1 ? startView : 'menu');
+  // A place saved by an older version was the top-left corner: from now on, hang from the nearer edge.
+  if (spot && spot.old) { dockNearest(); place(); }
   health.checkBoard(false);
 })();

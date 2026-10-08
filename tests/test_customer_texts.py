@@ -35,6 +35,18 @@ def tick_group(page, name):
 def sent(page):
     return page.evaluate("() => window.SENT.slice()")
 
+def more(page, text):
+    """A button tucked behind ⋯ More."""
+    if not B(page, text).count():
+        page.locator('#st-toolbox [data-act="more"]:visible').click()
+    return B(page, text)
+
+def mode(page, text):
+    """Picks Type only or Auto-send, in the ③ How step (opened first if it's folded up)."""
+    sec = page.locator('#st-toolbox [data-sec="how"]:visible')
+    if sec.get_attribute('aria-expanded') != 'true': sec.click()
+    page.locator('#st-toolbox label:visible', has_text=text).locator('input').check()
+
 def back_to_main(page):
     if B(page, '← Back').count(): B(page, '← Back').click()
 
@@ -79,7 +91,7 @@ with sync_playwright() as p:
     check('Quote - Generator (3)' in panel_text(page), 'group expands to show job types')
 
     # Everyone is checked before anything is typed; the confirm screen shows the real count
-    page.locator('#st-toolbox label:visible', has_text='Auto-send').locator('input').check()
+    mode(page, 'Auto-send')
     t0 = time.time()
     t = review(page, 'Review and send to 11 customers')
     check(time.time() - t0 < 8, 'checking 11 customers took %.1fs' % (time.time() - t0))
@@ -147,7 +159,7 @@ with sync_playwright() as p:
     t = panel_text(page)
     check('Skips anyone who got this same message today.' in t, 'Tech Updates rule: same message today')
     check(page.locator('#st-toolbox input[type=radio][value]').count() >= 0, 'ok')
-    page.locator('#st-toolbox label:visible', has_text='Type only').locator('input').check()
+    mode(page, 'Type only')
     B(page, 'Pick on board').click()
     page.click('a.appointment[data-job-id="6001"]')
     page.click('a.appointment[data-job-id="6002"]')
@@ -197,7 +209,7 @@ with sync_playwright() as p:
     # {tech} message added via the editor; job with no tech is skipped
     back_to_main(page)
     B(page, '🚚 Tech Updates').click()
-    B(page, 'Edit messages').click()
+    more(page, 'Edit messages').click()
     B(page, '+ Add a message').click()
     page.locator('#st-toolbox input:visible[placeholder^="Button name"]').last.fill('🚗 On the way')
     page.locator('#st-toolbox textarea[placeholder="Message text"]').last.fill('Hi {first}, this is {dispatcher}. {tech} is on the way!')
@@ -205,7 +217,7 @@ with sync_playwright() as p:
     B(page, '🚗 On the way').click()
     B(page, 'Clear').click()
     add_jobs(page, '6003 6001')
-    page.locator('#st-toolbox label:visible', has_text='Auto-send').locator('input').check()
+    mode(page, 'Auto-send')
     review(page, 'Review and send to 2 customers')
     page.fill('#st-ct-confirm-count', '1')
     B(page, 'Send 1 text').click()
@@ -216,7 +228,7 @@ with sync_playwright() as p:
 
     # Settings: every mobile + never-text list
     back_to_main(page)
-    B(page, 'Settings').click()
+    more(page, 'Settings').click()
     page.locator('#st-toolbox label:visible', has_text='Text every mobile number').locator('input').check()
     page.fill('#st-toolbox textarea[placeholder="One phone number per line"]', '(601) 555-0112')
     B(page, 'Save').click()
@@ -233,7 +245,7 @@ with sync_playwright() as p:
 
     # Edit folders: change the Holds rule
     back_to_main(page)
-    B(page, 'Edit folders').click()
+    more(page, 'Edit folders').click()
     page.locator('#st-toolbox input[type=number]').first.fill('0')
     B(page, 'Save').click()
     B(page, '⏸️ Holds').click()
@@ -262,7 +274,7 @@ with sync_playwright() as p:
     page.fill('#st-ct-confirm-count', n)
     B(page, 'Send ' + n + ' texts').click()
     time.sleep(2.5)
-    page.locator('#st-toolbox span', has_text='✕').first.click()
+    page.locator('#st-toolbox [data-act="close"]').click()
     check('Customer Texts is still running' in panel_text(page), 'closing mid-run asks first')
     B(page, 'Keep running').click()
     B(page, 'Stop').click()
@@ -303,11 +315,11 @@ with sync_playwright() as p:
 
     # Other tools still open, then close cleanly
     back_to_main(page)
-    B(page, '← Menu').click()
+    page.locator('#st-toolbox [data-nav="menu"]').click()
     for t in ['Notes', 'Job Notifications', 'Tech Messages', 'Business Unit']:
         B(page, t).click()
         check(page.locator('#st-toolbox').is_visible(), t + ' opens')
-        page.evaluate("() => { const b = Array.from(document.querySelectorAll('#st-toolbox button')).find(b => /Menu/.test(b.textContent) && b.offsetParent); if (b) b.click(); }")
+        page.locator('#st-toolbox [data-nav="menu"]').click()
     page.evaluate("() => window.__stToolbox.close()")
     page.click('a.appointment[data-job-id="6001"]')
     check(page.evaluate("() => window.opened.length") == 1, 'board clicks normal after closing')

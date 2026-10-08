@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.2
+
+A new look that's easier to get around and stays out of the way. The tools themselves work the same.
+
+- **Tabs** across the top switch tools in one click (Notes, Notify, Techs, Units, Texts), and **⌂** goes Home. The ← Menu buttons are gone. While a tool is running, the other tabs wait until it's done.
+- **Home** lists every tool with a line on what it does, plus 🩺 Check.
+- **Resize** by dragging the bottom-right corner (double-click it for the normal size). **– Minimize**, or double-click the title bar, shrinks the Toolbox to its title bar while runs keep going; **● Running** shows in the title bar during a run.
+- **Always on screen.** It remembers where you put it, its size and whether it's minimized. Near the bottom of the screen it grows upward, near the top it grows downward, and it moves back on screen if the window gets smaller. Long screens scroll inside the panel, and long lists size themselves to the panel.
+- **⋯ More** holds the less-used buttons: Edit messages and Who can be messaged in 💬 Tech Messages; Edit messages, Edit folders and Settings in 📱 Customer Texts. Until Tech Messages is set up, a **🛡️ Set up** button shows on its main screen.
+- **📱 Customer Texts** is in three steps you can fold up: **① Message**, **② Who** and **③ How**. A folded step shows a summary (for example "Hold list · 11 customers"). ③ How starts folded.
+- Added tests for the panel (`tests/test_panel.py`).
+
 ## 1.5.1
 
 Faster and steadier. Nothing works differently for you except that it's quicker and tells you more.
