@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.3
+
+- **Fix: 📝 Notes opened a "This Page Could Not Be Found" page** and showed the yellow "Can't find the Add Note button" warning. When you click a job, ServiceTitan's job panel first shows a blank link to customer #0 for about a second while the job loads. Notes followed that blank link if you picked the note first, or picked it right after clicking the job. Notes now waits for the real customer (it says "Job loading..." meanwhile).
+- If ServiceTitan really can't open a customer (for example a merged or deleted record), Notes now says so within a second instead of waiting 20 seconds and blaming a ServiceTitan change.
+- The "job panel doesn't show the customer link" warning no longer fires while a job panel is still loading.
+- Added tests for Notes (`tests/test_notes.py`).
+
 ## 1.5.2
 
 Steadier when ServiceTitan or the board changes during a run. Nothing works differently when everything is normal.

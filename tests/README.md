@@ -12,6 +12,7 @@ python3 tests/run_all.py
 
 | File | What it checks |
 |---|---|
+| `test_notes.py` | 📝 Notes: note first or job first, a job panel still loading, a merged customer ("Page Could Not Be Found") |
 | `test_business_unit.py` | 🏢 Business Unit: picking, check, change, put back, locked jobs, errors, pop-ups, Stop |
 | `test_job_notifications.py` | 🔕 Job Notifications: a tech's jobs, picked jobs, the job list, scrolling, highlights |
 | `test_tech_messages.py` | 💬 Tech Messages: picking techs on the board, 🛡️ rules, highlights |

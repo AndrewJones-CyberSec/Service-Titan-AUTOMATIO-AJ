@@ -18,8 +18,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.5.2';
+  const VERSION = '1.5.3';
   const WHATS_NEW = {
+    '1.5.3': 'Fix: 📝 Notes no longer opens a "This Page Could Not Be Found" page. When you click a job, ServiceTitan shows a blank customer link for about a second while the job loads; Notes now waits for the real customer instead of following the blank one.',
     '1.5.2': 'Steadier runs: Stop works right away, even while jobs are still being read. If ServiceTitan signs you out, a run stops and says so. If ServiceTitan is slow, the Toolbox eases off. Customer Texts skips a hold that has been booked since you loaded the list.',
     '1.5.1': 'Faster and smarter: Check jobs in Job Notifications and Business Unit now takes seconds instead of minutes, and Customer Texts checks everyone before it starts, so you see exactly who will be texted (and who is skipped, and why). Every job-picking tool also has + All in the list.',
     '1.5': 'New: 📱 Customer Texts. Text customers a saved message from folders (Holds, Tech Updates, Reschedule). Load every hold at once and filter by job type, or pick jobs on the board. {dispatcher} fills in your first name. Also: Tech Messages can pick techs by clicking them on the board, Job Notifications can work on jobs you pick, and every tool can pick from the Unassigned / Hold list.',
@@ -702,13 +703,15 @@
     const openDrawers = () => Array.from(document.querySelectorAll('.Drawer--open'));
     const noteDrawer = () => openDrawers().find(d => d.querySelector('[data-tracking-id="add-note-button"]')) || null;
     const noteBox = () => { const d = noteDrawer(); return d ? d.querySelector('textarea') : null; };
-    const jobCustomerLink = () => {
-      for (const d of openDrawers()) {
-        const a = d.querySelector('a[href^="#/Customer/"], a[href^="#/customer/"]');
-        if (a) return a;
-      }
-      return null;
-    };
+    const customerLinks = () => openDrawers().flatMap(d => Array.from(d.querySelectorAll('a[href^="#/Customer/"], a[href^="#/customer/"]')));
+    const linkCustId = a => parseInt(((a.getAttribute('href') || '').match(/^#\/customer\/(\d+)/i) || [])[1], 10) || 0;
+    // While a job panel is still loading, ServiceTitan shows a blank placeholder link to
+    // customer #0 for about a second. Only a link to a real customer counts.
+    const jobCustomerLink = () => customerLinks().find(a => linkCustId(a) > 0) || null;
+    const jobLoading = () => !jobCustomerLink() && customerLinks().length > 0;
+    // ServiceTitan's "This Page Could Not Be Found" page (shown for a merged or deleted record).
+    // Reads the page only, not the Toolbox panel.
+    const notFoundPage = () => Array.from(document.body.children).some(c => c.id !== ID && /This Page Could Not Be Found/i.test(c.innerText || ''));
     const onCustomerPage = id => { const m = location.hash.match(/#\/customer\/(\d+)/i); return m && (!id || m[1] === id); };
     const addNoteBtn = () => {
       const b = document.querySelector('button[data-tracking-id="crm-notes-add-note-button"]') ||
@@ -750,7 +753,7 @@
     const bottomRow = el('div', 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px');
     main.append(msg, crumb, btnList, stampRow, bottomRow);
 
-    let busy = false, boardHash = null, armed = null;
+    let busy = false, boardHash = null, armed = null, noLinkTicks = 0;
 
     // A list button in the same style everywhere in Notes.
     const listBtn = (label, title, onClick, highlight) => {
@@ -805,25 +808,29 @@
     const build = text => (stamp.checked ? stampText() + ' - ' : '') + text;
 
     // Waits until the Add Note button has stopped changing (the page has finished drawing it).
+    // Stops early if ServiceTitan shows its "This Page Could Not Be Found" page instead.
     const steadyAddNoteBtn = async max => {
       const end = Date.now() + max;
-      let last = null, since = 0;
+      let last = null, since = 0, n = 0;
       while (Date.now() < end) {
         const b = addNoteBtn();
         if (b && b === last) { if (Date.now() - since >= 500) return b; }
         else { last = b; since = Date.now(); }
+        if (!b && ++n % 10 === 0 && notFoundPage()) return null;
         await wait(100);
       }
       return addNoteBtn();
     };
 
     // Clicks Add Note, and clicks again if the box doesn't open (up to 4 tries).
+    // Returns true, false, or 'notfound' (ServiceTitan couldn't open the customer).
     const openNoteBox = async () => {
       for (let attempt = 1; attempt <= 4; attempt++) {
         if (noteBox()) return true;
         const b = await steadyAddNoteBtn(attempt === 1 ? 20000 : 5000);
         if (!b) {
           if (noteBox()) return true;
+          if (notFoundPage()) return 'notfound';
           health.flag('Notes', 'can\'t find the Add Note button on the customer page', 'button[data-tracking-id="crm-notes-add-note-button"]');
           return false;
         }
@@ -888,7 +895,12 @@
 
         // 2. A job is open on the board: go to its customer (the name on the left).
         if (!onCustomerPage()) {
-          const link = jobCustomerLink();
+          let link = jobCustomerLink();
+          if (!link && jobLoading()) {
+            say('Waiting for the job to finish loading...');
+            link = await until(jobCustomerLink, 10000, 100);
+            if (!link) return say('⚠️ The job is still loading. Pick the note again in a moment.');
+          }
           if (!link) {
             // On the board with no job open yet: hold this note and add it when a job is clicked.
             if (onBoard()) {
@@ -913,7 +925,9 @@
 
         // 3. On the customer page: click Add Note (retrying if the page ignores it) and fill it.
         say('Opening Add Note...');
-        if (!await openNoteBox()) return say('⚠️ Couldn\'t open the Add Note box. Click Add Note on the page, then pick the note again.' + CHANGED);
+        const opened = await openNoteBox();
+        if (opened === 'notfound') return say('⚠️ ServiceTitan couldn\'t open this customer (it shows "This Page Could Not Be Found"). Go back to the board, click the job again, then pick the note.');
+        if (!opened) return say('⚠️ Couldn\'t open the Add Note box. Click Add Note on the page, then pick the note again.' + CHANGED);
         await fill(note);
         if (/^✅/.test(msg.textContent)) health.clear('Notes');
       } catch (e) {
@@ -933,13 +947,15 @@
         else { armed = null; renderList(); }
         return;
       }
-      if (!jobCustomerLink() && openDrawers().some(d => /Job #\d+/.test(d.textContent || ''))) {
-        health.flag('Notes', 'the job panel doesn\'t show the customer link where expected', '.Drawer--open a[href^="#/Customer/"]');
-      }
+      // Only after a few checks in a row, so a job panel that's still loading doesn't count.
+      const noLink = !jobCustomerLink() && !jobLoading() && openDrawers().some(d => /Job #\d+/.test(d.textContent || ''));
+      noLinkTicks = noLink ? noLinkTicks + 1 : 0;
+      if (noLinkTicks >= 3) health.flag('Notes', 'the job panel doesn\'t show the customer link where expected', '.Drawer--open a[href^="#/Customer/"]');
       const pick = open < 0 ? 'Pick a folder, then a note.' : 'Pick a note.';
       if (noteBox()) say('Add Note box is open. ' + pick);
       else if (onCustomerPage()) say(pick + ' It goes on this customer.');
       else if (jobCustomerLink()) say('Job selected. ' + pick);
+      else if (jobLoading()) say('Job loading... ' + pick);
       else if (!/^(✅|⚠️)/.test(msg.textContent)) say(open < 0 ? 'Pick a folder. Then click a job and a note (either order).' : 'Click a job, then pick a note (or the other way round).');
     };
 

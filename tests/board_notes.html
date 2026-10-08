@@ -1,0 +1,68 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Mock ServiceTitan (Notes)</title>
+<style>
+  body{font:13px sans-serif;margin:0}
+  .appointment{display:inline-block;margin:4px;padding:6px 10px;background:#cfe;border:1px solid #9c9;cursor:pointer;color:#000;text-decoration:none}
+  .Drawer{position:fixed;top:60px;left:20px;width:320px;background:#fff;border:1px solid #333;padding:10px}
+</style>
+<script>
+  // Jobs on the board and the customer each one belongs to. A customer listed in GONE has been
+  // merged or deleted, so ServiceTitan shows its "This Page Could Not Be Found" page for it.
+  window.JOBS = { 7001: [5001, 'Pat Customer'], 7002: [5002, 'Sam Customer'], 7003: [5999, 'Merged Customer'] };
+  window.GONE = { 0: true, 5999: true };
+  // Like the real job panel: for DRAWER_DELAY ms it shows a blank link to customer #0, then the real one.
+  window.DRAWER_DELAY = 1000;
+  window.custOpened = [];
+  const closeDrawers = () => document.querySelectorAll('.Drawer').forEach(d => d.remove());
+  function openJob(j) {
+    closeDrawers();
+    const d = document.createElement('div');
+    d.className = 'Drawer Drawer--open';
+    d.innerHTML = '<div>Job #' + j + '</div><a href="#/Customer/0"></a>';
+    document.body.appendChild(d);
+    setTimeout(() => {
+      if (!document.contains(d)) return;
+      const [c, name] = JOBS[j];
+      d.innerHTML = '<div>Job #' + j + '</div><a href="#/Customer/' + c + '">' + name + '</a> <a href="#/Location/' + (c + 1) + '">' + name + '</a>';
+    }, window.DRAWER_DELAY);
+  }
+  function render() {
+    const h = location.hash.split('?')[0];
+    const root = document.getElementById('root');
+    root.innerHTML = '';
+    closeDrawers();
+    let m;
+    if (/^#\/DispatchBoard/i.test(h)) {
+      root.innerHTML = '<div class="team-container"><div class="team-name">Install HVAC</div>' +
+        '<div class="technician" data-technician-id="1"><span class="name">Tech One</span></div>' +
+        '<div id="team-timeline-row-1">' + Object.keys(JOBS).map(j =>
+          '<a class="appointment" data-job-id="' + j + '" data-technician-id="1">Job ' + j + '</a>').join('') + '</div></div>';
+      root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => openJob(a.getAttribute('data-job-id'))));
+    } else if ((m = /^#\/customer\/(\d+)/i.exec(h))) {
+      const c = Number(m[1]);
+      // ServiceTitan rewrites #/Customer/ to #/customer/.
+      if (h.indexOf('#/Customer/') === 0) { location.replace('#/customer/' + c); return; }
+      window.custOpened.push(c);
+      setTimeout(() => {
+        if (location.hash.split('?')[0] !== h) return;
+        if (GONE[c]) {
+          root.innerHTML = '<h1>This Page Could Not Be Found</h1><p>The link may be out of date, or the record may have been deleted or merged.</p>';
+          return;
+        }
+        root.innerHTML = '<h2>Customer ' + c + '</h2><button data-tracking-id="crm-notes-add-note-button">Add Note</button>';
+        root.querySelector('button').addEventListener('click', () => {
+          if (document.querySelector('.Drawer--open')) return;
+          const d = document.createElement('div');
+          d.className = 'Drawer Drawer--open';
+          d.innerHTML = '<textarea></textarea><button data-tracking-id="add-note-button" disabled>Add Note</button>';
+          const t = d.querySelector('textarea'), s = d.querySelector('button');
+          t.addEventListener('input', () => { s.disabled = !t.value.trim(); });
+          document.body.appendChild(d);
+        });
+      }, 300);
+    }
+  }
+  addEventListener('hashchange', render);
+  addEventListener('DOMContentLoaded', render);
+</script></head>
+<body><div id="root"></div></body></html>
