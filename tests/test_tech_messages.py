@@ -38,7 +38,7 @@ with sync_playwright() as p:
     page.click('a.appointment[data-job-id="7001"]')
     check(page.evaluate("() => window.opened") == ['job7001'], 'job bubbles not captured by Tech Messages picking')
     page.evaluate("() => { window.opened = []; }")
-    page.locator('#st-toolbox .st-body button:visible', has_text='✕').last.click()
+    page.locator('#st-toolbox .tbx-body button:visible', has_text='✕').last.click()
     check('nobody picked yet' in T(page), '✕ in the list removes a tech')
     # 👥 Choose techs and the board list are the same selection
     B(page, 'Choose techs').click()

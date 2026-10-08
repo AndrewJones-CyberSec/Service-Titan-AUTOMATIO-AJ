@@ -186,8 +186,8 @@ with sync_playwright() as p:
     # Other tools still open
     page.locator('#st-toolbox [data-nav="menu"]').click()
     for t in ['Notes', 'Job Notifications', 'Tech Messages']:
-        page.locator('#st-toolbox .st-card', has_text=t).click()
-        check(page.locator('#st-toolbox').is_visible() and t in page.locator('#st-toolbox .st-title').inner_text(), t + ' view opens')
+        page.locator('#st-toolbox .tbx-card', has_text=t).click()
+        check(page.locator('#st-toolbox').is_visible() and t in page.locator('#st-toolbox .tbx-title').inner_text(), t + ' view opens')
         page.locator('#st-toolbox [data-nav="menu"]').click()
 
     # Closing removes the board hook

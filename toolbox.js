@@ -248,43 +248,46 @@
   // The look of the panel's frame. Everything is scoped to the panel, so the page is untouched.
   const sheet = el('style');
   sheet.textContent = [
+    // The page's own styles must not reach in (ServiceTitan uses some of the same kinds of names).
+    '#ID .tbx-head button,#ID .tbx-tabs button,#ID .tbx-card,#ID .tbx-sec-head{margin:0;box-sizing:border-box;text-transform:none;letter-spacing:normal;min-width:0;min-height:0;box-shadow:none;float:none}',
+    '#ID .tbx-card>*,#ID .tbx-tab>*{margin:0;padding:0;display:block}',
     '#ID button:focus-visible{outline:2px solid #1a6ed8;outline-offset:1px}',
     '#ID button:disabled{cursor:default}',
-    '#ID .st-head{display:flex;align-items:center;gap:2px;padding:6px 6px 6px 12px;background:#1f2933;color:#fff;cursor:move;user-select:none;flex:none}',
-    '#ID .st-title{flex:1;min-width:0;display:flex;align-items:baseline;gap:6px;font-weight:700;white-space:nowrap;overflow:hidden}',
-    '#ID .st-title>span:first-child{overflow:hidden;text-overflow:ellipsis}',
-    '#ID .st-ver{font-weight:400;font-size:11px;opacity:.65}',
-    '#ID .st-run{display:none;flex:none;margin-right:4px;padding:1px 7px;border-radius:9px;background:#f9a825;color:#1f2933;font-size:11px;font-weight:700}',
-    '#ID .st-hbtn{flex:none;width:28px;height:26px;padding:0;border:0;border-radius:6px;background:transparent;color:#fff;font:inherit;font-size:15px;line-height:26px;text-align:center;cursor:pointer;opacity:.85}',
-    '#ID .st-hbtn:hover:not(:disabled){background:rgba(255,255,255,.16);opacity:1}',
-    '#ID .st-hbtn:disabled{opacity:.3}',
-    '#ID .st-hbtn.on{background:rgba(255,255,255,.14)}',
-    '#ID .st-tabs{display:flex;gap:2px;padding:4px 5px;background:#eef0f3;border-bottom:1px solid #dde0e5;flex:none}',
-    '#ID .st-tab{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:1px;padding:4px 1px 3px;border:0;border-radius:7px;background:transparent;color:#4a5361;font:inherit;font-size:10.5px;line-height:1.2;cursor:pointer}',
-    '#ID .st-tab b{font-size:15px;line-height:1.1;font-weight:400}',
-    '#ID .st-tab:hover:not(:disabled){background:#e1e4e9;color:#111}',
-    '#ID .st-tab.on{background:#fff;color:#111;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.14),inset 0 -2px 0 #1a6ed8}',
-    '#ID .st-tab:disabled{opacity:.35;cursor:not-allowed}',
-    '#ID .st-body{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}',
-    '#ID .st-body::-webkit-scrollbar{width:9px}',
-    '#ID .st-body::-webkit-scrollbar-thumb{background:#c5cad2;border-radius:9px;border:2px solid #fff}',
-    '#ID .st-grip{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;z-index:2;' +
+    '#ID .tbx-head{display:flex;align-items:center;gap:2px;padding:6px 6px 6px 12px;background:#1f2933;color:#fff;cursor:move;user-select:none;flex:none}',
+    '#ID .tbx-title{flex:1;min-width:0;display:flex;align-items:baseline;gap:6px;font-weight:700;white-space:nowrap;overflow:hidden}',
+    '#ID .tbx-title>span:first-child{overflow:hidden;text-overflow:ellipsis}',
+    '#ID .tbx-ver{font-weight:400;font-size:11px;opacity:.65}',
+    '#ID .tbx-run{display:none;flex:none;margin-right:4px;padding:1px 7px;border-radius:9px;background:#f9a825;color:#1f2933;font-size:11px;font-weight:700}',
+    '#ID .tbx-hbtn{flex:none;width:28px;height:26px;padding:0;border:0;border-radius:6px;background:transparent;color:#fff;font:inherit;font-size:15px;line-height:26px;text-align:center;cursor:pointer;opacity:.85}',
+    '#ID .tbx-hbtn:hover:not(:disabled){background:rgba(255,255,255,.16);opacity:1}',
+    '#ID .tbx-hbtn:disabled{opacity:.3}',
+    '#ID .tbx-hbtn.tbx-on{background:rgba(255,255,255,.14)}',
+    '#ID .tbx-tabs{display:flex;gap:2px;padding:4px 5px;background:#eef0f3;border-bottom:1px solid #dde0e5;flex:none}',
+    '#ID .tbx-tab{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:1px;padding:4px 1px 3px;border:0;border-radius:7px;background:transparent;color:#4a5361;font:inherit;font-size:10.5px;line-height:1.2;cursor:pointer}',
+    '#ID .tbx-tab b{font-size:15px;line-height:1.1;font-weight:400}',
+    '#ID .tbx-tab:hover:not(:disabled){background:#e1e4e9;color:#111}',
+    '#ID .tbx-tab.tbx-on{background:#fff;color:#111;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.14),inset 0 -2px 0 #1a6ed8}',
+    '#ID .tbx-tab:disabled{opacity:.35;cursor:not-allowed}',
+    '#ID .tbx-body{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}',
+    '#ID .tbx-body::-webkit-scrollbar{width:9px}',
+    '#ID .tbx-body::-webkit-scrollbar-thumb{background:#c5cad2;border-radius:9px;border:2px solid #fff}',
+    '#ID .tbx-grip{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;z-index:2;' +
       'background:linear-gradient(135deg,transparent 0 55%,#9aa1ab 55% 61%,transparent 61% 71%,#9aa1ab 71% 77%,transparent 77%)}',
-    '#ID.st-min .st-tabs,#ID.st-min .st-body,#ID.st-min .st-grip,#ID.st-min .st-bar{display:none !important}',
-    '#ID .st-cards{display:grid;gap:6px}',
-    '#ID .st-card{display:grid;grid-template-columns:30px 1fr;align-items:center;column-gap:8px;width:100%;padding:8px 10px;border:1px solid #d5d9df;border-radius:9px;background:#f8f9fb;color:#111;font:inherit;text-align:left;cursor:pointer}',
-    '#ID .st-card:hover{background:#eef3fb;border-color:#9dbbe8}',
-    '#ID .st-card b{grid-row:span 2;font-size:20px;font-weight:400;text-align:center}',
-    '#ID .st-card strong{font-size:13px}',
-    '#ID .st-card small{font-size:11.5px;color:#5a6270}',
-    '#ID .st-tip{font-size:11px;color:#6b7280}',
-    '#ID .st-sec{border:1px solid #dfe2e7;border-radius:8px;margin-top:8px}',
-    '#ID .st-sec-head{display:flex;align-items:center;gap:6px;width:100%;padding:6px 8px;border:0;border-radius:8px;background:#f5f6f8;color:#111;font:inherit;font-size:12px;text-align:left;cursor:pointer}',
-    '#ID .st-sec-head:hover{background:#eceef2}',
-    '#ID .st-sec-head[aria-expanded="true"]{border-radius:8px 8px 0 0;border-bottom:1px solid #dfe2e7}',
-    '#ID .st-sec-head span:nth-child(2){font-weight:700;flex:none}',
-    '#ID .st-sec-sum{flex:1;min-width:0;text-align:right;color:#5a6270;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-    '#ID .st-sec-body{padding:4px 8px 8px}'
+    '#ID.tbx-min .tbx-tabs,#ID.tbx-min .tbx-body,#ID.tbx-min .tbx-grip,#ID.tbx-min .tbx-bar{display:none !important}',
+    '#ID .tbx-cards{display:grid;gap:6px}',
+    '#ID .tbx-card{display:grid;grid-template-columns:30px 1fr;align-items:center;column-gap:8px;width:100%;padding:8px 10px;border:1px solid #d5d9df;border-radius:9px;background:#f8f9fb;color:#111;font:inherit;text-align:left;cursor:pointer}',
+    '#ID .tbx-card:hover{background:#eef3fb;border-color:#9dbbe8}',
+    '#ID .tbx-card b{grid-row:span 2;font-size:20px;font-weight:400;text-align:center}',
+    '#ID .tbx-card strong{font-size:13px}',
+    '#ID .tbx-card small{font-size:11.5px;color:#5a6270}',
+    '#ID .tbx-tip{font-size:11px;color:#6b7280}',
+    '#ID .tbx-sec{border:1px solid #dfe2e7;border-radius:8px;margin-top:8px}',
+    '#ID .tbx-sec-head{display:flex;align-items:center;gap:6px;width:100%;padding:6px 8px;border:0;border-radius:8px;background:#f5f6f8;color:#111;font:inherit;font-size:12px;text-align:left;cursor:pointer}',
+    '#ID .tbx-sec-head:hover{background:#eceef2}',
+    '#ID .tbx-sec-head[aria-expanded="true"]{border-radius:8px 8px 0 0;border-bottom:1px solid #dfe2e7}',
+    '#ID .tbx-sec-head span:nth-child(2){font-weight:700;flex:none}',
+    '#ID .tbx-sec-sum{flex:1;min-width:0;text-align:right;color:#5a6270;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '#ID .tbx-sec-body{padding:4px 8px 8px}'
   ].join('\n').replace(/#ID/g, '#' + ID);
   panel.appendChild(sheet);
   // Most screens scroll inside the panel; long lists use this much of its height (it follows the
@@ -468,18 +471,18 @@
   // Header: the tool's name, then ⌂ Home, – Minimize and ✕ Close. Drag it to move the panel;
   // double-click it to minimize.
   const header = el('div');
-  header.className = 'st-head';
+  header.className = 'tbx-head';
   const titleWrap = el('div');
-  titleWrap.className = 'st-title';
+  titleWrap.className = 'tbx-title';
   const titleText = el('span', '', '🧰 Toolbox');
   const verText = el('span', '', 'v' + VERSION);
-  verText.className = 'st-ver';
+  verText.className = 'tbx-ver';
   titleWrap.append(titleText, verText);
   const runBadge = el('span', '', '● Running');
-  runBadge.className = 'st-run';
+  runBadge.className = 'tbx-run';
   const headBtn = (text, title, act) => {
     const b = el('button', '', text);
-    b.type = 'button'; b.className = 'st-hbtn'; b.title = title;
+    b.type = 'button'; b.className = 'tbx-hbtn'; b.title = title;
     b.setAttribute(act[0], act[1]);
     b.addEventListener('mousedown', e => e.preventDefault());
     return b;
@@ -493,11 +496,11 @@
   const TABS = [['notes', '📝', 'Notes', 'Notes'], ['jobs', '🔕', 'Notify', 'Job Notifications'], ['msgs', '💬', 'Techs', 'Tech Messages'],
     ['biz', '🏢', 'Units', 'Business Unit'], ['texts', '📱', 'Texts', 'Customer Texts']];
   const tabBar = el('div');
-  tabBar.className = 'st-tabs';
+  tabBar.className = 'tbx-tabs';
   const tabs = {};
   TABS.forEach(([key, icon, short, full]) => {
     const b = el('button');
-    b.type = 'button'; b.className = 'st-tab'; b.title = full;
+    b.type = 'button'; b.className = 'tbx-tab'; b.title = full;
     b.setAttribute('data-nav', key);
     b.append(el('b', '', icon), el('span', '', short));
     b.addEventListener('mousedown', e => e.preventDefault());
@@ -507,7 +510,7 @@
 
   // "What's new" line, shown once after an update.
   const news = el('div', 'display:none;padding:7px 12px;background:#e8f4ea;color:#1b5e20;font-size:12px;border-bottom:1px solid #cfe5d2;flex:none');
-  news.className = 'st-bar';
+  news.className = 'tbx-bar';
   const lastSeen = get('stSeenVersion');
   if (lastSeen !== VERSION) {
     news.textContent = (lastSeen ? '✨ Updated to v' + VERSION + ': ' : '✨ ') + (WHATS_NEW[VERSION] || 'New version.');
@@ -523,7 +526,7 @@
   const health = (() => {
     const issues = new Map();   // key -> { tool, what, detail }
     const bar = el('div', 'display:none;padding:7px 12px;background:#fff4e5;color:#6b3f00;font-size:12px;border-bottom:1px solid #f0d3a6;flex:none;max-height:40%;overflow:auto');
-    bar.className = 'st-bar';
+    bar.className = 'tbx-bar';
     const barText = el('div', 'white-space:pre-wrap');
     const barBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap;margin-top:6px');
     bar.append(barText, barBtns);
@@ -619,7 +622,7 @@
   const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts' };
   // The screens scroll in here; the header, tabs and warning bars stay put.
   const body = el('div');
-  body.className = 'st-body';
+  body.className = 'tbx-body';
   const toTop = () => { body.scrollTop = 0; };
   // A row of buttons with the less-used ones tucked behind ⋯ More.
   const moreRow = (main, extra) => {
@@ -655,12 +658,12 @@
     navKey = key;
     Object.keys(tabs).forEach(k => {
       const t = tabs[k], no = blocked(k) && k !== current;
-      t.classList.toggle('on', k === current);
+      t.classList.toggle('tbx-on', k === current);
       t.disabled = no;
       t.title = no ? 'Wait for ' + lock + ' to finish' : TITLES[k].replace(/^\S+\s/, '');
     });
     homeBtn.disabled = !!lock && current !== 'menu';
-    homeBtn.classList.toggle('on', current === 'menu');
+    homeBtn.classList.toggle('tbx-on', current === 'menu');
     homeBtn.title = homeBtn.disabled ? 'Wait for ' + lock + ' to finish' : 'Home: all tools';
     runBadge.style.display = lock ? 'inline-block' : 'none';
     runBadge.title = lock ? lock + ' is running' : '';
@@ -693,10 +696,10 @@
     texts: 'Text customers about holds, updates and reschedules.'
   };
   const cards = el('div');
-  cards.className = 'st-cards';
+  cards.className = 'tbx-cards';
   TABS.forEach(([key, icon, , full]) => {
     const c = el('button');
-    c.type = 'button'; c.className = 'st-card';
+    c.type = 'button'; c.className = 'tbx-card';
     c.setAttribute('data-nav', key);
     c.append(el('b', '', icon), el('strong', '', full), el('small', '', ABOUT[key]));
     c.addEventListener('mousedown', e => e.preventDefault());
@@ -704,12 +707,12 @@
   });
   const homeFoot = el('div', 'display:flex;gap:8px;align-items:center;margin-top:10px');
   const tip = el('span', 'flex:1', 'Drag the top bar to move me, the corner to resize, – to shrink.');
-  tip.className = 'st-tip';
+  tip.className = 'tbx-tip';
   homeFoot.append(tip, smallBtn('🩺 Check', () => health.checkBoard(true)));
   menuPane.append(cards, homeFoot);
   body.append(menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane);
   const grip = el('div');
-  grip.className = 'st-grip';
+  grip.className = 'tbx-grip';
   grip.title = 'Drag to resize. Double-click to go back to the normal size.';
   panel.append(header, tabBar, news, health.bar, body, grip);
   // Tabs, Home cards and ⌂ all switch tools the same way.
@@ -2643,17 +2646,17 @@
     const secOpen = Object.assign({ msg: true, who: true, how: false }, loadJSON(K.sections, {}) || {});
     const section = (key, title) => {
       const wrap = el('div');
-      wrap.className = 'st-sec';
+      wrap.className = 'tbx-sec';
       const headBtn = el('button');
-      headBtn.type = 'button'; headBtn.className = 'st-sec-head';
+      headBtn.type = 'button'; headBtn.className = 'tbx-sec-head';
       headBtn.setAttribute('data-sec', key);
       const arrow = el('span', 'width:10px;flex:none;color:#5a6270');
       const sum = el('span');
-      sum.className = 'st-sec-sum';
+      sum.className = 'tbx-sec-sum';
       headBtn.append(arrow, el('span', '', title), sum);
       headBtn.addEventListener('mousedown', e => e.preventDefault());
       const inner = el('div');
-      inner.className = 'st-sec-body';
+      inner.className = 'tbx-sec-body';
       const paint = () => {
         const on = !!secOpen[key];
         inner.style.display = on ? 'block' : 'none';
@@ -3455,7 +3458,7 @@
   // Minimize: just the title bar shows (runs keep going). – or double-click the title bar.
   const setMin = on => {
     minimized = !!on;
-    panel.classList.toggle('st-min', minimized);
+    panel.classList.toggle('tbx-min', minimized);
     minBtn.textContent = minimized ? '▢' : '–';
     minBtn.title = minimized ? 'Restore' : 'Minimize (double-click the title bar works too)';
     set('stMin', minimized ? '1' : '0');
