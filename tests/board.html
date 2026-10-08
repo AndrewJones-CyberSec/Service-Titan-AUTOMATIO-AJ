@@ -42,16 +42,23 @@
   window.buName = j => nameOf(DB[j].bu);
   window.saves = [];
   window.opened = [];
-  // ServiceTitan's job data, as its pages read it. window.API_DOWN = true makes it unreadable.
-  window.apiCalls = 0;
+  // ServiceTitan's job data, as its pages read it. window.API_DOWN = true makes it unreadable,
+  // API_401 = true answers like a signed-out session, API_DELAY = ms makes it slow (a request
+  // can still be cut off by its caller, like a real one). apiActive / apiMax count requests in flight.
+  window.apiCalls = 0; window.apiActive = 0; window.apiMax = 0;
   const realFetch = window.fetch;
+  const pause = (ms, signal) => new Promise((res, rej) => {
+    const t = setTimeout(res, ms);
+    if (signal) signal.addEventListener('abort', () => { clearTimeout(t); rej(new DOMException('The user aborted a request.', 'AbortError')); });
+  });
   window.fetch = async (url, opts) => {
     const u = String(url);
     const json = (o, st) => new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
     let m = /^\/Job\/Edit\/(\d+)/.exec(u) || /^\/Job\/Index\/\?id=(\d+)/.exec(u);
     if (!m) return realFetch(url, opts);
-    window.apiCalls++;
-    await new Promise(r => setTimeout(r, 40));
+    window.apiCalls++; window.apiActive++; window.apiMax = Math.max(window.apiMax, window.apiActive);
+    try { await pause(window.API_DELAY || 40, opts && opts.signal); } finally { window.apiActive--; }
+    if (window.API_401) return new Response('', { status: 401 });
     if (window.API_DOWN) return json({ error: 'down' }, 500);
     const j = m[1];
     window.NOTIF = window.NOTIF || {};

@@ -18,8 +18,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.5.1';
+  const VERSION = '1.5.2';
   const WHATS_NEW = {
+    '1.5.2': 'Steadier runs: Stop works right away, even while jobs are still being read. If ServiceTitan signs you out, a run stops and says so. If ServiceTitan is slow, the Toolbox eases off. Customer Texts skips a hold that has been booked since you loaded the list.',
     '1.5.1': 'Faster and smarter: Check jobs in Job Notifications and Business Unit now takes seconds instead of minutes, and Customer Texts checks everyone before it starts, so you see exactly who will be texted (and who is skipped, and why). Every job-picking tool also has + All in the list.',
     '1.5': 'New: 📱 Customer Texts. Text customers a saved message from folders (Holds, Tech Updates, Reschedule). Load every hold at once and filter by job type, or pick jobs on the board. {dispatcher} fills in your first name. Also: Tech Messages can pick techs by clicking them on the board, Job Notifications can work on jobs you pick, and every tool can pick from the Unassigned / Hold list.',
     '1.4': 'New: 🏢 Business Unit. Pick jobs on the board (or type their numbers) and switch them all to Mendenhall Branch, or another branch, in one go. ↩ Put back undoes it.',
@@ -96,6 +97,10 @@
   const plural = (n, word, many) => n + ' ' + (n === 1 ? word : (many || word + 's'));
   const last10 = s => String(s == null ? '' : s).replace(/\D/g, '').slice(-10);
   const errText = e => (e && e.message ? e.message : String(e));
+  // Runs read many jobs at the start, then work through them one by one. A job is only left
+  // alone ("already done") on a reading this fresh; an older one is read again at its turn,
+  // in case someone changed it in the meantime.
+  const FRESH_MS = 5000;
 
   // ===================================================================
   // Reading ServiceTitan's own data
@@ -105,33 +110,91 @@
   // ===================================================================
   const st = (() => {
     const HEADERS = { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' };
+    // Every failure says what kind it is, so a run can react the right way:
+    //   signedOut: the session has ended (ServiceTitan answers 401). Nothing more will work.
+    //   trouble:   ServiceTitan is slow or failing (no answer in time, 5xx, can't connect).
+    //   bad:       that one request didn't work (no such job, an odd answer).
+    const SIGNED_OUT = 'ServiceTitan has signed you out. Reload the page, sign back in, then run it again.';
+    const fail = (kind, msg) => Object.assign(new Error(msg), { kind });
+    const isSignedOut = e => !!(e && e.kind === 'signedOut');
     const getJSON = async (url, ms) => {
       const ctl = typeof AbortController === 'function' ? new AbortController() : null;
       const timer = ctl ? setTimeout(() => ctl.abort(), ms || 15000) : null;
+      let r, text;
       try {
-        const r = await fetch(url + (url.indexOf('?') < 0 ? '?' : '&') + '_=' + Date.now(), { credentials: 'include', headers: HEADERS, signal: ctl ? ctl.signal : undefined });
-        if (!r.ok) throw new Error('ServiceTitan answered ' + r.status);
-        return await r.json();
+        r = await fetch(url + (url.indexOf('?') < 0 ? '?' : '&') + '_=' + Date.now(), { credentials: 'include', headers: HEADERS, signal: ctl ? ctl.signal : undefined });
+        if (r.status === 401) throw fail('signedOut', SIGNED_OUT);
+        if (r.redirected && /\/(auth|account|login|signin)\b/i.test(r.url)) throw fail('signedOut', SIGNED_OUT);
+        if (r.status >= 500 || r.status === 408 || r.status === 429) throw fail('trouble', 'ServiceTitan answered ' + r.status);
+        if (!r.ok) throw fail('bad', 'ServiceTitan answered ' + r.status);
+        text = await r.text();
       } catch (e) {
-        throw e && e.name === 'AbortError' ? new Error('ServiceTitan took too long to answer') : e;
+        if (e && e.kind) throw e;
+        throw e && e.name === 'AbortError' ? fail('trouble', 'ServiceTitan took too long to answer') : fail('trouble', 'couldn\'t reach ServiceTitan (' + errText(e) + ')');
       } finally { if (timer) clearTimeout(timer); }
+      try { return JSON.parse(text); }
+      catch (e) {
+        // A sign-in page instead of data also means the session has ended.
+        if (/<html|<form/i.test(text) && /password|sign ?in|log ?in/i.test(text)) throw fail('signedOut', SIGNED_OUT);
+        throw fail('bad', 'ServiceTitan\'s answer wasn\'t readable');
+      }
     };
-    // Runs fn on each item, a few at a time (gentle on ServiceTitan), keeping the order.
-    // A failed item gives { error } instead of stopping the rest.
-    const pool = async (items, limit, fn, progress) => {
-      const out = new Array(items.length);
-      let next = 0, done = 0;
-      const worker = async () => {
-        while (next < items.length) {
-          const i = next++;
-          try { out[i] = await fn(items[i], i); } catch (e) { out[i] = { error: e }; }
-          done++;
-          if (progress) progress(done, items.length);
-        }
+    // Reads several things at once, a few at a time (gentle on ServiceTitan), keeping the order.
+    // Only for reading: changes are always made one at a time, on the page.
+    //   - A failed item gives { error } instead of stopping the rest.
+    //   - opts.stop(): once it's true, pool returns right away (reads already on their way are
+    //     not waited for). out.stopped is set.
+    //   - When an answer is slow or fails, it asks one at a time until one works again. After
+    //     TROUBLE_IN_A_ROW of those in a row, or as soon as ServiceTitan signs you out, it stops
+    //     asking and returns right away: out.halted is 'trouble' or 'signedOut', out.haltError says why.
+    //   - Items it never got to are NOT_RUN. Answers that arrive after it has returned are ignored.
+    //   - fn(item, i, alive): an fn that makes several requests should check alive() between
+    //     them, and give up once it's false (the pool has already returned).
+    const NOT_RUN = Object.freeze({ notRun: true });
+    const TROUBLE_IN_A_ROW = 4;
+    const pool = (items, limit, fn, progress, opts) => new Promise(resolve => {
+      const o = opts || {};
+      const out = items.map(() => NOT_RUN);
+      let next = 0, done = 0, active = 0, inRow = 0, over = false, watch = null;
+      const end = (why, e) => {
+        if (over) return;
+        over = true;
+        if (watch) clearInterval(watch);
+        if (why === 'stopped') out.stopped = true;
+        else if (why) { out.halted = why; out.haltError = e; }
+        resolve(out);
       };
-      await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-      return out;
-    };
+      const pump = () => {
+        if (over) return;
+        if (o.stop && o.stop()) return end('stopped');
+        while (active < (inRow ? 1 : limit) && next < items.length) {
+          const i = next++;
+          active++;
+          Promise.resolve().then(() => fn(items[i], i, () => !over)).then(v => {
+            if (over) return;
+            out[i] = v; inRow = 0;
+          }, e => {
+            if (over) return;
+            out[i] = { error: e };
+            const kind = e && e.kind;
+            if (kind === 'signedOut') return end('signedOut', e);
+            if (kind !== 'trouble') inRow = 0;
+            else if (++inRow >= TROUBLE_IN_A_ROW) return end('trouble', e);
+          }).then(() => {
+            if (over) return;
+            active--; done++;
+            if (progress) progress(done, items.length);
+            pump();
+          });
+        }
+        if (!active && next >= items.length) end();
+      };
+      if (o.stop) watch = setInterval(() => { if (o.stop()) end('stopped'); }, 150);
+      pump();
+    });
+    // How a run should say a pool stopped early (or '' if it didn't).
+    const haltNote = out => !out.halted ? '' : out.halted === 'signedOut' ? SIGNED_OUT :
+      'ServiceTitan is slow or not answering (' + errText(out.haltError) + ').';
     const job = id => getJSON('/Job/Index/?id=' + encodeURIComponent(id) + '&skipForms=true');
     const jobEdit = id => getJSON('/Job/Edit/' + encodeURIComponent(id));
     // The conversation with a phone number: { ThreadId, ReadStatus, BlockedStatus, Messages: [last] },
@@ -151,7 +214,7 @@
       try { const g = window.App && window.App.Enums && window.App.Enums[group]; if (g && typeof g[name] === 'number') return g[name]; } catch (e) {}
       return backup;
     };
-    return { getJSON, pool, job, jobEdit, chatThread, chatMessages, code };
+    return { getJSON, pool, NOT_RUN, haltNote, SIGNED_OUT, isSignedOut, job, jobEdit, chatThread, chatMessages, code };
   })();
 
   // The editable list used by ✏️ Edit notes and ✏️ Edit messages: a name and a text per item,
@@ -1309,13 +1372,23 @@
         }
         // Read every job's setting first, a few at a time. Jobs that are already off (and, when
         // only checking, every job) need no page at all. The rest are opened one at a time.
+        // A job whose setting couldn't be read is opened and checked on its page instead.
         say('Reading ' + plural(list.length, 'job') + '...');
-        const pre = await st.pool(list, 4, apiState, (d, t) => say('Reading jobs... ' + d + ' of ' + t));
+        const readState = async j => { const d = await st.job(j); return typeof d.NotificationsEnabled === 'boolean' ? d.NotificationsEnabled : null; };
+        const preAt = Date.now();
+        const pre = await st.pool(list, 4, readState, (d, t) => say('Reading jobs... ' + d + ' of ' + t), { stop: () => stop });
+        if (pre.halted === 'signedOut') throw pre.haltError;
+        if (pre.halted) add('⚠️ ' + st.haltNote(pre) + ' Opening the rest one at a time instead.');
         for (let n = 0; n < list.length; n++) {
           if (stop) { add('Stopped. ' + (list.length - n) + ' job(s) not checked.'); break; }
           const j = list[n];
-          if (pre[n] === false) { record(j, { text: 'already off', kind: 'already off' }); continue; }
-          if (pre[n] === true && !real) { record(j, { text: 'ON (left alone)', kind: 'on' }); continue; }
+          let on = pre[n] === true || pre[n] === false ? pre[n] : null;
+          // About to leave it alone as "already off"? Only on a fresh reading.
+          if (on === false && real && Date.now() - preAt > FRESH_MS) {
+            try { on = await readState(j); } catch (e) { if (st.isSignedOut(e)) throw e; on = null; }
+          }
+          if (on === false) { record(j, { text: 'already off', kind: 'already off' }); continue; }
+          if (on === true && !real) { record(j, { text: 'ON (left alone)', kind: 'on' }); continue; }
           say((real ? 'Turning off ' : 'Checking ') + (n + 1) + ' of ' + list.length + ' (job ' + j + ')');
           record(j, await doJob(j));
         }
@@ -1352,7 +1425,8 @@
           say('Done: ' + summary + '.');
         }
       } catch (e) {
-        say('⚠️ Stopped by an error: ' + errText(e));
+        if (st.isSignedOut(e)) { add('⚠️ ' + e.message); say('⚠️ ' + e.message); }
+        else say('⚠️ Stopped by an error: ' + errText(e));
       } finally {
         if (location.hash !== home) { location.hash = home; await wait(800); }
         running = false; lock = null;
@@ -2228,11 +2302,16 @@
     };
     // What to do with one job, using what its job data already says when possible: jobs already
     // on the branch, or locked, are reported without opening anything, and Check jobs only reads.
-    const handle = async (it, real, pre) => {
-      if (pre && !pre.error) {
-        if (same(pre.from, it.to)) return res('already ' + it.to, 'already');
-        if (pre.locked) return res('locked in ServiceTitan (shows ' + pre.from + ')', 'locked');
-        if (!real) return res(pre.from + ' → would change to ' + it.to, 'would change', { from: pre.from });
+    // A job is only left alone on a fresh reading (see FRESH_MS); an older one is read again.
+    const handle = async (it, real, pre, preAt) => {
+      let known = pre && !pre.error && !pre.notRun ? pre : null;
+      if (known && real && (same(known.from, it.to) || known.locked) && Date.now() - preAt > FRESH_MS) {
+        try { known = await readJob(it.job); } catch (e) { if (st.isSignedOut(e)) throw e; known = null; }
+      }
+      if (known) {
+        if (same(known.from, it.to)) return res('already ' + it.to, 'already');
+        if (known.locked) return res('locked in ServiceTitan (shows ' + known.from + ')', 'locked');
+        if (!real) return res(known.from + ' → would change to ' + it.to, 'would change', { from: known.from });
       } else if (pre && pre.error) {
         details.push('#' + it.job + ' job data not readable (' + errText(pre.error) + '), opened the page instead');
       }
@@ -2266,13 +2345,17 @@
         add(mode === 'check' ? 'Check for ' + to + ' (nothing is changed)' : mode === 'putback' ? 'Put back to how they were' : 'Change to ' + to);
         // Read every job's Business Unit first, a few at a time. No pages to open for that.
         say('Reading ' + plural(items.length, 'job') + '...');
-        const pre = await st.pool(items, 4, it => readJob(it.job), (d, t) => say('Reading jobs... ' + d + ' of ' + t));
+        // A job that couldn't be read is opened and checked on its page instead.
+        const preAt = Date.now();
+        const pre = await st.pool(items, 4, it => readJob(it.job), (d, t) => say('Reading jobs... ' + d + ' of ' + t), { stop: () => stop });
+        if (pre.halted === 'signedOut') throw pre.haltError;
+        if (pre.halted) add('⚠️ ' + st.haltNote(pre) + ' Opening the rest one at a time instead.');
         let halted = false;
         for (let n = 0; n < items.length; n++) {
           if (stop) { add('Stopped. ' + plural(items.length - n, 'job') + ' not done.'); break; }
           const it = items[n];
           say(verb + ' ' + (n + 1) + ' of ' + items.length + ' (job ' + it.job + ')');
-          const r = await handle(it, real, pre[n]);
+          const r = await handle(it, real, pre[n], preAt);
           record(it, r);
           if (r.stopRun) { halted = true; add('Run stopped so you can answer ServiceTitan. ' + plural(items.length - n - 1, 'job') + ' not done.'); break; }
         }
@@ -2308,7 +2391,8 @@
         if (undo.length && mode !== 'check') add('↩ Put back can undo ' + plural(undo.length, 'job') + '.');
         say('Done: ' + summary + '.');
       } catch (e) {
-        say('⚠️ Stopped by an error: ' + errText(e));
+        if (st.isSignedOut(e)) { add('⚠️ ' + e.message); say('⚠️ ' + e.message); }
+        else say('⚠️ Stopped by an error: ' + errText(e));
       } finally {
         // Leave a pop-up for the person to answer; otherwise go back to the board.
         const popupOpen = shown(POPUP_SEL).length > 0;
@@ -2438,7 +2522,8 @@
         const r = await fetch('/Dispatch/GetJobs', { method: 'POST', credentials: 'include',
           headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, xhrHeaders),
           body: JSON.stringify({ JobType: 'Hold', Date: date, QueryFilter: { Skip: skip, Take: PAGE, Start: {}, Created: {}, BusinessUnitIds: ids } }) });
-        if (!r.ok) throw new Error('ServiceTitan answered ' + r.status);
+        if (r.status === 401) throw Object.assign(new Error(st.SIGNED_OUT), { kind: 'signedOut' });
+        if (!r.ok) throw Object.assign(new Error('ServiceTitan answered ' + r.status), { kind: r.status >= 500 ? 'trouble' : 'bad' });
         const d = await r.json();
         if (!d || !Array.isArray(d.Jobs)) { health.flag(TOOL, 'the Hold list came back in a shape the Toolbox doesn\'t know', '/Dispatch/GetJobs'); throw new Error('unexpected reply'); }
         return d;
@@ -2455,6 +2540,7 @@
       const skips = [];
       for (let skip = PAGE; skip < Math.min(total, 20000); skip += PAGE) skips.push(skip);
       const rest = await st.pool(skips, 3, page);
+      if (rest.halted) throw rest.haltError;
       rest.forEach(d => { if (d && d.error) throw d.error; take(d); });
       health.clear(TOOL);
       return { jobs, total, bus: buNames(ids), at: new Date() };
@@ -2533,7 +2619,7 @@
       const addOne = r => { const key = r.customerId ? 'c' + r.customerId : 'j' + r.jobId; if (seen.has(key)) return; seen.add(key); out.push(r); };
       if (source === 'holds') {
         if (!holds) return out;
-        holds.jobs.forEach(h => { if (typeSel.has(h.type)) addOne({ jobId: h.jobId, customer: h.customer, customerId: h.customerId, tech: '' }); });
+        holds.jobs.forEach(h => { if (typeSel.has(h.type)) addOne({ jobId: h.jobId, customer: h.customer, customerId: h.customerId, tech: '', hold: true }); });
       } else {
         picker.ids().forEach(j => { const b = jobInfo(j) || {}; addOne({ jobId: j, customer: b.customer || picker.label(j) || '', customerId: b.customerId || null, tech: b.tech || '' }); });
       }
@@ -2780,8 +2866,13 @@
       confAsk.textContent = ''; confGo.style.display = 'none';
       sub('confirm');
       const t0 = Date.now();
-      const result = await plan(pending, f, tmpl, (d, t) => { if (id === checkId) confText.textContent = 'Checking customers… ' + d + ' of ' + t; });
-      if (id !== checkId) return;   // cancelled
+      const result = await plan(pending, f, tmpl, (d, t) => { if (id === checkId) confText.textContent = 'Checking customers… ' + d + ' of ' + t; }, () => id !== checkId);
+      if (id !== checkId || result.stopped) return;   // cancelled
+      if (result.signedOut) {
+        confHead.textContent = 'Couldn\'t check';
+        confText.textContent = '⚠️ ' + st.SIGNED_OUT + '\n\nNothing was sent.';
+        return;
+      }
       planned = Object.assign(result, { customers: pending.length });
       const sends = result.sends, skips = result.skips;
       const sample = sends[0] || null;
@@ -2852,13 +2943,15 @@
     // The Bill To's phone numbers, from the job's own data. Primary first.
     const billTo = async jobId => {
       let j;
-      try { j = await st.job(jobId); } catch (e) { throw new Error('the job didn\'t load (' + errText(e) + ')'); }
+      try { j = await st.job(jobId); } catch (e) { throw st.isSignedOut(e) ? e : Object.assign(new Error('the job didn\'t load (' + errText(e) + ')'), { kind: e.kind }); }
       const c = j && j.Customer;
       if (!c || !Array.isArray(c.Contacts)) { health.flag(TOOL, 'can\'t read the Bill To phone numbers from a job', 'Job/Index Customer.Contacts'); throw new Error('no Bill To contacts in the job data'); }
       const phones = c.Contacts.filter(x => x && /phone/i.test(x.Type || '') && last10(x.Value).length === 10)
         .map(x => ({ num: last10(x.Value), mobile: /mobile/i.test(x.Type || '') }));
-      return { name: norm(c.Name), phones };
+      return { name: norm(c.Name), phones, status: typeof j.Status === 'string' ? j.Status : '' };
     };
+    // A job from the Hold list that has since been booked (or cancelled) isn't a hold any more.
+    const notHold = status => status && !/^hold$/i.test(status) ? 'no longer on hold (now ' + status + ')' : '';
     const pickNumbers = phones => {
       const mobiles = phones.filter(p => p.mobile);
       if (allMobiles) return { nums: Array.from(new Set(mobiles.map(p => p.num))), note: '' };
@@ -2957,10 +3050,11 @@
       };
     });
     // One number, checked from the chat data: { ok } or { skip: reason, kind }.
-    const checkNumber = async (num, f, text) => {
+    // alive(): optional; once false, the answer isn't wanted any more, so it stops asking.
+    const checkNumber = async (num, f, text, alive) => {
       const c = codes();
       const t = await st.chatThread(num);
-      if (!t) return { ok: true };   // never texted before
+      if (!t || (alive && !alive())) return { ok: true };   // never texted before (or no longer wanted)
       if (t.BlockedStatus === c.blocked) return { skip: 'blocked in ServiceTitan (opted out)', kind: 'skipped' };
       if (t.ReadStatus === c.unread) return { skip: 'they have an unread reply. Read it first', kind: 'look' };
       const hist = asPageMsgs(await st.chatMessages(t.ThreadId, 100), c);
@@ -2970,10 +3064,16 @@
       return { ok: true };
     };
     // Everyone in the list, checked a few at a time: who gets a text and who's skipped (and why).
-    const plan = async (list, f, tmpl, progress) => {
-      const results = await st.pool(list, 4, async r => {
+    // stop(): true once the check is cancelled. Returns { sends, skips }, or { stopped } or { signedOut }.
+    const plan = async (list, f, tmpl, progress, stop) => {
+      // If the chat data keeps failing, stop asking for it: those numbers get checked on their
+      // conversation's page during the run instead (as when it can't be read at all).
+      let chatTrouble = 0;
+      const results = await st.pool(list, 4, async (r, i, alive) => {
         if (uses(tmpl, 'tech') && !r.tech) return { skips: [{ why: 'no tech on the board for {tech}', kind: 'skipped' }] };
         const info = await billTo(r.jobId);
+        if (!alive()) return null;
+        if (r.hold && notHold(info.status)) return { info, skips: [{ why: notHold(info.status), kind: 'skipped' }] };
         const name = info.name || r.customer;
         const pickN = pickNumbers(info.phones);
         if (!pickN.nums.length) return { info, skips: [{ why: 'no mobile number on the Bill To', kind: 'skipped' }] };
@@ -2982,14 +3082,23 @@
         const nums = await Promise.all(pickN.nums.map(async num => {
           if (never.indexOf(num) > -1) return { num, skip: 'on your 🚫 never-text list', kind: 'skipped' };
           // If the chat data can't be read, the conversation's own page is checked during the run.
-          try { return Object.assign({ num }, await checkNumber(num, f, text)); }
-          catch (e) { return { num, ok: true, unchecked: errText(e) }; }
+          if (chatTrouble >= 4) return { num, ok: true, unchecked: 'chat data skipped (ServiceTitan slow)' };
+          if (!alive()) return { num, ok: true };
+          try { const v = Object.assign({ num }, await checkNumber(num, f, text, alive)); chatTrouble = 0; return v; }
+          catch (e) {
+            if (st.isSignedOut(e)) throw e;
+            if (e && e.kind === 'trouble') chatTrouble++;
+            return { num, ok: true, unchecked: errText(e) };
+          }
         }));
         return { info, text, note: pickN.note, nums };
-      }, progress);
+      }, progress, { stop });
+      if (results.stopped) return { stopped: true };
+      if (results.halted === 'signedOut') return { signedOut: true };
       const sends = [], skips = [], seen = new Set();
       list.forEach((r, i) => {
         const x = results[i] || {};
+        if (x === st.NOT_RUN) { skips.push({ r, num: '', why: 'not checked: ServiceTitan is slow or not answering. Try again in a bit', kind: 'problem' }); return; }
         if (x.error) { skips.push({ r, num: '', why: errText(x.error), kind: 'problem' }); return; }
         if (x.info && !r.customer) r.customer = x.info.name;
         (x.skips || []).forEach(k => skips.push(Object.assign({ r, num: '' }, k)));
@@ -3034,7 +3143,7 @@
       sub('run');
       add((auto ? 'Auto-send' : 'Type only') + ' · ' + f.name + ' · "' + m[0] + '" · ' + s1(planned.customers, 'customer') + ' checked, ' + s1(sends.length, 'text') + ' to send');
       const tally = {}, look = [];
-      let failsInRow = 0;
+      let failsInRow = 0, signedOut = false;
       const out = (r, num, text, kind) => {
         tally[kind] = (tally[kind] || 0) + 1;
         add('#' + r.jobId + ' ' + (r.customer || '') + (num ? ' ' + showNum(num) : '') + ': ' + text);
@@ -3074,12 +3183,17 @@
           if (stopRun) { add('Stopped. ' + s1(sends.length - n, 'text') + ' not sent.'); break; }
           const x = sends[n], r = x.r, num = x.num, text = x.text;
           runMsg.textContent = (auto ? 'Texting ' : 'Typing ') + (n + 1) + ' of ' + sends.length + ': ' + (r.customer || '#' + r.jobId);
-          // A quick fresh look (no page): anything new since the check, like a reply or a STOP?
-          if (!x.unchecked) {
-            let fresh = null;
-            try { fresh = await checkNumber(num, f, text); } catch (e) { /* the page's own checks below still run */ }
-            if (fresh && fresh.skip) { out(r, num, 'skipped: ' + fresh.skip, fresh.kind); continue; }
+          // A quick fresh look (no page): still a hold? Anything new since the check, like a
+          // reply or a STOP? If ServiceTitan has signed you out, stop here.
+          let fresh = null;
+          try {
+            if (r.hold) { const j = await st.job(r.jobId); const why = notHold(j && typeof j.Status === 'string' ? j.Status : ''); if (why) fresh = { skip: why, kind: 'skipped' }; }
+            if (!fresh && !x.unchecked) fresh = await checkNumber(num, f, text);
+          } catch (e) {
+            if (st.isSignedOut(e)) { signedOut = true; add('⚠️ ' + e.message + ' Stopped. ' + s1(sends.length - n, 'text') + ' not sent.'); break; }
+            /* otherwise the page's own checks below still run */
           }
+          if (fresh && fresh.skip) { out(r, num, 'skipped: ' + fresh.skip, fresh.kind); continue; }
           const c = await openChat(num, r.jobId);
           if (!c) {
             if (!document.querySelector(BOX)) {
@@ -3156,7 +3270,7 @@
         if (checks.length) { runMsg.textContent = 'Checking the last texts went out…'; await Promise.race([Promise.all(checks), wait(8000)]); }
         const summary = Object.keys(tally).filter(k => tally[k]).map(k => tally[k] + ' ' + k).join(', ') || 'nothing done';
         if (look.length) { add(''); add('Needs a look:'); look.forEach(z => add('• ' + z)); }
-        runMsg.textContent = 'Done: ' + summary + '.';
+        runMsg.textContent = signedOut ? '⚠️ ' + st.SIGNED_OUT + ' (Before that: ' + summary + '.)' : 'Done: ' + summary + '.';
       } catch (e) {
         runMsg.textContent = '⚠️ Stopped by an error: ' + errText(e);
       } finally {

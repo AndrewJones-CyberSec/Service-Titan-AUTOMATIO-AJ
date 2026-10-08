@@ -50,7 +50,7 @@ If ServiceTitan locks a job's Business Unit, the job is skipped and listed. If S
 Text customers a saved message through ServiceTitan's Chat Center. Messages are sorted into folders, **⏸️ Holds**, **🚚 Tech Updates** and **📅 Reschedule**, plus any you add.
 
 - **Who:** the **Hold list** (every hold on the board's Hold tab loads at once; tick the kinds to text, such as Quote or Non Operational, or open a kind to tick single job types), or **jobs you pick** on the board, in the Unassigned / Hold list at the bottom (or the whole list tab with **+ All in the list**), or by job number. One text per customer.
-- **Checked before it starts:** pressing Start checks every customer first, without opening their conversation (a few seconds for a big list). The next screen shows exactly who will be texted and who is skipped, and why. Right before each text it takes one more quick look, in case something changed.
+- **Checked before it starts:** pressing Start checks every customer first, without opening their conversation (a few seconds for a big list). The next screen shows exactly who will be texted and who is skipped, and why. Right before each text it takes one more quick look, in case something changed (a reply, a STOP, or a hold that has been booked since).
 - **Which number:** the Bill To's primary number. If that's a landline, their first mobile number. In ⚙️ Settings you can text every mobile number on the Bill To instead.
 - **Fill-ins:** `{dispatcher}` is your first name from your ServiceTitan login (or the name in ⚙️ Settings), `{first}` the customer's first name, `{tech}` the tech's first name (jobs on the board).
 - **Repeat rules per folder:** Holds skips anyone who got a text from us in the last 7 days. Tech Updates and Reschedule skip anyone who already got that same message today. Change them in 📁 Edit folders. Automatic notifications and texts that failed don't count.
@@ -60,6 +60,8 @@ Text customers a saved message through ServiceTitan's Chat Center. Messages are 
 
 **🩺 Health check**
 If ServiceTitan changes something a tool relies on, a yellow bar at the top of the Toolbox says which tool is affected and what's missing, instead of the tool failing quietly. Use **Copy report** to pass the details along, or **🩺 Check** in the menu to check any time.
+
+If ServiceTitan signs you out during a run, the run stops and says so. If ServiceTitan is slow or failing, the Toolbox eases off and stops asking after a few failed answers in a row, and the **Stop** button always works right away.
 
 ## Install
 

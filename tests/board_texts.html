@@ -84,10 +84,21 @@
 
   // Fake ServiceTitan endpoints.
   const realFetch = window.fetch;
+  // API_DELAY = ms makes every request slow (the caller can still cut it off), API_401 = true
+  // answers like a signed-out session, JOB_API_DOWN = true breaks only the job data.
+  // JOB_STATUS[job] overrides a job's Status (holds are 'Hold', board jobs 'Scheduled').
+  // apiCalls counts requests; apiLog lists them.
+  window.apiCalls = 0; window.apiLog = []; window.JOB_STATUS = {};
+  const pause = (ms, signal) => new Promise((res, rej) => {
+    const t = setTimeout(res, ms);
+    if (signal) signal.addEventListener('abort', () => { clearTimeout(t); rej(new DOMException('The user aborted a request.', 'AbortError')); });
+  });
   window.fetch = async (url, opts) => {
     const u = String(url);
     const json = (o, st) => new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
-    await new Promise(r => setTimeout(r, 60));
+    window.apiCalls++; window.apiLog.push(u.split('&_=')[0]);
+    await pause(window.API_DELAY || 60, opts && opts.signal);
+    if (window.API_401) return new Response('', { status: 401 });
     if (u.indexOf('/Dispatch/GetJobs') === 0) {
       const b = JSON.parse(opts.body);
       window.lastGetJobs = b;
@@ -110,10 +121,12 @@
       return json({ Messages: chat ? rawMsgs(num, chat) : [], HasNoMore: true });
     }
     if (m) {
+      if (window.JOB_API_DOWN) return json({}, 500);
       const cid = JOBCUST[m[1]];
       if (!cid) return json({}, 404);
       const cu = C[cid];
-      return json({ Id: Number(m[1]), Customer: { Id: cid, Name: cu.name, Contacts: cu.c.map((x, i) => ({ Id: i, Type: x[0] === 'M' ? 'MobilePhone' : 'Phone', Value: x[1] })).concat([{ Id: 99, Type: 'Email', Value: 'x@y.z' }]) }, Location: { Contacts: [] } });
+      const status = window.JOB_STATUS[m[1]] || (HOLDS.some(h => String(h[0]) === m[1]) ? 'Hold' : 'Scheduled');
+      return json({ Id: Number(m[1]), Status: status, Customer: { Id: cid, Name: cu.name, Contacts: cu.c.map((x, i) => ({ Id: i, Type: x[0] === 'M' ? 'MobilePhone' : 'Phone', Value: x[1] })).concat([{ Id: 99, Type: 'Email', Value: 'x@y.z' }]) }, Location: { Contacts: [] } });
     }
     return realFetch(url, opts);
   };

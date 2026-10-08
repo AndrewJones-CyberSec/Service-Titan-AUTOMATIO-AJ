@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.2
+
+Steadier when ServiceTitan or the board changes during a run. Nothing works differently when everything is normal.
+
+- **Stop works right away**, even while Job Notifications, Business Unit or Customer Texts is still reading jobs. Cancel on Customer Texts' check screen stops the checking too (before, it finished in the background).
+- **Signed out?** If ServiceTitan's session ends, a run stops and says "ServiceTitan has signed you out" instead of opening every job onto a sign-in page or reporting it as a ServiceTitan change. Nothing more is changed or sent.
+- **ServiceTitan slow or failing:** the Toolbox drops to one request at a time, and after 4 slow or failed answers in a row it stops asking. Job Notifications and Business Unit then open the remaining jobs one at a time (the old way); Customer Texts lists who couldn't be checked so you can try again.
+- **The board can change mid-run:** jobs are read all at once at the start, but a job is only left alone ("already off", "already on that branch", locked) on a reading from the last few seconds. Otherwise it's read again at its turn, in case someone changed it meanwhile.
+- **📱 Customer Texts re-checks holds:** a job from the Hold list that has been booked (or cancelled) since the list was loaded is skipped, both when checking and right before its text.
+- Added tests for all of this (`tests/test_concurrency.py`): slow and timed-out answers, sign-out, failing answers, Stop and Cancel mid-read, and the board changing during a run.
+
 ## 1.5.1
 
 Faster and steadier. Nothing works differently for you except that it's quicker and tells you more.
