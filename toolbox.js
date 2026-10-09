@@ -7,6 +7,7 @@
     - Tech Messages: sends a saved message (Good Morning, ETA, ...) to the techs you pick (by team or on the board).
     - Business Unit: switches the jobs you pick to a branch (Mendenhall Branch by default).
     - Customer Texts: texts customers a saved message (holds, tech updates, reschedules, ...).
+    - Tags (test copy): pick tags from ServiceTitan's tag list and check which jobs have them.
 
   HOW TO RELEASE AN UPDATE
     1. Edit this file on GitHub.
@@ -18,8 +19,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.5.3';
+  const VERSION = '1.6-test1';
   const WHATS_NEW = {
+    '1.6-test1': '🧪 Test copy: new 🏷️ Tags. Your tag list loads by itself, with search, ⭐ favorites and recently used. Choose tags to add or take off, and 🔢 Count up moves Rescheduled x1 → x2 (and the like). Check jobs shows what each job would get. Reads only: changing tags is off in this copy.',
     '1.5.3': 'Fix: 📝 Notes no longer opens a "This Page Could Not Be Found" page. When you click a job, ServiceTitan shows a blank customer link for about a second while the job loads; Notes now waits for the real customer instead of following the blank one.',
     '1.5.2': 'Steadier runs: Stop works right away, even while jobs are still being read. If ServiceTitan signs you out, a run stops and says so. If ServiceTitan is slow, the Toolbox eases off. Customer Texts skips a hold that has been booked since you loaded the list.',
     '1.5.1': 'Faster and smarter: Check jobs in Job Notifications and Business Unit now takes seconds instead of minutes, and Customer Texts checks everyone before it starts, so you see exactly who will be texted (and who is skipped, and why). Every job-picking tool also has + All in the list.',
@@ -619,8 +621,9 @@
   const msgsPane = el('div', 'display:none');
   const bizPane = el('div', 'display:none');
   const textsPane = el('div', 'display:none');
-  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane, texts: textsPane };
-  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts' };
+  const tagsPane = el('div', 'display:none');
+  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane, texts: textsPane, tags: tagsPane };
+  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts', tags: '🏷️ Tags (test)' };
   const showView = name => {
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
     titleText.textContent = TITLES[name];
@@ -634,6 +637,8 @@
     if (name === 'biz' && typeof biz !== 'undefined') biz.refresh();
     if (name !== 'texts' && typeof texts !== 'undefined') texts.leave();
     if (name === 'texts' && typeof texts !== 'undefined') texts.refresh();
+    if (name !== 'tags' && typeof tags !== 'undefined') tags.leave();
+    if (name === 'tags' && typeof tags !== 'undefined') tags.refresh();
   };
 
   menuPane.append(
@@ -642,12 +647,13 @@
     menuBtn('🔕 Job Notifications', () => showView('jobs')),
     menuBtn('💬 Tech Messages', () => showView('msgs')),
     menuBtn('🏢 Business Unit', () => showView('biz')),
-    menuBtn('📱 Customer Texts', () => showView('texts'))
+    menuBtn('📱 Customer Texts', () => showView('texts')),
+    menuBtn('🏷️ Tags (test)', () => showView('tags'))
   );
   const checkRow = el('div', 'display:flex;justify-content:flex-end;margin-top:4px');
   checkRow.append(smallBtn('🩺 Check', () => health.checkBoard(true)));
   menuPane.appendChild(checkRow);
-  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane);
+  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane, tagsPane);
 
   // ===================================================================
   // Tool 1: Notes
@@ -3315,6 +3321,602 @@
   })();
 
   // ===================================================================
+  // Tool 6: Tags (TEST COPY: reads only)
+  // Pick tags from ServiceTitan's own tag list (search, ⭐ favorites, 🕘 recently used), pick
+  // jobs, and Check jobs shows which of those tags each job already has. Nothing is saved:
+  // "Add tags" stays off until we've confirmed how ServiceTitan saves a job's tags.
+  //   - 🔬 Find tags: copies a short report of where the tag list and a job's tags were found
+  //     (field names and counts only, no customer details).
+  //   - 🎥 Watch me add a tag: while on, notes which addresses ServiceTitan's page sends to when
+  //     you add a tag by hand (addresses and field names only), so saving can be built on them.
+  // ===================================================================
+  const tags = (() => {
+    const MAX_PER_RUN = 50;
+    const MAX_TAGS = 10;
+    const un = v => { try { return window.ko && typeof window.ko.unwrap === 'function' ? window.ko.unwrap(v) : v; } catch (e) { return v; } };
+    const isNode = v => typeof Node !== 'undefined' && v instanceof Node;
+    const nameOf = x => {
+      if (typeof x === 'string') return norm(x);
+      if (!x || typeof x !== 'object') return '';
+      const n = [x.Name, x.TagTypeName, x.TagName, x.Text, x.DisplayName].map(un).find(v => typeof v === 'string' && norm(v));
+      return n ? norm(n) : '';
+    };
+    const idOf = x => {
+      if (typeof x === 'number') return String(x);
+      if (typeof x === 'string') return /^\d+$/.test(x) ? x : null;
+      if (!x || typeof x !== 'object') return null;
+      const v = [x.Id, x.TagTypeId, x.TagId].map(un).find(y => y != null && y !== '');
+      return v == null ? null : String(v);
+    };
+    // Only plain color values go into a style (nothing else from the page is trusted there).
+    const safeColor = c => (typeof c === 'string' && /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\)|hsla?\([\d\s.,%deg]+\))$/i.test(c.trim())) ? c.trim() : '';
+    const colorOf = x => (!x || typeof x !== 'object') ? '' : ([x.Color, x.ColorCode, x.BackgroundColor, x.Colour].map(un).map(safeColor).find(Boolean) || '');
+    const fieldsOf = arr => { const k = new Set(); arr.slice(0, 5).forEach(x => { if (x && typeof x === 'object') Object.keys(x).forEach(y => k.add(y)); }); return Array.from(k).slice(0, 14); };
+    const describe = v => Array.isArray(v)
+      ? 'list of ' + v.length + (v.length && v[0] && typeof v[0] === 'object' ? ' (fields: ' + fieldsOf(v).join(', ') + ')' : v.length ? ' (' + typeof v[0] + 's)' : '')
+      : v && typeof v === 'object' ? 'object (fields: ' + Object.keys(v).slice(0, 14).join(', ') + ')' : typeof v;
+
+    // ---------- Where the tags are ----------
+    // Lists named like "tags" in the page's own data, where each item has a name and an id.
+    const isTagList = v => Array.isArray(v) && v.length > 0 && v.slice(0, 20).every(x => x && typeof x === 'object' && nameOf(x) && idOf(x) != null);
+    const findPageLists = () => {
+      const out = [], seen = new Set();
+      const scan = (obj, path, depth) => {
+        if (!obj || typeof obj !== 'object' || depth > 3 || seen.has(obj) || isNode(obj) || obj === window) return;
+        seen.add(obj);
+        let keys; try { keys = Object.keys(obj); } catch (e) { return; }
+        keys.slice(0, 400).forEach(k => {
+          let v; try { v = un(obj[k]); } catch (e) { return; }
+          if (Array.isArray(v)) { if (/tag/i.test(k) && isTagList(v)) out.push({ path: path + '.' + k, list: v }); }
+          else if (v && typeof v === 'object') scan(v, path + '.' + k, depth + 1);
+        });
+      };
+      try { if (window.App) scan(window.App, 'App', 0); } catch (e) {}
+      return out.sort((a, b) => b.list.length - a.list.length);
+    };
+    // The first field named like "tags" that holds a list: { field, items } or null.
+    const vmTagsOf = vm => {
+      if (!vm || typeof vm !== 'object') return null;
+      let keys; try { keys = Object.keys(vm); } catch (e) { return null; }
+      for (const k of keys) {
+        if (!/tag/i.test(k)) continue;
+        let v; try { v = un(vm[k]); } catch (e) { continue; }
+        if (Array.isArray(v)) return { field: k, items: v };
+      }
+      return null;
+    };
+    const boardJobIds = () => Array.from(new Set(Array.from(document.querySelectorAll('a.appointment[data-job-id]')).map(a => a.getAttribute('data-job-id')).filter(j => /^\d+$/.test(j || ''))));
+    const assignmentOf = j => {
+      try {
+        const jl = document.querySelector('.job-list');
+        const vm = jl && window.ko && window.ko.dataFor(jl);
+        const list = (vm && un(vm.Assignments)) || [];
+        return list.find(x => String(un(x.JobId)) === String(j)) || null;
+      } catch (e) { return null; }
+    };
+    // A job's tags as the board has them (only for jobs on the board).
+    const boardTagsOf = j => {
+      const a = assignmentOf(j);
+      const t = a && vmTagsOf(a);
+      if (t) return Object.assign({ from: 'board data (' + t.field + ')' }, t);
+      for (const b of document.querySelectorAll('a.appointment[data-job-id="' + j + '"]')) {
+        let vm = null; try { vm = window.ko && window.ko.dataFor(b); } catch (e) {}
+        if (vm && String(un(vm.JobId)) === String(j)) { const t2 = vmTagsOf(vm); if (t2) return Object.assign({ from: 'board bubble (' + t2.field + ')' }, t2); }
+      }
+      return null;
+    };
+    // Last resort: the colored labels drawn on the job bubbles (only tags showing on the board).
+    const boardLabels = () => {
+      const found = new Map();
+      Array.from(document.querySelectorAll('a.appointment[data-job-id]')).slice(0, 300).forEach(a => {
+        a.querySelectorAll('span, div, label').forEach(e => {
+          if (e.children.length) return;
+          const t = norm(e.textContent);
+          if (t.length < 2 || t.length > 40 || /^\+\d/.test(t) || /^[\d\s|:-]+$/.test(t)) return;
+          const bg = getComputedStyle(e).backgroundColor;
+          if (!bg || bg === 'transparent' || /^rgba\(\s*0,\s*0,\s*0,\s*0\s*\)$/.test(bg)) return;
+          if (!found.has(t.toLowerCase())) found.set(t.toLowerCase(), { id: null, name: t, color: safeColor(bg) });
+        });
+      });
+      return Array.from(found.values());
+    };
+
+    // The tag list the tool uses: [{ key, id, name, color }], key = the name in lower case.
+    let tagList = [], source = '', sourceKind = '';
+    const loadTags = () => {
+      let items = [];
+      const lists = findPageLists();
+      if (lists.length) {
+        sourceKind = 'page'; source = lists[0].path;
+        items = lists[0].list.filter(x => un(x.Active) !== false && un(x.IsActive) !== false).map(x => ({ id: idOf(x), name: nameOf(x), color: colorOf(x) }));
+      } else {
+        const found = new Map();
+        boardJobIds().forEach(j => {
+          const t = boardTagsOf(j);
+          if (t) t.items.forEach(x => { const n = nameOf(x); if (n) found.set(n.toLowerCase(), { id: idOf(x), name: n, color: colorOf(x) }); });
+        });
+        if (found.size) { sourceKind = 'board'; source = 'the jobs on the board'; items = Array.from(found.values()); }
+        else {
+          const labels = boardLabels();
+          if (labels.length) { sourceKind = 'labels'; source = 'the labels on the board'; items = labels; }
+        }
+      }
+      if (items.length) set('stTagList', JSON.stringify({ kind: sourceKind, source, items }));
+      else {
+        try {
+          const c = JSON.parse(get('stTagList') || 'null');
+          if (c && Array.isArray(c.items)) { items = c.items; sourceKind = 'saved'; source = 'the last list seen (' + c.source + ')'; }
+        } catch (e) {}
+      }
+      const seen = new Set();
+      tagList = items.filter(t => t && t.name)
+        .map(t => ({ key: norm(t.name).toLowerCase(), id: t.id == null ? null : String(t.id), name: norm(t.name), color: safeColor(t.color) }))
+        .filter(t => !seen.has(t.key) && seen.add(t.key))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    };
+
+    // A job's tags from ServiceTitan's job data: the Edit Job data first, then the job page data,
+    // then the board. Returns { from, names } or null if no tags field was found at all.
+    const tagPaths = obj => {
+      const out = [], seen = new Set();
+      const walk = (o, path, depth) => {
+        if (!o || typeof o !== 'object' || depth > 4 || seen.has(o)) return;
+        seen.add(o);
+        Object.keys(o).forEach(k => {
+          const v = o[k], p = path ? path + '.' + k : k;
+          if (/tag/i.test(k)) out.push({ path: p, value: v });
+          if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, p, depth + 1);
+        });
+      };
+      walk(obj, '', 0);
+      return out;
+    };
+    // The job's own tags field: a top-level list (customer and location tags are left out).
+    const jobTagsFrom = d => {
+      const lists = tagPaths(d).filter(p => Array.isArray(p.value));
+      const named = p => p.value.some(x => nameOf(x)) ? 2 : p.value.length ? 1 : 0;
+      const top = lists.filter(p => p.path.indexOf('.') < 0).sort((a, b) => named(b) - named(a));
+      const pick = top[0] || lists.find(p => !/^(customer|location)\b/i.test(p.path));
+      return pick ? { from: pick.path, items: pick.value } : null;
+    };
+    const namesOf = items => items.map(x => {
+      const n = nameOf(x);
+      if (n) return n;
+      const id = idOf(x);
+      const t = id != null && tagList.find(y => y.id === id);
+      return t ? t.name : 'tag #' + (id || '?');
+    });
+    const readJobTags = async (j, alive) => {
+      let lastErr = null;
+      for (const [label, fn] of [['Edit Job data', () => st.jobEdit(j)], ['job data', () => st.job(j)]]) {
+        if (alive && !alive()) return null;
+        let d;
+        try { d = await fn(); } catch (e) { if (st.isSignedOut(e)) throw e; lastErr = e; continue; }
+        const t = d && jobTagsFrom(d);
+        if (t) return { from: label + ' (' + t.from + ')', names: namesOf(t.items) };
+      }
+      const b = boardTagsOf(j);
+      if (b) return { from: b.from, names: namesOf(b.items) };
+      if (lastErr) throw lastErr;
+      return null;
+    };
+
+    // ---------- 🔬 Find tags ----------
+    const report = async () => {
+      const L = ['ServiceTitan Toolbox v' + VERSION + ' tag report', 'When: ' + new Date().toLocaleString(), 'Page: ' + location.hash.split('?')[0].replace(/\d{3,}/g, '<id>'), ''];
+      const lists = findPageLists();
+      L.push('Tag lists in the page data: ' + (lists.length ? '' : 'none found'));
+      lists.slice(0, 6).forEach(x => L.push('  ' + x.path + ': ' + describe(x.list)));
+      L.push('Tag list in use: ' + plural(tagList.length, 'tag') + ' from ' + (source || 'nowhere'));
+      const first = picker.ids()[0] || boardJobIds()[0];
+      if (first) {
+        L.push('', 'Job ' + first + ' (' + (picker.ids()[0] ? 'first picked job' : 'first job on the board') + '):');
+        const a = assignmentOf(first);
+        L.push('  Board data: ' + (a ? (Object.keys(a).filter(k => /tag/i.test(k)).map(k => k + ' = ' + describe(un(a[k]))).join('; ') || 'no fields named like tags') : 'not on the board'));
+        for (const [label, fn] of [['Edit Job data', () => st.jobEdit(first)], ['Job data', () => st.job(first)]]) {
+          try {
+            const ps = tagPaths(await fn());
+            L.push('  ' + label + ': ' + (ps.length ? '' : 'no fields named like tags'));
+            ps.slice(0, 12).forEach(p => L.push('    ' + p.path + ': ' + describe(p.value)));
+          } catch (e) { L.push('  ' + label + ': couldn\'t read (' + errText(e) + ')'); if (st.isSignedOut(e)) break; }
+        }
+      } else L.push('', 'No job to look at: pick a job or open the Dispatch board.');
+      const els = Array.from(document.querySelectorAll('[name*="tag" i], [id*="tag" i], [data-bind*="Tag"]')).filter(e => !panel.contains(e)).slice(0, 15);
+      L.push('', 'Things named like tags on this page: ' + (els.length ? '' : 'none'));
+      els.forEach(e => {
+        const db = e.getAttribute('data-bind');
+        L.push('  <' + e.tagName.toLowerCase() + (e.getAttribute('name') ? ' name=' + e.getAttribute('name') : '') + (e.id ? ' id=' + e.id : '') + (e.multiple ? ' multiple' : '') + (db ? ' data-bind="' + db.slice(0, 90) + '"' : '') + '>');
+      });
+      L.push('', 'Field names and counts only. No customer details are in this report.');
+      return L.join('\n');
+    };
+
+    // ---------- 🎥 Watch me add a tag ----------
+    // While on, notes every save-type request the page makes (and any address with "tag" in it),
+    // with field names only. Values are kept only for fields named like tags (tag ids and names).
+    const recorder = (() => {
+      let on = false, rows = [], realFetch = null, realOpen = null, realSend = null, myFetch = null, myOpen = null, mySend = null, timer = null;
+      const clean = url => {
+        try {
+          const x = new URL(url, location.href);
+          const keys = Array.from(x.searchParams.keys()).filter(k => k !== '_');
+          return x.pathname.replace(/\d{3,}/g, '<id>') + (keys.length ? ' ?' + keys.join('&') : '');
+        } catch (e) { return String(url).replace(/\d{3,}/g, '<id>').slice(0, 100); }
+      };
+      const summarize = (o, path, depth, out) => {
+        if (Array.isArray(o)) {
+          out.push((path || '(list)') + '[' + o.length + ']');
+          if (o.length && o[0] && typeof o[0] === 'object' && depth < 3) summarize(o[0], (path || '') + '[0]', depth + 1, out);
+          return out;
+        }
+        if (!o || typeof o !== 'object') return out;
+        Object.keys(o).slice(0, 60).forEach(k => {
+          const p = path ? path + '.' + k : k, v = o[k];
+          if (/tag/i.test(k)) out.push(p + ' = ' + JSON.stringify(v).slice(0, 160));
+          else if (v && typeof v === 'object' && depth < 3) summarize(v, p, depth + 1, out);
+          else out.push(p);
+        });
+        return out;
+      };
+      const bodyFields = body => {
+        if (body == null) return [];
+        let obj = null;
+        if (typeof body === 'string') {
+          try { obj = JSON.parse(body); }
+          catch (e) { obj = {}; try { new URLSearchParams(body).forEach((v, k) => { obj[k] = v; }); } catch (e2) { return ['(text)']; } }
+        } else if (typeof FormData !== 'undefined' && body instanceof FormData) { obj = {}; body.forEach((v, k) => { obj[k] = typeof v === 'string' ? v : '(file)'; }); }
+        else if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) { obj = {}; body.forEach((v, k) => { obj[k] = v; }); }
+        else return ['(' + (body && body.constructor ? body.constructor.name : typeof body) + ')'];
+        return summarize(obj, '', 0, []).slice(0, 80);
+      };
+      const note = (method, url, body) => {
+        if (!on) return;
+        method = String(method || 'GET').toUpperCase();
+        if (method === 'GET' && !/tag/i.test(String(url))) return;
+        const f = bodyFields(body);
+        rows.push(method + ' ' + clean(url) + (f.length ? '\n      fields: ' + f.join(', ') : ''));
+        showOut(head() + rows.map(r => '  ' + r).join('\n'));
+      };
+      const head = () => '🎥 Recording (' + plural(rows.length, 'request') + ' so far).\n' +
+        'Now add a tag to a quote job at least 3 days out, by hand, the way you normally do, and save it. Then take it back off the same way.\nThen press ⏹ Stop recording.\n\n';
+      const restore = () => {
+        if (myFetch && window.fetch === myFetch) window.fetch = realFetch;
+        if (myOpen && XMLHttpRequest.prototype.open === myOpen) XMLHttpRequest.prototype.open = realOpen;
+        if (mySend && XMLHttpRequest.prototype.send === mySend) XMLHttpRequest.prototype.send = realSend;
+        myFetch = myOpen = mySend = null;
+        clearTimeout(timer);
+      };
+      const start = () => {
+        if (on || running) return;
+        on = true; rows = [];
+        realFetch = window.fetch; realOpen = XMLHttpRequest.prototype.open; realSend = XMLHttpRequest.prototype.send;
+        myFetch = function (input, init) {
+          try { note((init && init.method) || (input && input.method) || 'GET', typeof input === 'string' ? input : (input && input.url) || String(input), init && init.body); } catch (e) {}
+          return realFetch.apply(this, arguments);
+        };
+        myOpen = function (m, url) { this.__stRec = [m, url]; return realOpen.apply(this, arguments); };
+        mySend = function (body) { try { if (this.__stRec) note(this.__stRec[0], this.__stRec[1], body); } catch (e) {} return realSend.apply(this, arguments); };
+        window.fetch = myFetch; XMLHttpRequest.prototype.open = myOpen; XMLHttpRequest.prototype.send = mySend;
+        timer = setTimeout(() => { if (on) finish(); }, 5 * 60000);   // never left on by accident
+        showOut(head());
+        say('Recording. Add a tag by hand now; the Toolbox only watches.');
+        updateButtons();
+      };
+      const finish = async () => {
+        if (!on) return;
+        on = false; restore();
+        const text = ['ServiceTitan Toolbox v' + VERSION + ' recording', 'When: ' + new Date().toLocaleString(), 'Requests while recording (' + rows.length + '):']
+          .concat(rows.length ? rows.map(r => '  ' + r) : ['  none. Was a tag added and saved while it was on?'])
+          .concat(['', 'Addresses and field names only (plus the values of fields named like tags). No customer details.']).join('\n');
+        showOut(text);
+        say(await copy(text) ? 'Recording stopped and copied.' : 'Recording stopped.');
+        updateButtons();
+      };
+      return { toggle: () => (on ? finish() : start()), isOn: () => on, cleanup: () => { on = false; restore(); } };
+    })();
+
+    // ---------- Pane ----------
+    // Scrolls inside the window, so the header (and ✕) never ends up off screen.
+    const wrap = el('div', 'padding:8px 10px 10px;display:grid;gap:8px;overflow:auto');
+    const fit = () => {
+      if (tagsPane.style.display === 'none' || !panel.isConnected) return;
+      wrap.style.maxHeight = '';
+      const other = panel.getBoundingClientRect().height - wrap.getBoundingClientRect().height;
+      wrap.style.maxHeight = Math.max(220, innerHeight - other - 40) + 'px';
+    };
+    window.addEventListener('resize', fit);
+    const msg = el('div', 'font-size:12px;color:#444;min-height:16px');
+    const say = s => { msg.textContent = s; };
+    const testNote = el('div', 'padding:6px 8px;border:1px dashed #b26a00;background:#fff8e1;color:#6b3f00;border-radius:6px;font-size:12px',
+      '🧪 Test copy: this only reads. Changing tags is switched off until we confirm how ServiceTitan saves them.');
+    const tagHead = el('div', 'display:flex;gap:6px;align-items:center');
+    const tagCount = el('span', 'font-size:12px;font-weight:600;margin-right:auto', 'Tags');
+    const reloadBtn = smallBtn('↻', () => { loadTags(); renderTags(); say('Loaded ' + plural(tagList.length, 'tag') + ' from ' + (source || 'nowhere') + '.'); });
+    reloadBtn.title = 'Load the tag list again';
+    tagHead.append(tagCount, reloadBtn);
+    const search = el('input', FULL + 'padding:6px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff');
+    search.type = 'search'; search.placeholder = 'Search tags (try 12-5 or ETA)';
+    search.oninput = () => renderTags();
+    const tagBox = el('div', 'max-height:150px;overflow:auto;border:1px solid #ddd;border-radius:6px;background:#fafafa');
+    const chosenRow = el('div', 'display:flex;flex-wrap:wrap;gap:4px;font-size:12px');
+    const srcNote = el('div', 'font-size:11px;color:#666');
+    // 🔢 Count up: tag families ending in x1, x2, x3… (Rescheduled x1, No Show x2…).
+    const countWrap = el('div', 'display:grid;gap:4px');
+    const countHead = el('div', 'font-size:12px;font-weight:600', '🔢 Count up');
+    const countHelp = el('div', 'font-size:11px;color:#666', 'Takes off the job\'s current one and adds the next (x1 → x2). Adds x1 if it has none.');
+    const countBox = el('div', 'max-height:110px;overflow:auto;border:1px solid #ddd;border-radius:6px;background:#fafafa');
+    countWrap.append(countHead, countHelp, countBox);
+
+    const picker = jobPicker({
+      color: '#2e7d32', soft: 'rgba(46,125,50,.22)', max: MAX_PER_RUN,
+      shown: () => tagsPane.style.display !== 'none',
+      busy: () => running,
+      say: t => say(t),
+      changed: () => updateButtons()
+    });
+
+    const actions = el('div', 'display:flex;flex-wrap:wrap;gap:6px');
+    const checkBtn = smallBtn('Check jobs (changes nothing)', () => runCheck(), PRIMARY);
+    const addBtn = smallBtn('Change tags…', () => say('Changing tags is switched off in this test copy.'));
+    addBtn.title = 'Switched off in this test copy';
+    actions.append(checkBtn, addBtn);
+    const helpers = el('div', 'display:flex;flex-wrap:wrap;gap:6px');
+    const findBtn = smallBtn('🔬 Find tags', async () => {
+      if (running || recorder.isOn()) return;
+      findBtn.disabled = true; findBtn.textContent = 'Looking…';
+      try { const r = await report(); showOut(r); say(await copy(r) ? 'Tag report copied.' : 'Tag report ready.'); }
+      catch (e) { say('⚠️ ' + errText(e)); }
+      finally { findBtn.disabled = false; findBtn.textContent = '🔬 Find tags'; }
+    });
+    findBtn.title = 'Copies where the tag list and a job\'s tags were found. Field names only, no customer details.';
+    const recBtn = smallBtn('🎥 Watch me add a tag', () => recorder.toggle());
+    recBtn.title = 'Notes which addresses ServiceTitan uses when you add a tag by hand. Addresses and field names only.';
+    helpers.append(findBtn, recBtn);
+
+    const results = el('div', 'display:none;gap:6px');
+    const log = el('pre', 'max-height:180px;overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
+    const resRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    const requestStop = () => { if (!running) return; stop = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping...'; };
+    const stopBtn = smallBtn('Stop', () => requestStop());
+    const copyBtn = smallBtn('Copy', async () => { if (await copy(log.textContent)) { copyBtn.textContent = 'Copied'; setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500); } });
+    resRow.append(stopBtn, copyBtn);
+    results.append(log, resRow);
+    const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    navRow.append(smallBtn('← Menu', () => { if (!running) showView('menu'); }));
+    wrap.append(msg, testNote, tagHead, search, tagBox, chosenRow, srcNote, countWrap, picker.box, actions, helpers, results, navRow);
+    tagsPane.appendChild(wrap);
+
+    let running = false, stop = false;
+    const chosen = new Map();   // key -> tag
+    const takeOff = new Set();  // chosen tags set to ➖ take off instead of ➕ add
+    const readKeys = k => { try { const v = JSON.parse(get(k) || '[]'); return Array.isArray(v) ? v.map(String) : []; } catch (e) { return []; } };
+    const favs = new Set(readKeys('stTagFavs'));
+    let recent = readKeys('stTagRecent');
+    const counters = new Set(readKeys('stTagCounters'));   // families ticked in 🔢 Count up (remembered)
+
+    // Tag families that count up: "Rescheduled x1", "Rescheduled x2"… -> one family "Rescheduled".
+    // Only x (or ×) and a number at the very end count; "Job Square #36" is a normal tag.
+    const COUNT_RE = /^(.*\S)\s*[x\u00d7]\s*(\d{1,2})$/i;
+    let families = new Map();   // key -> { key, base, steps: Map(n -> tag) }
+    const buildFamilies = () => {
+      const m = new Map();
+      tagList.forEach(t => {
+        const r = COUNT_RE.exec(t.name);
+        if (!r) return;
+        const base = norm(r[1]), k = base.toLowerCase();
+        if (!m.has(k)) m.set(k, { key: k, base, steps: new Map() });
+        m.get(k).steps.set(Number(r[2]), t);
+      });
+      families = new Map(Array.from(m.values()).sort((a, b) => a.base.localeCompare(b.base)).map(f => [f.key, f]));
+    };
+    // What a run would do to a job with these tags now: { take: [names], put: [names], notes: [] }.
+    const planFor = names => {
+      const now = names.map(norm);
+      const have = new Set(now.map(n => n.toLowerCase()));
+      const take = new Map(), put = new Map(), notes = [];
+      chosen.forEach((t, k) => {
+        if (takeOff.has(k)) { if (have.has(k)) take.set(k, t.name); }
+        else if (!have.has(k)) put.set(k, t.name);
+      });
+      counters.forEach(k => {
+        const f = families.get(k);
+        if (!f) return;
+        const mine = now.map(n => COUNT_RE.exec(n)).filter(r => r && norm(r[1]).toLowerCase() === k);
+        const at = mine.reduce((mx, r) => Math.max(mx, Number(r[2])), 0);
+        const next = f.steps.get(at + 1);
+        if (!next) { notes.push('no "' + f.base + ' x' + (at + 1) + '" tag in ServiceTitan, so ' + f.base + ' is left as it is'); return; }
+        mine.forEach(r => { const n = norm(r[0]); take.set(n.toLowerCase(), n); });
+        put.set(next.key, next.name);
+      });
+      // Never take off and add the same tag in one go.
+      Array.from(put.keys()).forEach(k => { if (take.has(k)) { take.delete(k); put.delete(k); } });
+      return { take: Array.from(take.values()), put: Array.from(put.values()), notes };
+    };
+    const add = s => { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
+    const showOut = text => { results.style.display = 'grid'; log.textContent = text; log.scrollTop = 0; fit(); };
+
+    const swatch = c => el('span', 'display:inline-block;width:10px;height:10px;border-radius:3px;flex:none;border:1px solid rgba(0,0,0,.25);background:' + (safeColor(c) || '#ddd'));
+    const toggle = t => {
+      if (running) return;
+      if (chosen.has(t.key)) { chosen.delete(t.key); takeOff.delete(t.key); }
+      else if (chosen.size >= MAX_TAGS) { say('⚠️ Up to ' + MAX_TAGS + ' tags at a time.'); return; }
+      else chosen.set(t.key, t);
+      renderTags();
+    };
+    const toggleFav = t => {
+      if (favs.has(t.key)) favs.delete(t.key); else favs.add(t.key);
+      set('stTagFavs', JSON.stringify(Array.from(favs)));
+      renderTags();
+    };
+    const tagRow = t => {
+      const r = el('div', 'display:flex;gap:6px;align-items:center;padding:3px 6px;border-bottom:1px solid #eee;font-size:12px;cursor:pointer;color:#111');
+      const box = el('input'); box.type = 'checkbox'; box.checked = chosen.has(t.key); box.style.margin = '0'; box.tabIndex = -1;
+      const name = el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', t.name);
+      name.title = t.name;
+      const fav = favs.has(t.key);
+      const star = el('span', 'cursor:pointer;padding:0 3px;font-size:14px;color:' + (fav ? '#d4a000' : '#999'), fav ? '★' : '☆');
+      star.title = fav ? 'Take off favorites' : 'Add to favorites';
+      star.onclick = e => { e.stopPropagation(); toggleFav(t); };
+      r.onclick = e => { e.preventDefault(); toggle(t); };
+      r.append(box, swatch(t.color), name, star);
+      return r;
+    };
+    const renderCounters = () => {
+      buildFamilies();
+      countBox.textContent = '';
+      if (!families.size) {
+        countBox.appendChild(el('div', 'padding:6px 8px;font-size:12px;color:#666', tagList.length ? 'No tags ending in x1, x2… were found.' : 'Loads with the tag list.'));
+        return;
+      }
+      families.forEach(f => {
+        const steps = Array.from(f.steps.keys()).sort((a, b) => a - b);
+        const r = el('label', 'display:flex;gap:6px;align-items:center;padding:3px 6px;border-bottom:1px solid #eee;font-size:12px;cursor:pointer;color:#111');
+        const box = el('input'); box.type = 'checkbox'; box.checked = counters.has(f.key); box.style.margin = '0'; box.disabled = running;
+        box.onchange = () => {
+          if (box.checked) counters.add(f.key); else counters.delete(f.key);
+          set('stTagCounters', JSON.stringify(Array.from(counters)));
+          updateButtons();
+        };
+        const name = el('span', 'flex:1;min-width:0', f.base);
+        const range = el('span', 'color:#666', 'x' + steps[0] + (steps.length > 1 ? '–x' + steps[steps.length - 1] : ''));
+        r.append(box, swatch((f.steps.get(steps[0]) || {}).color), name, range);
+        countBox.appendChild(r);
+      });
+    };
+    const groupHead = text => el('div', 'padding:3px 6px;font-size:11px;font-weight:700;color:#444;background:#eaeaea;position:sticky;top:0', text);
+    const renderTags = () => {
+      const q = norm(search.value).toLowerCase();
+      const keepScroll = tagBox.scrollTop;
+      tagBox.textContent = '';
+      const byKey = new Map(tagList.map(t => [t.key, t]));
+      if (!tagList.length) {
+        tagBox.appendChild(el('div', 'padding:6px 8px;font-size:12px;color:#666', 'No tags found yet. Open the Dispatch board and press ↻, or use 🔬 Find tags.'));
+      } else if (q) {
+        const hits = tagList.filter(t => t.key.indexOf(q) > -1);
+        if (!hits.length) tagBox.appendChild(el('div', 'padding:6px 8px;font-size:12px;color:#666', 'No tag matches "' + norm(search.value) + '".'));
+        hits.slice(0, 200).forEach(t => tagBox.appendChild(tagRow(t)));
+      } else {
+        const favList = tagList.filter(t => favs.has(t.key));
+        const recList = recent.map(k => byKey.get(k)).filter(t => t && !favs.has(t.key));
+        if (favList.length) { tagBox.appendChild(groupHead('⭐ Favorites')); favList.forEach(t => tagBox.appendChild(tagRow(t))); }
+        if (recList.length) { tagBox.appendChild(groupHead('🕘 Recently used')); recList.forEach(t => tagBox.appendChild(tagRow(t))); }
+        tagBox.appendChild(groupHead('All tags (' + tagList.length + ')'));
+        tagList.forEach(t => tagBox.appendChild(tagRow(t)));
+      }
+      tagBox.scrollTop = keepScroll;
+      tagCount.textContent = 'Tags' + (chosen.size ? ' (' + chosen.size + ' chosen)' : '');
+      chosenRow.textContent = '';
+      if (!chosen.size) chosenRow.appendChild(el('span', 'color:#666', 'Click tags to choose them (up to ' + MAX_TAGS + '). ☆ makes a favorite.'));
+      chosen.forEach((t, k) => {
+        const off = takeOff.has(k);
+        const c = el('span', 'display:inline-flex;gap:4px;align-items:center;padding:2px 7px;border:1px solid ' + (off ? '#e0a0a8' : '#9cc79f') + ';border-radius:10px;background:' + (off ? '#fdecec' : '#eef7ee') + ';color:#111');
+        const sign = el('span', 'cursor:pointer;font-weight:700;color:' + (off ? '#b00020' : '#2e7d32'), off ? '➖' : '➕');
+        sign.title = off ? 'Set to take this tag off (click to add it instead)' : 'Set to add this tag (click to take it off instead)';
+        sign.onclick = () => { if (running) return; if (off) takeOff.delete(k); else takeOff.add(k); renderTags(); };
+        const x = el('span', 'cursor:pointer;color:#666;font-weight:700', '✕');
+        x.title = 'Unchoose this tag';
+        x.onclick = () => toggle(t);
+        c.append(sign, swatch(t.color), document.createTextNode(t.name), x);
+        chosenRow.appendChild(c);
+      });
+      renderCounters();
+      fit();
+      srcNote.textContent = !tagList.length ? '' :
+        sourceKind === 'page' ? plural(tagList.length, 'tag') + ' from ServiceTitan\'s tag list (' + source + ').' :
+        sourceKind === 'saved' ? 'From ' + source + '. Press ↻ on the Dispatch board to refresh it.' :
+        'Only the tags showing on ' + source + ' (' + tagList.length + '). The full list wasn\'t found; 🔬 Find tags helps fix that.';
+      updateButtons();
+    };
+    const updateButtons = () => {
+      const ok = !running && !recorder.isOn() && picker.size() > 0;
+      checkBtn.disabled = !ok; checkBtn.style.opacity = ok ? '1' : '.5';
+      addBtn.disabled = true; addBtn.style.opacity = '.5';
+      findBtn.disabled = running || recorder.isOn(); findBtn.style.opacity = findBtn.disabled ? '.5' : '1';
+      recBtn.disabled = running; recBtn.style.opacity = running ? '.5' : '1';
+      recBtn.textContent = recorder.isOn() ? '⏹ Stop recording' : '🎥 Watch me add a tag';
+      recBtn.style.background = recorder.isOn() ? '#c62828' : '#fff';
+      recBtn.style.color = recorder.isOn() ? '#fff' : '#111';
+      stopBtn.style.display = running ? 'inline-block' : 'none';
+    };
+
+    // ---------- Check jobs ----------
+    const runCheck = async () => {
+      if (running || recorder.isOn() || !picker.size()) return;
+      running = true; stop = false;
+      picker.setPicking(false); picker.setEnabled(false);
+      stopBtn.disabled = false; stopBtn.textContent = 'Stop';
+      updateButtons();
+      const want = Array.from(chosen.values());
+      const planning = want.length > 0 || Array.from(counters).some(k => families.has(k));
+      if (want.length) {
+        recent = want.map(t => t.key).concat(recent.filter(k => !chosen.has(k))).slice(0, 6);
+        set('stTagRecent', JSON.stringify(recent));
+      }
+      const ids = picker.ids();
+      showOut('Reading ' + plural(ids.length, 'job') + '…');
+      try {
+        const out = await st.pool(ids, 4, (j, i, alive) => readJobTags(j, alive), (d, n) => say('Read ' + d + ' of ' + n + '…'), { stop: () => stop });
+        log.textContent = '';
+        let changing = 0, already = 0, unknown = 0;
+        const from = new Set();
+        ids.forEach((j, i) => {
+          const r = out[i];
+          const lab = picker.label(j);
+          const who = '#' + j + (lab ? '  ' + lab.slice(0, 28) : '');
+          if (r === st.NOT_RUN) { add(who + ': not read'); unknown++; return; }
+          if (r && r.error) { add(who + ': couldn\'t read (' + errText(r.error) + ')'); unknown++; return; }
+          if (!r) { add(who + ': no tags field found in the job data'); unknown++; return; }
+          from.add(r.from);
+          const now = r.names.map(norm);
+          let line = who + '\n   now: ' + (now.length ? now.join(', ') : '(no tags)');
+          if (planning) {
+            const plan = planFor(now);
+            if (plan.take.length) line += '\n   would take off: ' + plan.take.join(', ');
+            if (plan.put.length) line += '\n   would add: ' + plan.put.join(', ');
+            plan.notes.forEach(n => { line += '\n   ⚠️ ' + n; });
+            if (!plan.take.length && !plan.put.length) line += '\n   nothing to change';
+            if (plan.take.length || plan.put.length) changing++; else already++;
+          }
+          add(line);
+        });
+        if (out.stopped) add('Stopped.');
+        const h = st.haltNote(out);
+        if (h) add('⚠️ ' + h);
+        add('');
+        add(planning
+          ? 'Summary: ' + plural(changing, 'job') + ' would change, ' + already + ' with nothing to change' + (unknown ? ', ' + unknown + ' couldn\'t be read' : '') + '.'
+          : 'Choose tags (or tick a 🔢 Count up family) to see what each job would get.');
+        if (from.size) add('Read from: ' + Array.from(from).join('; '));
+        add('Nothing was changed.');
+        say(out.stopped ? 'Stopped. Nothing was changed.' : 'Done. Nothing was changed.');
+      } catch (e) {
+        add('⚠️ ' + errText(e));
+        say('⚠️ ' + errText(e));
+      } finally {
+        running = false;
+        picker.setEnabled(true);
+        updateButtons();
+      }
+    };
+
+    let loaded = false;
+    const refresh = () => {
+      if (running) return;
+      if (!loaded || !tagList.length) { loadTags(); loaded = true; }
+      renderTags();
+      picker.render();
+      if (!onBoard() && !msg.textContent) say('Open the Dispatch board to pick jobs.');
+    };
+    return {
+      refresh,
+      leave: () => picker.setPicking(false),
+      isRunning: () => running,
+      stop: requestStop,
+      cleanup: () => { recorder.cleanup(); picker.cleanup(); window.removeEventListener('resize', fit); }
+    };
+  })();
+
+  // ===================================================================
   // Dragging, closing, and starting up
   // ===================================================================
   header.addEventListener('mousedown', e => {
@@ -3350,11 +3952,12 @@
     msgs.cleanup();
     biz.cleanup();
     texts.cleanup();
+    tags.cleanup();
     panel.remove();
     delete window.__stToolbox;
   };
   const close = () => {
-    const runners = [[notify, 'Job Notifications'], [msgs, 'Tech Messages'], [biz, 'Business Unit'], [texts, 'Customer Texts']];
+    const runners = [[notify, 'Job Notifications'], [msgs, 'Tech Messages'], [biz, 'Business Unit'], [texts, 'Customer Texts'], [tags, 'Tags']];
     const found = runners.find(r => r[0].isRunning());
     if (!found) return finishClose();
     if (closing) return;
@@ -3379,6 +3982,6 @@
 
   document.body.appendChild(panel);
   const startView = get('stView');
-  showView(['notes', 'jobs', 'msgs', 'biz', 'texts'].indexOf(startView) > -1 ? startView : 'menu');
+  showView(['notes', 'jobs', 'msgs', 'biz', 'texts', 'tags'].indexOf(startView) > -1 ? startView : 'menu');
   health.checkBoard(false);
 })();
