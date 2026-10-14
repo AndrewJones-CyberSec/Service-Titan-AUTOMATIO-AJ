@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.6
+
+- **New: 🔀 Move Jobs.** Move jobs between techs without dragging on the board:
+  - **➡️ Move to a tech** (replace everyone, or just one tech on a two-tech job), **➕ Add a tech**, **⬅️ Unassign**, **🔄 Swap two jobs' techs** and **🔁 Swap two techs' whole day**.
+  - **＋ All Unassigned** loads the whole Unassigned list for the day the board shows, so every unassigned job can go on one tech at once.
+  - **Review (changes nothing)** shows every job and every warning first, with the same checks the job panel makes before assigning: a skill the tech doesn't have, a tech already booked at that time, and a managed tech on every job with a price. Jobs with a warning are only done if you tick that warning's box.
+  - The new tech is always added before the old one comes off, so a job is never left in Unassigned halfway. Unassigning a job from another branch (which would drop off your board) needs its own tick.
+  - Each job gets a fresh look right before it changes, each change is confirmed from ServiceTitan's data, problem jobs get one more try, and **↩ Put back** undoes the last run.
+  - **🔕 Notifications for these jobs…** hands the moved jobs to Job Notifications.
+- Job Notifications can now take a list of jobs from another tool.
+- Added tests for Move Jobs (`tests/test_move_jobs.py`, `tests/board_moves.html`).
+
 ## 1.5.4
 
 - **New: 🔕 Job Notifications can turn notifications back ON.** Next to *Turn off notifications…* there's now **Turn on notifications…**, for a tech's jobs or jobs you pick. It works exactly like turning off, in reverse:

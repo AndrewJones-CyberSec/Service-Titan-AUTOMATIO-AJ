@@ -1,12 +1,13 @@
 /*
   ServiceTitan Toolbox
   ====================
-  One panel with five tools for the ServiceTitan Dispatch board:
+  One panel with six tools for the ServiceTitan Dispatch board:
     - Notes: adds a ready-made note (sorted into folders) to a job's customer in one click.
     - Job Notifications: checks, turns off or turns on job notifications for one tech's jobs, or jobs you pick.
     - Tech Messages: sends a saved message (Good Morning, ETA, ...) to the techs you pick (by team or on the board).
     - Business Unit: switches the jobs you pick to a branch (Mendenhall Branch by default).
     - Customer Texts: texts customers a saved message (holds, tech updates, reschedules, ...).
+    - Move Jobs: moves jobs to a tech, adds or unassigns techs, or swaps jobs or whole days, without dragging.
 
   HOW TO RELEASE AN UPDATE
     1. Edit this file on GitHub.
@@ -18,8 +19,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.5.4';
+  const VERSION = '1.6';
   const WHATS_NEW = {
+    '1.6': 'New: 🔀 Move Jobs. Move jobs to a tech, add or unassign a tech, or swap two jobs or two techs\' whole day, without dragging. ＋ All Unassigned puts every unassigned job on one tech in one go. Review first: it warns about skills, double-booking and jobs from another branch, and ↩ Put back undoes it.',
     '1.5.4': 'New: 🔕 Job Notifications can turn notifications back ON (Turn on notifications…), not just off. Fix: 📱 Customer Texts works again for logins that can\'t open job records (it wrongly stopped as if you weren\'t signed in). It now reads phone numbers from the customer instead.',
     '1.5.3': 'Fix: 📝 Notes no longer opens a "This Page Could Not Be Found" page. When you click a job, ServiceTitan shows a blank customer link for about a second while the job loads; Notes now waits for the real customer instead of following the blank one.',
     '1.5.2': 'Steadier runs: Stop works right away, even while jobs are still being read. If ServiceTitan signs you out, a run stops and says so. If ServiceTitan is slow, the Toolbox eases off. Customer Texts skips a hold that has been booked since you loaded the list.',
@@ -107,8 +109,10 @@
   // ===================================================================
   // Reading ServiceTitan's own data
   // The same requests ServiceTitan's pages make to show a job or a conversation. Reading them
-  // directly takes a fraction of a second, where opening the page takes a few seconds. Nothing
-  // here changes anything; changes still go through the page, like a person would do them.
+  // directly takes a fraction of a second, where opening the page takes a few seconds. Most
+  // tools still make their changes on the page, like a person would. Move Jobs is the exception:
+  // it sends the same assign/unassign requests the job panel sends, after the same checks the
+  // panel makes (skills, already booked, managed tech), one job at a time, and confirms each.
   // ===================================================================
   const st = (() => {
     const HEADERS = { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' };
@@ -129,12 +133,17 @@
     const stillSignedIn = () => asking || (asking = fetch('/api/cp/settings/special/permission-settings?_=' + Date.now(), { credentials: 'include', headers: HEADERS })
       .then(r => r.ok && !(r.redirected && /\/(auth|account|login|signin)\b/i.test(r.url)), () => false)
       .then(v => { asking = null; return v; }));
-    const getJSON = async (url, ms) => {
+    // post: when given, sends it as JSON with a POST (the way ServiceTitan's own pages do) instead
+    // of a plain read. A POST with an empty answer gives null.
+    const getJSON = async (url, ms, post) => {
       const ctl = typeof AbortController === 'function' ? new AbortController() : null;
       const timer = ctl ? setTimeout(() => ctl.abort(), ms || 15000) : null;
+      const isPost = post !== undefined;
       let r, text;
       try {
-        r = await fetch(url + (url.indexOf('?') < 0 ? '?' : '&') + '_=' + Date.now(), { credentials: 'include', headers: HEADERS, signal: ctl ? ctl.signal : undefined });
+        r = isPost
+          ? await fetch(url, { method: 'POST', credentials: 'include', headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, HEADERS), body: JSON.stringify(post), signal: ctl ? ctl.signal : undefined })
+          : await fetch(url + (url.indexOf('?') < 0 ? '?' : '&') + '_=' + Date.now(), { credentials: 'include', headers: HEADERS, signal: ctl ? ctl.signal : undefined });
         if (r.status === 401 || r.status === 403) throw (await stillSignedIn()) ? fail('noPermission', NO_PERMISSION) : fail('signedOut', SIGNED_OUT);
         if (r.redirected && /\/(auth|account|login|signin)\b/i.test(r.url)) throw fail('signedOut', SIGNED_OUT);
         if (r.status >= 500 || r.status === 408 || r.status === 429) throw fail('trouble', 'ServiceTitan answered ' + r.status);
@@ -144,6 +153,7 @@
         if (e && e.kind) throw e;
         throw e && e.name === 'AbortError' ? fail('trouble', 'ServiceTitan took too long to answer') : fail('trouble', 'couldn\'t reach ServiceTitan (' + errText(e) + ')');
       } finally { if (timer) clearTimeout(timer); }
+      if (isPost && !norm(text)) return null;
       try { return JSON.parse(text); }
       catch (e) {
         // A sign-in page instead of data also means the session has ended.
@@ -152,7 +162,7 @@
       }
     };
     // Reads several things at once, a few at a time (gentle on ServiceTitan), keeping the order.
-    // Only for reading: changes are always made one at a time, on the page.
+    // Only for reading: changes are always made one at a time.
     //   - A failed item gives { error } instead of stopping the rest.
     //   - opts.stop(): once it's true, pool returns right away (reads already on their way are
     //     not waited for). out.stopped is set.
@@ -237,7 +247,41 @@
       return d.filter(x => x && !isType(x.type, CONTACT_EMAIL, 'email') && last10(x.value).length === 10)
         .map(x => ({ num: last10(x.value), mobile: isType(x.type, CONTACT_MOBILE, 'mobile(phone)?') }));
     };
-    return { getJSON, pool, NOT_RUN, haltNote, SIGNED_OUT, isSignedOut, isNoPermission, job, jobEdit, chatThread, chatMessages, customerPhones, code };
+    // ---- Assigning techs (Move Jobs). The same requests the job panel on the Dispatch board makes
+    // (the ⋮ menu → Assign/Unassign), so they work without permission to open the job record.
+    // An appointment as the job panel sees it: { jobId, jobTotal, businessUnitId, appointment:
+    // { id, number, start, end, status, techIds } }, or throws.
+    const appointment = async apptId => {
+      const d = await getJSON('/dispatch/job-edit-flyout/GetJobEditFlyoutData?appointmentId=' + encodeURIComponent(apptId));
+      const a = d && Array.isArray(d.jobAppointments) ? d.jobAppointments.find(x => x && String(x.id) === String(apptId)) : null;
+      if (!a || !Array.isArray(a.technicians)) throw fail('bad', 'the appointment came back in a shape the Toolbox doesn\'t know');
+      return {
+        jobId: d.jobId, jobTotal: Number(d.jobTotal) || 0, businessUnitId: d.businessUnitId,
+        appointment: { id: a.id, number: a.number, start: a.start, end: a.end, status: norm(a.jobAppointmentStatus), techIds: a.technicians.map(t => t && t.id).filter(x => x != null) }
+      };
+    };
+    // The skills a job needs: [{ id, name }] (active ones only).
+    const jobSkills = async jobId => {
+      const d = await getJSON('/dispatch/job-edit-flyout/GetJobOverviewData?jobId=' + encodeURIComponent(jobId));
+      if (!d || !Array.isArray(d.skills)) throw fail('bad', 'the job overview came back in a shape the Toolbox doesn\'t know');
+      return d.skills.filter(s => s && s.active !== false).map(s => ({ id: s.id, name: norm(s.name) }));
+    };
+    // Every tech: [{ id, name, active, managed, skillIds }].
+    const technicians = async () => {
+      const d = await getJSON('/app/api/data/technicians', 30000);
+      if (!Array.isArray(d)) throw fail('bad', 'the technician list came back in a shape the Toolbox doesn\'t know');
+      return d.filter(t => t && t.id != null).map(t => ({ id: t.id, name: norm(t.name), active: t.active !== false, managed: !!t.isManagedTechnician, skillIds: Array.isArray(t.skillIds) ? t.skillIds : null }));
+    };
+    // Is each tech already booked at that time? [{ id, booked }] (same check the job panel makes).
+    const techsBooked = async (techIds, start, end, jobId) => {
+      const d = await getJSON('/Job/TechniciansAreBooked', 15000, { technicianIds: techIds, start: new Date(start).toISOString(), end: new Date(end).toISOString(), repeatModel: null, originalAppointmentId: jobId, originalAppointmentDefinitionId: null });
+      if (!Array.isArray(d)) throw fail('bad', 'the booked check came back in a shape the Toolbox doesn\'t know');
+      return d.map(x => ({ id: x.TechnicianId, booked: !!(x.IsBookedForJob || x.IsBookedForNonJobEvent || x.IsBookedForRecurring) }));
+    };
+    const assignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/AssignTechnicians', 20000, { appointmentId: apptId, technicianIds: techIds });
+    const unassignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/UnassignTechnicians', 20000, { appointmentId: apptId, technicianIds: techIds });
+    return { getJSON, pool, NOT_RUN, haltNote, SIGNED_OUT, isSignedOut, isNoPermission, job, jobEdit, chatThread, chatMessages, customerPhones, code,
+      appointment, jobSkills, technicians, techsBooked, assignTechs, unassignTechs };
   })();
 
   // The editable list used by ✏️ Edit notes and ✏️ Edit messages: a name and a text per item,
@@ -378,7 +422,7 @@
   };
 
   // ===================================================================
-  // Picking jobs: shared by Job Notifications, Business Unit and Customer Texts.
+  // Picking jobs: shared by Job Notifications, Business Unit, Customer Texts and Move Jobs.
   // With 🖱️ Pick on board on, clicking a job on the timeline, or a row in the job list at the
   // bottom, adds it (click again to take it off). Jobs can also be typed in, or a whole list
   // tab added at once. Picked jobs are highlighted only while their tool is open.
@@ -438,10 +482,10 @@
       paint();
     };
     const changed = () => { render(); if (opts.changed) opts.changed(); };
-    const add = j => {
+    const add = (j, lab) => {
       if (picked.has(j)) return false;
       if (opts.max && picked.size >= opts.max) { say('⚠️ The list is full (' + opts.max + ' jobs per run).'); return false; }
-      picked.set(j, labelOf(j));
+      picked.set(j, lab || labelOf(j));
       return true;
     };
     const addTyped = () => {
@@ -498,6 +542,9 @@
       has: j => picked.has(j),
       label: j => picked.get(j) || '',
       remove: j => { picked.delete(j); render(); },
+      // Adds several jobs at once (another tool handing over its list, or a whole list loaded from
+      // ServiceTitan). labels: optional { job: label }. Returns how many were added.
+      addMany: (ids, labels) => { if (opts.busy()) return 0; let n = 0; (ids || []).forEach(j => { j = String(j); if (/^\d+$/.test(j) && add(j, labels && labels[j])) n++; }); changed(); return n; },
       render,
       setPicking,
       isPicking: () => picking,
@@ -641,8 +688,9 @@
   const msgsPane = el('div', 'display:none');
   const bizPane = el('div', 'display:none');
   const textsPane = el('div', 'display:none');
-  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane, texts: textsPane };
-  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts' };
+  const movesPane = el('div', 'display:none;overflow-y:auto');
+  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane, texts: textsPane, moves: movesPane };
+  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts', moves: '🔀 Move Jobs' };
   const showView = name => {
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
     titleText.textContent = TITLES[name];
@@ -656,6 +704,8 @@
     if (name === 'biz' && typeof biz !== 'undefined') biz.refresh();
     if (name !== 'texts' && typeof texts !== 'undefined') texts.leave();
     if (name === 'texts' && typeof texts !== 'undefined') texts.refresh();
+    if (name !== 'moves' && typeof moves !== 'undefined') moves.leave();
+    if (name === 'moves' && typeof moves !== 'undefined') moves.refresh();
   };
 
   menuPane.append(
@@ -664,12 +714,13 @@
     menuBtn('🔕 Job Notifications', () => showView('jobs')),
     menuBtn('💬 Tech Messages', () => showView('msgs')),
     menuBtn('🏢 Business Unit', () => showView('biz')),
-    menuBtn('📱 Customer Texts', () => showView('texts'))
+    menuBtn('📱 Customer Texts', () => showView('texts')),
+    menuBtn('🔀 Move Jobs', () => showView('moves'))
   );
   const checkRow = el('div', 'display:flex;justify-content:flex-end;margin-top:4px');
   checkRow.append(smallBtn('🩺 Check', () => health.checkBoard(true)));
   menuPane.appendChild(checkRow);
-  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane);
+  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane, movesPane);
 
   // ===================================================================
   // Tool 1: Notes
@@ -1500,8 +1551,20 @@
         refresh(true);
       }
     };
+    // Another tool (Move Jobs) hands over jobs: switch to "Jobs I pick" and add them.
+    const takeJobs = ids => {
+      if (running) return 0;
+      src = 'picked'; set('stNotifySrc', 'picked');
+      srcPicked.r.checked = true; srcTech.r.checked = false;
+      confirmBox.style.display = 'none';
+      const n = picker.addMany(ids);
+      refresh(true);
+      say('Added ' + plural(n, 'job') + ' from Move Jobs. Check them, then turn their notifications off or on.');
+      return n;
+    };
     return {
       refresh,
+      takeJobs,
       leave: () => picker.setPicking(false),
       isRunning: () => running,
       stop: requestStop,
@@ -3396,6 +3459,654 @@
   })();
 
   // ===================================================================
+  // Tool 6: Move Jobs
+  // Moves jobs to a tech, adds a tech, unassigns, or swaps, without dragging on the board.
+  // It sends the same requests the job panel's ⋮ → Assign/Unassign sends, and makes the same
+  // checks the panel makes first:
+  //   - skills: the job needs a skill the tech doesn't have (the panel's "Confirmation")
+  //   - already booked: the tech has something else at that time
+  //   - managed tech: a job with a price must keep at least one managed tech
+  // Review (changes nothing) shows every job and every warning before anything happens; jobs
+  // with a warning are only done if you tick that warning's box.
+  // A new tech is always added before the old one comes off, so a job is never left in
+  // Unassigned halfway (where a job from another branch would drop off your board). Plain
+  // Unassign warns about those. Each change is confirmed from ServiceTitan's data, problem jobs
+  // get one more try, and ↩ Put back undoes the last run.
+  // ===================================================================
+  const moves = (() => {
+    const TOOL = 'Move Jobs';
+    const MAX_PER_RUN = 300;
+    const MODES = [
+      ['move', '➡️ Move to a tech'],
+      ['add', '➕ Add a tech (keeps who\'s on it)'],
+      ['unassign', '⬅️ Unassign'],
+      ['swapJobs', '🔄 Swap two jobs\' techs'],
+      ['swapDays', '🔁 Swap two techs\' whole day']
+    ];
+    const u = v => { try { return window.ko && typeof window.ko.unwrap === 'function' ? window.ko.unwrap(v) : (typeof v === 'function' ? v() : v); } catch (e) { return v; } };
+    const S = x => String(x);
+    const hasId = (list, id) => list.some(x => S(x) === S(id));
+
+    // ---------- The board ----------
+    const boardVM = () => { try { const jl = document.querySelector('.job-list'); return jl && window.ko ? window.ko.dataFor(jl) || null : null; } catch (e) { return null; } };
+    const boardDay = () => { const vm = boardVM(); const d = vm && u(vm.Date); return d instanceof Date && !isNaN(d) ? d : null; };
+    const sameDay = (a, b) => !!(a && b) && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const pad = n => String(n).padStart(2, '0');
+    const dayISO = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T00:00:00';
+    const dayText = d => d ? d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'the day shown';
+    const toDate = v => { v = u(v); if (v == null || v === '') return null; const d = v instanceof Date ? v : new Date(v); return isNaN(d) ? null : d; };
+    const boardBUs = () => { try { const f = boardVM().BusinessUnitFilter; const ids = f && typeof f.getIds === 'function' ? f.getIds() : []; return (ids || []).map(Number).filter(Boolean); } catch (e) { return []; } };
+    const buName = id => { try { const b = ((window.App && window.App.Data && window.App.Data.BusinessUnits) || []).find(x => Number(x.Id) === Number(id)); if (b && b.Name) return norm(b.Name); } catch (e) {} return 'another branch'; };
+    const otherBranch = id => { const ids = boardBUs(); return !!(ids.length && id != null && ids.indexOf(Number(id)) < 0); };
+    const skillsOn = () => { try { return !(window.App && window.App.Data && window.App.Data.EnableSkillsManagement === false); } catch (e) { return true; } };
+
+    const seenNames = new Map();   // tech id -> name, from the board
+    // One appointment from the board's data (timeline, job list or the Unassigned list).
+    const rowOf = x => {
+      const r = {
+        apptId: u(x.Id), jobId: S(u(x.JobId)), number: u(x.AppointmentNumber),
+        customer: norm(u(x.Customer)), start: toDate(x.Start), end: toDate(x.End),
+        techs: (u(x.Technicians) || []).map(t => ({ id: u(t.Id), name: norm(u(t.Name)) })).filter(t => t.id != null),
+        bu: u(x.BusinessUnitId)
+      };
+      r.techs.forEach(t => { if (t.name) seenNames.set(S(t.id), t.name); });
+      return r;
+    };
+    let unassigned = { day: null, rows: [] };   // the whole Unassigned list for a day, once loaded
+    // Every appointment on the day the board shows, one entry each (a job with two techs is on the
+    // board twice, once in each tech's row).
+    const dayRows = () => {
+      const day = boardDay(), vm = boardVM(), out = new Map();
+      const take = list => (list || []).forEach(x => {
+        try {
+          const r = rowOf(x);
+          if (r.apptId == null || !/^\d+$/.test(r.jobId)) return;
+          if (day && r.start && !sameDay(r.start, day)) return;
+          const prev = out.get(S(r.apptId));
+          if (!prev) { out.set(S(r.apptId), r); return; }
+          r.techs.forEach(t => { if (!prev.techs.some(p => S(p.id) === S(t.id))) prev.techs.push(t); });
+          if (!prev.customer) prev.customer = r.customer;
+        } catch (e) {}
+      });
+      if (vm) { take(u(vm.Assignments)); take(vm.JobList && u(vm.JobList.AllVisibleJobs)); }
+      if (day && unassigned.day && sameDay(unassigned.day, day)) take(unassigned.rows);
+      return Array.from(out.values());
+    };
+    // The whole Unassigned list for the day the board shows (all pages), for your board's branches.
+    const loadUnassigned = async () => {
+      const day = boardDay();
+      if (!day) throw new Error('Open the Dispatch board first.');
+      const PAGE = 500;
+      const page = skip => st.getJSON('/Dispatch/GetJobs', 30000, { JobType: 'Unassigned', Date: dayISO(day), QueryFilter: { Skip: skip, Take: PAGE, Start: {}, Created: {}, BusinessUnitIds: boardBUs() } });
+      const first = await page(0);
+      if (!first || !Array.isArray(first.Jobs)) { health.flag(TOOL, 'the Unassigned list came back in a shape the Toolbox doesn\'t know', '/Dispatch/GetJobs'); throw new Error('unexpected reply'); }
+      let rows = first.Jobs.slice();
+      const total = Number(first.Count) || rows.length;
+      for (let skip = PAGE; skip < Math.min(total, 5000); skip += PAGE) { const d = await page(skip); if (d && Array.isArray(d.Jobs)) rows = rows.concat(d.Jobs); }
+      unassigned = { day, rows };
+      return rows.map(rowOf).filter(r => r.apptId != null && /^\d+$/.test(r.jobId) && !r.techs.length);
+    };
+
+    // ---------- Techs ----------
+    let techList = null;    // [{ id, name, active, managed, skillIds }]
+    let techsNote = '';     // why skills can't be checked, if they can't
+    const loadTechs = async force => {
+      if (techList && !force) return techList;
+      try { techList = await st.technicians(); techsNote = ''; health.clear(TOOL); }
+      catch (e) {
+        if (st.isSignedOut(e)) throw e;
+        // The page's own list has no skills in it, so skills can't be checked with it.
+        const D = (window.App && window.App.Data) || {};
+        const list = D.Technicians || D.ActiveTechnicians || [];
+        techList = list.filter(t => t && t.Id != null).map(t => ({ id: t.Id, name: norm(t.Name), active: t.Active !== false, managed: !!t.IsManagedTechnician, skillIds: null }));
+        techsNote = 'couldn\'t load the techs\' skills (' + errText(e) + ')';
+        if (e && e.kind === 'bad') health.flag(TOOL, 'can\'t read the technician list', '/app/api/data/technicians');
+      }
+      return techList;
+    };
+    const techById = id => (techList || []).find(t => S(t.id) === S(id)) || null;
+    const techName = id => { const t = techById(id); return (t && t.name) || seenNames.get(S(id)) || 'tech #' + id; };
+    const names = ids => ids.map(techName).join(', ');
+
+    // ---------- Pane ----------
+    const wrap = el('div', 'padding:8px 10px 10px;display:grid;gap:8px');
+    const msg = el('div', 'font-size:12px;color:#444;min-height:16px');
+    const say = s => { msg.textContent = s; };
+    let mode = MODES.some(m => m[0] === get('stMoveMode')) ? get('stMoveMode') : 'move';
+    const modeBox = el('div', 'display:grid;gap:1px;font-size:12px');
+    const modeRadios = MODES.map(([val, text]) => {
+      const l = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer');
+      const r = el('input'); r.type = 'radio'; r.name = 'st-move-mode'; r.value = val; r.checked = mode === val;
+      r.onchange = () => { mode = val; set('stMoveMode', val); clearReview(); if (val === 'swapDays') picker.setPicking(false); layout(); };
+      l.append(r, document.createTextNode(text));
+      modeBox.appendChild(l);
+      return r;
+    });
+
+    // A tech list with a box to narrow it down by typing. allLabel: an extra first choice (value '').
+    const techPicker = (label, allLabel, key) => {
+      const box = el('div', 'display:grid;gap:3px');
+      const top = el('div', 'display:flex;gap:6px;align-items:center');
+      const lab = el('span', 'font-size:12px;font-weight:600;min-width:46px', label);
+      const find = el('input', 'flex:1;min-width:0;padding:4px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
+      find.type = 'text'; find.placeholder = 'Type to find a tech';
+      top.append(lab, find);
+      const sel = el('select', FULL + 'padding:5px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff');
+      box.append(top, sel);
+      const fill = () => {
+        const keep = sel.value || get(key) || '';
+        const q = norm(find.value).toLowerCase();
+        sel.textContent = '';
+        if (allLabel) { const o = el('option', '', allLabel); o.value = ''; sel.appendChild(o); }
+        const list = (techList || []).filter(t => t.active && t.name && (!q || t.name.toLowerCase().indexOf(q) > -1)).sort((a, b) => a.name.localeCompare(b.name));
+        if (!allLabel && !list.length) { const o = el('option', '', techList ? 'No tech matches' : 'Loading techs…'); o.value = ''; sel.appendChild(o); }
+        list.forEach(t => { const o = el('option', '', t.name); o.value = S(t.id); sel.appendChild(o); });
+        if (q && list.length && !list.some(t => S(t.id) === keep)) sel.value = S(list[0].id);
+        else if (Array.from(sel.options).some(o => o.value === keep)) sel.value = keep;
+      };
+      find.oninput = () => { fill(); set(key, sel.value); clearReview(); updateButtons(); };
+      sel.onchange = () => { set(key, sel.value); clearReview(); updateButtons(); };
+      return {
+        box, fill, find, sel,
+        value: () => sel.value ? Number(sel.value) : null,
+        setEnabled: on => { [find, sel].forEach(x => { x.disabled = !on; x.style.opacity = on ? '1' : '.5'; }); }
+      };
+    };
+    const toPick = techPicker('To', '', 'stMoveTo');
+    const fromPick = techPicker('From', 'Anyone on the job', 'stMoveFrom');
+    const aPick = techPicker('Tech A', '', 'stMoveA');
+    const bPick = techPicker('Tech B', '', 'stMoveB');
+    toPick.sel.id = 'st-move-to'; fromPick.sel.id = 'st-move-from'; aPick.sel.id = 'st-move-a'; bPick.sel.id = 'st-move-b';
+    const pickers3 = [toPick, fromPick, aPick, bPick];
+
+    // The jobs: picked on the board, from the Unassigned list, or typed (on the day the board shows).
+    const picker = jobPicker({
+      color: '#6a1b9a', soft: 'rgba(106,27,154,.22)', max: MAX_PER_RUN,
+      shown: () => movesPane.style.display !== 'none' && mode !== 'swapDays',
+      busy: () => busy,
+      say: t => say(t),
+      changed: () => { clearReview(); updateButtons(); }
+    });
+    const uaBtn = smallBtn('＋ All Unassigned', () => addUnassigned());
+    uaBtn.title = 'Adds every job in the Unassigned list for the day the board shows (all pages), for your board\'s branches';
+    const jobsBox = el('div', 'display:grid;gap:5px');
+    const uaRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    uaRow.appendChild(uaBtn);
+    jobsBox.append(picker.box, uaRow);
+
+    const actions = el('div', 'display:flex;flex-wrap:wrap;gap:6px');
+    const reviewBtn = smallBtn('Review (changes nothing)', () => review(mode), PRIMARY);
+    actions.appendChild(reviewBtn);
+
+    const reviewBox = el('div', 'display:none;padding:8px;border:1px solid #c9b3dd;background:#f6f0fb;border-radius:6px;font-size:12px;gap:6px');
+    const reviewText = el('div', 'white-space:pre-wrap;max-height:260px;overflow:auto');
+    const reviewOpts = el('div', 'display:grid;gap:3px');
+    const reviewBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    const goBtn = smallBtn('Go', () => go(), 'background:#6a1b9a;color:#fff;border-color:#6a1b9a;font-weight:600');
+    goBtn.id = 'st-move-go';
+    reviewBtns.append(goBtn, smallBtn('Cancel', () => clearReview()));
+    reviewBox.append(reviewText, reviewOpts, reviewBtns);
+
+    const progress = el('div', 'display:none;gap:6px');
+    const log = el('pre', 'max-height:220px;overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
+    const progRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    const requestStop = () => { if (!running) return; stop = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping after this job...'; };
+    const stopBtn = smallBtn('Stop', () => requestStop());
+    const copyBtn = smallBtn('Copy results', async () => { if (await copy(log.textContent)) copyBtn.textContent = 'Copied'; });
+    const undoBtn = smallBtn('↩ Put back', () => review('putback'));
+    const notifBtn = smallBtn('🔕 Notifications…', () => handOff());
+    notifBtn.title = 'Opens Job Notifications with these jobs picked, to turn their notifications off (or on). Needs permission to open job records.';
+    progRow.append(stopBtn, copyBtn, undoBtn, notifBtn);
+    progress.append(log, progRow);
+    const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    navRow.append(smallBtn('← Menu', () => { if (!busy) showView('menu'); }));
+    wrap.append(msg, modeBox, toPick.box, fromPick.box, aPick.box, bPick.box, jobsBox, actions, reviewBox, progress, navRow);
+    movesPane.appendChild(wrap);
+
+    // Move Jobs is taller than a laptop screen once a review shows, so its area scrolls inside the
+    // space left on screen (under the header and any bars, wherever the panel was dragged).
+    const fit = () => {
+      if (movesPane.style.display === 'none') return;
+      const pr = panel.getBoundingClientRect(), others = pr.height - movesPane.getBoundingClientRect().height;
+      const top = panel.style.top && panel.style.top !== 'auto' ? Math.max(0, pr.top) : 16;
+      movesPane.style.maxHeight = Math.max(220, innerHeight - top - others - 16) + 'px';
+    };
+    const onResize = () => fit();
+    window.addEventListener('resize', onResize);
+    let busy = false, running = false, stop = false;
+    let planned = null;   // the last review: { mode, items, at }
+    let undo = [];        // [{ apptId, jobId, number, customer, before, after }] from the last run
+    let movedJobs = [];   // job numbers the last run changed (for Notifications)
+    const add = s => { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
+    const clearReview = () => { planned = null; reviewBox.style.display = 'none'; };
+
+    const layout = () => {
+      const show = (x, on) => { x.style.display = on ? 'grid' : 'none'; };
+      show(toPick.box, mode === 'move' || mode === 'add');
+      show(fromPick.box, mode === 'move' || mode === 'unassign');
+      show(aPick.box, mode === 'swapDays');
+      show(bPick.box, mode === 'swapDays');
+      show(jobsBox, mode !== 'swapDays');
+      uaRow.style.display = mode === 'move' || mode === 'add' ? 'flex' : 'none';
+      const allOpt = fromPick.sel.options[0];
+      if (allOpt && allOpt.value === '') allOpt.textContent = mode === 'unassign' ? 'Everyone on the job' : 'Anyone on the job (replaces everyone)';
+      picker.render();
+      updateButtons();
+    };
+    const updateButtons = () => {
+      const on = !busy;
+      modeRadios.forEach(r => { r.disabled = !on; });
+      pickers3.forEach(p => p.setEnabled(on));
+      picker.setEnabled(on);
+      uaBtn.disabled = !on; uaBtn.style.opacity = on ? '1' : '.5';
+      let ready = on && onBoard();
+      if (mode === 'move' || mode === 'add') ready = ready && !!toPick.value() && picker.size() > 0;
+      if (mode === 'unassign') ready = ready && picker.size() > 0;
+      if (mode === 'swapJobs') ready = ready && picker.size() === 2;
+      if (mode === 'swapDays') ready = ready && !!aPick.value() && !!bPick.value() && S(aPick.value()) !== S(bPick.value());
+      reviewBtn.disabled = !ready; reviewBtn.style.opacity = ready ? '1' : '.5';
+      undoBtn.style.display = !busy && undo.length ? 'inline-block' : 'none';
+      undoBtn.textContent = '↩ Put back (' + undo.length + ')';
+      notifBtn.style.display = !busy && movedJobs.length ? 'inline-block' : 'none';
+      notifBtn.textContent = '🔕 Notifications for these ' + plural(movedJobs.length, 'job') + '…';
+    };
+
+    const addUnassigned = async () => {
+      if (busy) return;
+      if (!onBoard()) return say('Open the Dispatch board first.');
+      busy = true; updateButtons();
+      say('Loading the Unassigned list for ' + dayText(boardDay()) + '...');
+      try {
+        const rows = await loadUnassigned();
+        const labels = {};
+        rows.forEach(r => { if (r.customer && !labels[r.jobId]) labels[r.jobId] = r.customer; });
+        const jobs = Array.from(new Set(rows.map(r => r.jobId)));
+        busy = false;
+        const n = picker.addMany(jobs, labels);
+        say(jobs.length ? 'Added ' + plural(n, 'job') + ' from the Unassigned list for ' + dayText(boardDay()) + (n < jobs.length ? ' (' + (jobs.length - n) + ' were already picked or didn\'t fit)' : '') + '.' : 'The Unassigned list for ' + dayText(boardDay()) + ' is empty.');
+      } catch (e) {
+        say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t load the Unassigned list: ' + errText(e)));
+      } finally { busy = false; updateButtons(); }
+    };
+
+    // ---------- Working out what to do ----------
+    const label = r => '#' + r.jobId + (r.number ? '-' + r.number : '') + (r.customer ? ' ' + r.customer : '');
+    const res = (text, kind, extra) => Object.assign({ text, kind }, extra || {});
+    // What should change on one appointment, given who's on it now. p: the run's choices
+    // ({ to, from } or { want: [tech ids] }). Returns { add, remove } or { skip, kind }.
+    const decide = (m, cur, p) => {
+      const has = id => hasId(cur, id);
+      if (m === 'move') {
+        if (p.from) {
+          if (!has(p.from)) return { skip: 'doesn\'t have ' + techName(p.from), kind: 'skipped' };
+          if (S(p.from) === S(p.to)) return { skip: 'already on ' + techName(p.to), kind: 'already' };
+          return { add: has(p.to) ? [] : [p.to], remove: [p.from] };
+        }
+        const remove = cur.filter(x => S(x) !== S(p.to));
+        if (has(p.to) && !remove.length) return { skip: 'already on ' + techName(p.to), kind: 'already' };
+        return { add: has(p.to) ? [] : [p.to], remove };
+      }
+      if (m === 'add') return has(p.to) ? { skip: 'already on ' + techName(p.to), kind: 'already' } : { add: [p.to], remove: [] };
+      if (m === 'unassign') {
+        if (p.from) return has(p.from) ? { add: [], remove: [p.from] } : { skip: 'doesn\'t have ' + techName(p.from), kind: 'skipped' };
+        return cur.length ? { add: [], remove: cur.slice() } : { skip: 'already unassigned', kind: 'already' };
+      }
+      // Swaps and Put back ('exact'): an exact set of techs, worked out at review time.
+      const want = p.want || [];
+      const add = want.filter(x => !has(x)), remove = cur.filter(x => !hasId(want, x));
+      if (!add.length && !remove.length) return { skip: 'already has ' + (want.length ? names(want) : 'no tech'), kind: 'already' };
+      return { add, remove };
+    };
+    const kindOf = m => m === 'move' || m === 'add' || m === 'unassign' ? m : 'exact';
+    const after = (cur, d) => cur.filter(x => !hasId(d.remove, x)).concat(d.add.filter(x => !hasId(cur, x)));
+    // ServiceTitan keeps at least one managed tech on every job with a price.
+    const managedProblem = (total, fin) => {
+      if (!(total > 0) || !fin.length) return '';
+      if (fin.some(id => { const t = techById(id); return !t || t.managed; })) return '';
+      return 'ServiceTitan needs a managed tech on every job with a price, and ' + names(fin) + (fin.length === 1 ? ' isn\'t' : ' aren\'t') + ' managed';
+    };
+    const changeText = (cur, d) => {
+      const fin = after(cur, d);
+      if (d.add.length && d.remove.length) return names(d.remove) + ' → ' + names(d.add);
+      if (d.add.length) return (cur.length ? '+ ' : '') + names(d.add);
+      return '− ' + names(d.remove) + (fin.length ? '' : ' (to Unassigned)');
+    };
+    const isOver = status => /^(done|completed?|cancell?ed)$/i.test(norm(status));
+
+    // The appointments a run works on, with the choices for each.
+    const targets = m => {
+      const rows = dayRows();
+      if (m === 'swapDays') {
+        const A = aPick.value(), B = bPick.value();
+        const out = [];
+        rows.forEach(r => {
+          const ids = r.techs.map(t => t.id);
+          if (hasId(ids, A) === hasId(ids, B)) return;   // neither, or both: nothing to swap
+          out.push({ r, p: { a: A, b: B } });
+        });
+        return { list: out, missing: [] };
+      }
+      const list = [], missing = [];
+      picker.ids().forEach(j => {
+        const appts = rows.filter(r => r.jobId === S(j));
+        if (!appts.length) { missing.push(j); return; }
+        appts.forEach(r => list.push({ r, p: { to: toPick.value(), from: fromPick.value() } }));
+      });
+      return { list, missing };
+    };
+
+    const TITLE = { move: 'Move to', add: 'Add', unassign: 'Unassign', swapJobs: 'Swap two jobs\' techs', swapDays: 'Swap whole day', putback: 'Put back the last run' };
+    const GO = { move: 'Move', add: 'Add to', unassign: 'Unassign', swapJobs: 'Swap', swapDays: 'Swap', putback: 'Put back' };
+
+    // ---------- Review (reads only) ----------
+    const review = async m => {
+      if (busy) return;
+      if (lock) return say('Wait for ' + lock + ' to finish first.');
+      if (!onBoard()) return say('Open the Dispatch board first.');
+      const day = boardDay();
+      let list = [], missing = [];
+      if (m === 'putback') {
+        list = undo.map(x => ({ r: { apptId: x.apptId, jobId: x.jobId, number: x.number, customer: x.customer, start: null, end: null, bu: null, techs: [] }, p: { want: x.before, expect: x.after } }));
+      } else {
+        ({ list, missing } = targets(m));
+        if (m === 'swapJobs') {
+          if (picker.size() !== 2) return say('Pick exactly two jobs to swap.');
+          if (missing.length) return say('#' + missing.join(', #') + ' isn\'t on the board for ' + dayText(day) + '. Open its day first.');
+          if (list.length !== 2) return say('One of those jobs has more than one visit on ' + dayText(day) + '. Swap needs one visit each.');
+        }
+      }
+      if (!list.length && !missing.length) return say(m === 'swapDays' ? 'Neither tech has jobs on ' + dayText(day) + '.' : 'Nothing to do.');
+      if (list.length > MAX_PER_RUN) return say('⚠️ ' + MAX_PER_RUN + ' jobs per run at most.');
+      busy = true; clearReview(); picker.setPicking(false); updateButtons();
+      say('Checking ' + plural(list.length, 'job') + '...');
+      try {
+        await loadTechs();
+        if (m === 'swapJobs') {
+          // Each job gets the other's techs, as they are right now.
+          const [x, y] = list;
+          const [ax, ay] = await Promise.all([st.appointment(x.r.apptId), st.appointment(y.r.apptId)]);
+          x.p = { want: ay.appointment.techIds.slice() }; y.p = { want: ax.appointment.techIds.slice() };
+        }
+        const skillCache = new Map();
+        const swaps = m === 'swapJobs' || m === 'swapDays';
+        const results = await st.pool(list, 4, async (it, i, alive) => {
+          const now = await st.appointment(it.r.apptId);
+          if (!alive()) return null;
+          const a = now.appointment, cur = a.techIds;
+          const out = { it, cur, total: now.jobTotal, bu: now.businessUnitId, jobId: S(now.jobId), start: a.start, end: a.end, warn: {} };
+          if (m === 'putback' && (cur.length !== it.p.expect.length || cur.some(x => !hasId(it.p.expect, x)))) return Object.assign(out, { skip: 'changed since the move (now ' + (cur.length ? names(cur) : 'unassigned') + '), left alone', kind: 'skipped' });
+          if (isOver(a.status)) return Object.assign(out, { skip: 'appointment is ' + a.status + ', left alone', kind: 'skipped' });
+          if (m === 'swapDays') {
+            const hA = hasId(cur, it.p.a), hB = hasId(cur, it.p.b);
+            if (hA === hB) return Object.assign(out, { skip: hA ? 'has both ' + techName(it.p.a) + ' and ' + techName(it.p.b) : 'has neither tech now', kind: 'skipped' });
+            it.p.want = cur.filter(x => S(x) !== S(it.p.a) && S(x) !== S(it.p.b)).concat([hA ? it.p.b : it.p.a]);
+          }
+          const d = decide(kindOf(m), cur, it.p);
+          if (d.skip) return Object.assign(out, { skip: d.skip, kind: d.kind });
+          const fin = after(cur, d);
+          const mp = managedProblem(out.total, fin);
+          if (mp) return Object.assign(out, { skip: mp, kind: 'skipped' });
+          out.d = d;   // only now is it a job to do
+          if (!fin.length && m !== 'putback' && otherBranch(out.bu)) out.warn.branch = 'goes to ' + buName(out.bu) + '\'s Unassigned list, not yours';
+          if (d.add.length && m !== 'putback') {
+            // Skills, as the job panel checks them before assigning.
+            if (skillsOn()) {
+              const unknown = d.add.filter(id => { const t = techById(id); return !t || !Array.isArray(t.skillIds); });
+              if (unknown.length) out.warn.skills = 'skills couldn\'t be checked for ' + names(unknown) + (techsNote ? ' (' + techsNote + ')' : '');
+              else {
+                if (!skillCache.has(out.jobId)) skillCache.set(out.jobId, st.jobSkills(out.jobId));
+                const need = await skillCache.get(out.jobId);
+                const gaps = d.add.map(id => { const t = techById(id); const miss = need.filter(s => !hasId(t.skillIds, s.id)); return miss.length ? t.name + ' doesn\'t have ' + miss.map(s => s.name).join(', ') : ''; }).filter(Boolean);
+                if (gaps.length) out.warn.skills = gaps.join('; ');
+              }
+            }
+            // Already booked at that time? (Skipped for swaps: each tech is leaving the other job.)
+            if (!swaps && a.start && a.end) {
+              const b = await st.techsBooked(d.add, a.start, a.end, now.jobId);
+              const booked = b.filter(x => x.booked).map(x => x.id);
+              if (booked.length) out.warn.booked = names(booked) + (booked.length === 1 ? ' is' : ' are') + ' already booked at that time';
+            }
+          }
+          return out;
+        }, (d, t) => say('Checking jobs... ' + d + ' of ' + t), {});
+        if (results.halted === 'signedOut') throw results.haltError;
+        const items = [];
+        list.forEach((it, i) => {
+          const x = results[i];
+          if (x === st.NOT_RUN || !x) items.push({ it, skip: 'not checked: ServiceTitan is slow or not answering. Try again in a bit', kind: 'problem' });
+          else if (x.error) items.push({ it, skip: st.isNoPermission(x.error) ? 'your ServiceTitan login doesn\'t have permission to see this job in the job panel' : 'couldn\'t check (' + errText(x.error) + ')', kind: 'problem' });
+          else items.push(x);
+        });
+        missing.forEach(j => items.push({ it: { r: { jobId: S(j), customer: picker.label(j) } }, skip: 'not on the board for ' + dayText(day) + ' (open its day first)', kind: 'skipped' }));
+        planned = { mode: m, items, at: Date.now(), day, params: m === 'move' || m === 'add' ? { to: toPick.value(), from: fromPick.value() } : m === 'unassign' ? { from: fromPick.value() } : m === 'swapDays' ? { a: aPick.value(), b: bPick.value() } : {} };
+        showReview();
+      } catch (e) {
+        say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t check the jobs: ' + errText(e)));
+      } finally { busy = false; updateButtons(); }
+    };
+
+    const WARNS = [
+      ['skills', '⚠️ Skill warning', 'Also do the jobs with a skill warning'],
+      ['booked', '⚠️ Already booked at that time', 'Also do the jobs where the tech is already booked'],
+      ['branch', '⚠️ Would drop off your board (another branch)', 'Also unassign the jobs from another branch']
+    ];
+    const ticks = {};
+    const included = () => !planned ? [] : planned.items.filter(x => x.d && !x.skip && Object.keys(x.warn).every(k => ticks[k] && ticks[k].checked));
+    const showReview = () => {
+      const p = planned, ready = p.items.filter(x => x.d && !x.skip), skipped = p.items.filter(x => !x.d || x.skip);
+      const head = TITLE[p.mode] + (p.mode === 'move' || p.mode === 'add' ? ' ' + techName(p.params.to) + (p.params.from ? ' (from ' + techName(p.params.from) + ')' : '') :
+        p.mode === 'unassign' ? (p.params.from ? ' ' + techName(p.params.from) : ' everyone') : p.mode === 'swapDays' ? ': ' + techName(p.params.a) + ' ⇄ ' + techName(p.params.b) : '');
+      const lines = [head + '   ·   ' + dayText(p.day), ''];
+      const clean = ready.filter(x => !Object.keys(x.warn).length);
+      lines.push('✅ Ready: ' + plural(clean.length, 'job'));
+      clean.slice(0, 60).forEach(x => lines.push('• ' + label(x.it.r) + ': ' + changeText(x.cur, x.d)));
+      if (clean.length > 60) lines.push('…and ' + (clean.length - 60) + ' more');
+      WARNS.forEach(([k, title]) => {
+        const w = ready.filter(x => x.warn[k]);
+        if (!w.length) return;
+        lines.push('', title + ' (' + w.length + '):');
+        w.slice(0, 40).forEach(x => lines.push('• ' + label(x.it.r) + ': ' + changeText(x.cur, x.d) + '. ' + x.warn[k]));
+        if (w.length > 40) lines.push('…and ' + (w.length - 40) + ' more');
+      });
+      if (skipped.length) {
+        lines.push('', '⏭️ Left alone (' + skipped.length + '):');
+        skipped.slice(0, 40).forEach(x => lines.push('• ' + label(x.it.r) + ': ' + x.skip));
+        if (skipped.length > 40) lines.push('…and ' + (skipped.length - 40) + ' more');
+      }
+      if (p.mode === 'swapJobs' || p.mode === 'swapDays') lines.push('', 'Swaps skip the already-booked check: each tech is leaving the other job.');
+      reviewText.textContent = lines.join('\n');
+      reviewOpts.textContent = '';
+      WARNS.forEach(([k, , text]) => {
+        const n = ready.filter(x => x.warn[k]).length;
+        if (!n) { delete ticks[k]; return; }
+        const l = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer;font-weight:600');
+        const c = el('input'); c.type = 'checkbox'; c.className = 'st-move-tick-' + k;
+        c.onchange = () => setGo();
+        ticks[k] = c;
+        l.append(c, document.createTextNode(text + ' (' + n + ')'));
+        reviewOpts.appendChild(l);
+      });
+      setGo();
+      reviewBox.style.display = 'grid';
+      fit();
+      reviewBox.scrollIntoView({ block: 'nearest' });
+      say(ready.length ? 'Review the list, then press ' + GO[p.mode] + '.' : 'Nothing to change.');
+    };
+    const setGo = () => {
+      const n = included().length;
+      goBtn.textContent = planned && planned.mode === 'swapJobs' ? (n ? 'Swap them' : 'Nothing to swap') : GO[planned ? planned.mode : 'move'] + ' ' + plural(n, 'job');
+      goBtn.disabled = !n; goBtn.style.opacity = n ? '1' : '.5';
+    };
+
+    // ---------- Doing it ----------
+    // Waits (a few seconds) until ServiceTitan's data for the appointment passes ok(techIds).
+    const confirmTechs = async (apptId, ok) => {
+      for (let w = 0; w < 6000; w += 400) {
+        await wait(w ? 400 : 150);
+        try { const a = (await st.appointment(apptId)).appointment; if (ok(a.techIds)) return a.techIds; }
+        catch (e) { if (st.isSignedOut(e)) throw e; }
+      }
+      return null;
+    };
+    // One appointment: a fresh look, the change worked out again from who's on it now (in case
+    // the board changed since the review), the checks again, then add first and remove second.
+    const doItem = async (x, m, okWarn) => {
+      const r = x.it.r;
+      let now;
+      try { now = await st.appointment(r.apptId); }
+      catch (e) { if (st.isSignedOut(e)) throw e; return res('couldn\'t read the job (' + errText(e) + '). Nothing changed', 'problem'); }
+      const cur = now.appointment.techIds;
+      if (isOver(now.appointment.status)) return res('appointment is ' + now.appointment.status + ', left alone', 'skipped');
+      const d = decide(kindOf(m), cur, x.it.p);
+      if (d.skip) return res(d.skip, d.kind);
+      // Only what the review showed: a tech to add, or one to take off, that wasn't in it means
+      // someone changed the job since. Leave it for you to look at.
+      if (d.add.some(id => !hasId(x.d.add, id)) || d.remove.some(id => !hasId(x.d.remove, id))) return res('changed since the review (now ' + (cur.length ? names(cur) : 'unassigned') + '). Review again', 'problem', { noRetry: true });
+      const fin = after(cur, d);
+      const mp = managedProblem(now.jobTotal, fin);
+      if (mp) return res(mp, 'skipped');
+      if (!fin.length && otherBranch(now.businessUnitId) && !okWarn.branch && m !== 'putback') return res('would go to ' + buName(now.businessUnitId) + '\'s Unassigned list (not ticked)', 'skipped');
+      // Booked again right before (someone may have booked the tech since the review).
+      if (d.add.length && (m === 'move' || m === 'add') && !okWarn.booked && now.appointment.start && now.appointment.end) {
+        try {
+          const b = await st.techsBooked(d.add, now.appointment.start, now.appointment.end, now.jobId);
+          if (b.some(y => y.booked)) return res('the tech is now booked at that time (not ticked), left alone', 'skipped');
+        } catch (e) { if (st.isSignedOut(e)) throw e; return res('couldn\'t check if the tech is booked (' + errText(e) + '). Nothing changed', 'problem'); }
+      }
+      // 1) Add the new tech(s) first, so the job is never left without a tech halfway.
+      if (d.add.length) {
+        try { await st.assignTechs(r.apptId, d.add); }
+        catch (e) { if (st.isSignedOut(e)) throw e; return res('couldn\'t add ' + names(d.add) + ' (' + errText(e) + '). Nothing changed', 'problem'); }
+        if (!await confirmTechs(r.apptId, ids => d.add.every(id => hasId(ids, id)))) return res('ServiceTitan didn\'t add ' + names(d.add) + '. Nothing else changed', 'problem');
+      }
+      // 2) Then take the old one(s) off.
+      if (d.remove.length) {
+        const partial = d.add.length ? { changed: true, before: cur, after: cur.concat(d.add.filter(id => !hasId(cur, id))) } : {};
+        try { await st.unassignTechs(r.apptId, d.remove); }
+        catch (e) {
+          if (st.isSignedOut(e)) throw e;
+          return res((d.add.length ? 'added ' + names(d.add) + ' but couldn\'t take off ' : 'couldn\'t take off ') + names(d.remove) + ' (' + errText(e) + ')', 'problem', partial);
+        }
+        if (!await confirmTechs(r.apptId, ids => d.remove.every(id => !hasId(ids, id)))) return res((d.add.length ? 'added ' + names(d.add) + ', but ' : '') + 'ServiceTitan didn\'t take off ' + names(d.remove), 'problem', partial);
+      }
+      return res(changeText(cur, d), 'done', { changed: true, before: cur, after: fin });
+    };
+
+    const go = async () => {
+      if (!planned || busy) return;
+      if (lock) return say('Wait for ' + lock + ' to finish first.');
+      const p = planned, m = p.mode;
+      const todo = included();
+      if (!todo.length) return;
+      const okWarn = {}; Object.keys(ticks).forEach(k => { okWarn[k] = !!(ticks[k] && ticks[k].checked); });
+      reviewBox.style.display = 'none'; planned = null;
+      busy = running = true; stop = false; lock = TOOL;
+      log.textContent = ''; progress.style.display = 'grid';
+      stopBtn.disabled = false; stopBtn.textContent = 'Stop'; stopBtn.style.display = 'inline-block';
+      copyBtn.textContent = 'Copy results';
+      updateButtons();
+      fit(); progress.scrollIntoView({ block: 'nearest' });
+      const results = new Map();   // apptId -> result
+      const record = (x, rr, retry) => { results.set(S(x.it.r.apptId), { x, rr }); add(label(x.it.r) + ': ' + (retry ? 'retry: ' : '') + rr.text); };
+      const verb = m === 'putback' ? 'Putting back' : m === 'unassign' ? 'Unassigning' : m === 'add' ? 'Adding' : m === 'move' ? 'Moving' : 'Swapping';
+      const lastRun = [];
+      try {
+        add(TITLE[m] + (m === 'move' || m === 'add' ? ' ' + techName(p.params.to) : '') + ' · ' + dayText(p.day) + ' (' + plural(todo.length, 'job') + ')');
+        for (let n = 0; n < todo.length; n++) {
+          if (stop) { add('Stopped. ' + plural(todo.length - n, 'job') + ' not done.'); break; }
+          say(verb + ' ' + (n + 1) + ' of ' + todo.length + ' (job ' + todo[n].it.r.jobId + ')');
+          record(todo[n], await doItem(todo[n], m, okWarn));
+        }
+        // One more try for jobs that had a problem (a fresh look decides what's still left to do).
+        const failed = todo.filter(x => { const y = results.get(S(x.it.r.apptId)); return y && y.rr.kind === 'problem' && !y.rr.noRetry; });
+        if (failed.length && !stop) {
+          add(''); add('Retrying ' + plural(failed.length, 'job') + ' that had a problem...');
+          await wait(1500);
+          for (let n = 0; n < failed.length; n++) {
+            if (stop) { add('Stopped. ' + (failed.length - n) + ' retry(s) not done.'); break; }
+            say('Retrying ' + (n + 1) + ' of ' + failed.length + ' (job ' + failed[n].it.r.jobId + ')');
+            const first = results.get(S(failed[n].it.r.apptId)).rr;
+            const rr = await doItem(failed[n], m, okWarn);
+            // Keep where the job started from, if the first try had already changed it.
+            if (first.changed && rr.changed) { rr.before = first.before; rr.text = 'finished the change, now ' + (rr.after.length ? names(rr.after) : 'unassigned'); }
+            // The first try changed it and the retry didn't: Put back still needs to know.
+            else if (first.changed && !rr.changed) Object.assign(rr, { changed: true, before: first.before, after: first.after });
+            record(failed[n], rr, true);
+          }
+        }
+        results.forEach(({ x, rr }) => { if (rr.changed) lastRun.push({ apptId: x.it.r.apptId, jobId: x.it.r.jobId, number: x.it.r.number, customer: x.it.r.customer, before: rr.before, after: rr.after }); });
+        if (m === 'putback') {
+          undo = undo.filter(z => { const y = results.get(S(z.apptId)); return !(y && (y.rr.kind === 'done' || y.rr.kind === 'already')); });
+        } else {
+          undo = lastRun.filter(z => z.before && z.after);
+          movedJobs = Array.from(new Set(lastRun.map(z => z.jobId)));
+          // Done jobs come off the picked list; anything with a problem stays so you can try again.
+          if (m !== 'swapDays') {
+            const problemJobs = new Set();
+            results.forEach(({ x, rr }) => { if (rr.kind === 'problem') problemJobs.add(x.it.r.jobId); });
+            results.forEach(({ x, rr }) => { if ((rr.kind === 'done' || rr.kind === 'already') && !problemJobs.has(x.it.r.jobId)) picker.remove(x.it.r.jobId); });
+          }
+        }
+        const tally = {};
+        results.forEach(({ rr }) => { tally[rr.kind] = (tally[rr.kind] || 0) + 1; });
+        const summary = Object.keys(tally).map(k => tally[k] + ' ' + k).join(', ') || 'nothing done';
+        const left = []; results.forEach(({ x, rr }) => { if (rr.kind === 'problem') left.push('#' + x.it.r.jobId); });
+        if (left.length) add('Needs a look: ' + left.join(', '));
+        if (undo.length && m !== 'putback') add('↩ Put back can undo ' + plural(undo.length, 'job') + '.');
+        if (lastRun.length) {
+          // The board usually updates by itself. Say so if it hasn't caught up.
+          await wait(2500);
+          const rows = dayRows();
+          const behind = lastRun.filter(z => { const row = rows.find(rr => S(rr.apptId) === S(z.apptId)); if (!row) return false; const ids = row.techs.map(t => t.id); return ids.length !== z.after.length || ids.some(id => !hasId(z.after, id)); });
+          if (behind.length) add('The board hasn\'t caught up yet on ' + plural(behind.length, 'job') + '. ServiceTitan has the change; refresh the page (F5) if the board doesn\'t update in a moment.');
+        }
+        if (lastRun.length) health.clear(TOOL);
+        say('Done: ' + summary + '.');
+      } catch (e) {
+        if (st.isSignedOut(e)) { add('⚠️ ' + e.message); say('⚠️ ' + e.message); }
+        else say('⚠️ Stopped by an error: ' + errText(e));
+        results.forEach(({ x, rr }) => { if (rr.changed && rr.before && rr.after && !undo.some(z => S(z.apptId) === S(x.it.r.apptId))) undo.push({ apptId: x.it.r.apptId, jobId: x.it.r.jobId, number: x.it.r.number, customer: x.it.r.customer, before: rr.before, after: rr.after }); });
+      } finally {
+        busy = running = false; lock = null;
+        stopBtn.style.display = 'none';
+        updateButtons();
+        fit();
+      }
+    };
+
+    // Hands the jobs the last run changed to Job Notifications.
+    const handOff = () => {
+      if (busy || !movedJobs.length) return;
+      if (lock) return say('Wait for ' + lock + ' to finish first.');
+      const n = notify.takeJobs(movedJobs);
+      showView('jobs');
+      if (!n && movedJobs.length) say('They were already picked in Job Notifications.');
+    };
+
+    const refresh = async () => {
+      if (busy) return;
+      layout();
+      fit();
+      if (!onBoard()) say('Open the Dispatch board to move jobs.');
+      else if (!msg.textContent) say('Pick what to do, then the jobs. Nothing changes until you review and press the button.');
+      if (!techList) {
+        try { await loadTechs(); } catch (e) { say('⚠️ ' + (st.isSignedOut(e) ? e.message : errText(e))); }
+        pickers3.forEach(p => p.fill());
+        layout();
+      }
+    };
+    pickers3.forEach(p => p.fill());
+    layout();
+    return {
+      refresh,
+      leave: () => picker.setPicking(false),
+      isRunning: () => running,
+      stop: requestStop,
+      cleanup: () => { picker.cleanup(); window.removeEventListener('resize', onResize); }
+    };
+  })();
+
+  // ===================================================================
   // Dragging, closing, and starting up
   // ===================================================================
   header.addEventListener('mousedown', e => {
@@ -3416,7 +4127,7 @@
     document.addEventListener('mouseup', up);
   });
 
-  // Closing while a tool is running (Job Notifications, Tech Messages, Business Unit or Customer Texts) would
+  // Closing while a tool is running (Job Notifications, Tech Messages, Business Unit, Customer Texts or Move Jobs) would
   // hide the panel but leave the run going in the background. So ask first, stop the run, then close.
   const closeBar = el('div', 'display:none;padding:8px 12px;background:#fdecec;color:#7a1010;font-size:12px;border-bottom:1px solid #e0a0a8');
   const closeText = el('div', 'margin-bottom:6px');
@@ -3431,11 +4142,12 @@
     msgs.cleanup();
     biz.cleanup();
     texts.cleanup();
+    moves.cleanup();
     panel.remove();
     delete window.__stToolbox;
   };
   const close = () => {
-    const runners = [[notify, 'Job Notifications'], [msgs, 'Tech Messages'], [biz, 'Business Unit'], [texts, 'Customer Texts']];
+    const runners = [[notify, 'Job Notifications'], [msgs, 'Tech Messages'], [biz, 'Business Unit'], [texts, 'Customer Texts'], [moves, 'Move Jobs']];
     const found = runners.find(r => r[0].isRunning());
     if (!found) return finishClose();
     if (closing) return;
@@ -3460,6 +4172,6 @@
 
   document.body.appendChild(panel);
   const startView = get('stView');
-  showView(['notes', 'jobs', 'msgs', 'biz', 'texts'].indexOf(startView) > -1 ? startView : 'menu');
+  showView(['notes', 'jobs', 'msgs', 'biz', 'texts', 'moves'].indexOf(startView) > -1 ? startView : 'menu');
   health.checkBoard(false);
 })();

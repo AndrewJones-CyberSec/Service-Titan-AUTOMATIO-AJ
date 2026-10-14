@@ -61,6 +61,26 @@ Text customers a saved message through ServiceTitan's Chat Center. Messages are 
 - **Type only:** it opens each conversation and types the message. You press Send and it moves on by itself. **Auto-send:** you confirm by typing how many texts it will send, and it checks each text went out. A few seconds after each text it also checks ServiceTitan really delivered it, and lists any that failed. It stops if a text can't be confirmed or 3 fail in a row.
 - **✏️ Edit messages**, **📁 Edit folders** and **⚙️ Settings** are saved in your own browser. About 4 seconds per text; keep the tab on screen while it runs.
 
+**🔀 Move Jobs**
+Move jobs between techs without dragging, from the Dispatch board. It works on the day the board shows. Pick what to do:
+
+- **➡️ Move to a tech**: the picked jobs go to the tech you pick. **From** can be **Anyone on the job** (the new tech replaces everyone) or one tech, for jobs with two techs.
+- **➕ Add a tech**: puts another tech on the jobs and keeps whoever is on them.
+- **⬅️ Unassign**: takes everyone, or one tech, off the jobs.
+- **🔄 Swap two jobs' techs**: pick two jobs and they trade techs.
+- **🔁 Swap two techs' whole day**: every open job of Tech A's goes to Tech B, and every one of B's goes to A.
+
+Pick jobs with **🖱️ Pick on board**, **+ All in the list**, typed job numbers, or **＋ All Unassigned**, which loads the whole Unassigned list for the day (all pages) for your board's branches. That's the quick way to put every unassigned job on one tech.
+
+- **Review (changes nothing)** checks every job first and lists what will change. It makes the same checks ServiceTitan's job panel makes before assigning: a **skill** the tech doesn't have, a tech **already booked** at that time, and a **managed tech** on every job with a price (that one ServiceTitan doesn't allow, so those jobs are left alone). Jobs with a warning are only done if you tick that warning's box. Done appointments are left alone.
+- **Never left in Unassigned halfway:** the new tech is always added before the old one comes off, and only once ServiceTitan shows the new tech on the job.
+- **Another branch's job:** unassigning a job that isn't in your board's branch sends it to that branch's Unassigned list, where it drops off your board. Those are listed with a warning and only unassigned if you tick that box.
+- Right before each job it takes one more look, in case someone changed it since the review (a changed job is left for you to look at). Each change is confirmed from ServiceTitan's data, problem jobs get one more try, and there's a Stop button and a copyable list of results.
+- **↩ Put back** returns the jobs from the last run to exactly the techs they had.
+- **🔕 Notifications for these jobs…** opens Job Notifications with the moved jobs already picked, to turn their notifications off. That part needs permission to open job records.
+
+It sends the same requests the job panel's ⋮ → Assign/Unassign sends, one job at a time: about a second or two per job, where clicking through the panel takes several. Up to 300 jobs per run.
+
 **🩺 Health check**
 If ServiceTitan changes something a tool relies on, a yellow bar at the top of the Toolbox says which tool is affected and what's missing, instead of the tool failing quietly. Use **Copy report** to pass the details along, or **🩺 Check** in the menu to check any time.
 

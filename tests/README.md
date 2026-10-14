@@ -18,6 +18,7 @@ python3 tests/run_all.py
 | `test_tech_messages.py` | 💬 Tech Messages: picking techs on the board, 🛡️ rules, highlights |
 | `test_customer_texts.py` | 📱 Customer Texts: holds, filters, numbers, repeat rules, STOP, Type only, Auto-send |
 | `test_no_permission.py` | 📱 Customer Texts for a login that can't open job records: numbers from the customer, never a false "signed out" |
+| `test_move_jobs.py` | 🔀 Move Jobs: move, add, unassign, both swaps, skill / booked / managed-tech / other-branch warnings, failures and retries, a job changed after the review, Put back, Stop, handing jobs to Job Notifications |
 | `test_concurrency.py` | Several reads at once: Stop and Cancel mid-read, slow and timed-out answers, sign-out, failing answers, the board changing during a run |
 | `board*.html` | The fake pages the tests run on |
 

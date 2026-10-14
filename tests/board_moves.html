@@ -1,0 +1,151 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Mock ServiceTitan moves</title>
+<style>
+  body{font:13px sans-serif;margin:0}
+  .appointment{display:inline-block;margin:4px;padding:6px 10px;background:#cfe;border:1px solid #9c9;cursor:pointer;color:#000;text-decoration:none}
+  .row{padding:4px;border-bottom:1px solid #ddd}
+</style>
+<script>
+  // Tiny stand-in for Knockout.
+  (function () {
+    const obs = v => { const f = function (x) { if (arguments.length) { v = x; return f; } return v; }; f.__obs = true; return f; };
+    const toJS = v => { if (v && v.__obs) v = v(); if (Array.isArray(v)) return v.map(toJS); if (v && typeof v === 'object' && !(v instanceof Date)) { const o = {}; Object.keys(v).forEach(k => { o[k] = toJS(v[k]); }); return o; } return v; };
+    window.ko = { observable: obs, isObservable: f => !!(f && f.__obs), unwrap: v => (v && v.__obs) ? v() : v, toJS,
+      dataFor: e => { while (e) { if (e.__vm) return e.__vm; e = e.parentElement; } return undefined; } };
+  })();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const at = (h, m) => { const d = new Date(today); d.setHours(h, m || 0, 0, 0); return d; };
+  const tomorrow = h => { const d = at(h); d.setDate(d.getDate() + 1); return d; };
+  window.App = {
+    Notifications: { store: { userId: 42 } },
+    Data: {
+      EnableSkillsManagement: true,
+      BusinessUnits: [{ Id: 1, Name: 'Mendenhall Branch', Active: true }, { Id: 2, Name: 'Gulfport Branch', Active: true }],
+      Technicians: []
+    }
+  };
+  // ServiceTitan's data. Techs: managed or not, and their skills (1 = Basic System, 2 = Tank Water Heater Installs).
+  const SKILLS = { 1: 'Basic System', 2: 'Tank Water Heater Installs' };
+  window.TECHS = [
+    { id: 101, name: 'Jack W', active: true, isManagedTechnician: true, skillIds: [1, 2] },
+    { id: 102, name: 'Blake W', active: true, isManagedTechnician: true, skillIds: [1] },
+    { id: 103, name: 'Andrew J', active: true, isManagedTechnician: false, skillIds: [] },
+    { id: 104, name: 'Dana K', active: true, isManagedTechnician: true, skillIds: [1, 2] },
+    { id: 105, name: 'Old Tech', active: false, isManagedTechnician: true, skillIds: [1, 2] }
+  ];
+  const tname = id => (TECHS.find(t => t.id === id) || {}).name || ('#' + id);
+  // Appointments: appointment id -> job, visit, customer, time, techs, branch, price, status, skills the job needs.
+  window.APPTS = {
+    9001: { job: 7001, n: 1, cust: 'Amy Lee', s: at(8), e: at(10), techs: [101], bu: 1, total: 0, status: 'Scheduled', skills: [1] },
+    9002: { job: 7002, n: 1, cust: 'Bob Smith', s: at(10), e: at(12), techs: [101], bu: 1, total: 500, status: 'Scheduled', skills: [2] },
+    9003: { job: 7003, n: 1, cust: 'Carl Diaz', s: at(13), e: at(15), techs: [102], bu: 2, total: 0, status: 'Scheduled', skills: [] },
+    9004: { job: 7004, n: 2, cust: 'Dana Fox', s: at(13), e: at(15), techs: [101, 103], bu: 1, total: 0, status: 'Scheduled', skills: [1] },
+    9005: { job: 7005, n: 1, cust: 'Eve Hall', s: at(8), e: at(10), techs: [102], bu: 1, total: 0, status: 'Scheduled', skills: [1] },
+    9006: { job: 7006, n: 1, cust: 'Fay Moss', s: at(15), e: at(16), techs: [101], bu: 1, total: 0, status: 'Done', skills: [] },
+    9008: { job: 7008, n: 1, cust: 'Hal Fry', s: tomorrow(9), e: tomorrow(11), techs: [101], bu: 1, total: 0, status: 'Scheduled', skills: [] },
+    9101: { job: 7101, n: 1, cust: 'Ivy Kim', s: at(9), e: at(11), techs: [], bu: 1, total: 0, status: 'Scheduled', skills: [1] },
+    9102: { job: 7102, n: 1, cust: 'Jon Poe', s: at(11), e: at(13), techs: [], bu: 1, total: 0, status: 'Scheduled', skills: [2] },
+    9103: { job: 7103, n: 1, cust: 'Kim Wu', s: at(14), e: at(16), techs: [], bu: 1, total: 0, status: 'Scheduled', skills: [] }
+  };
+  // Test switches: BOOKED[tech] = true (already booked), ASSIGN_FAIL[appt] / UNASSIGN_FAIL[appt] = 'always' | number of times,
+  // ASSIGN_IGNORE[appt] (says OK, changes nothing), BOARD_LAG (the board doesn't redraw after a change),
+  // TECH_API_DOWN (no technician list), API_401 (signed out), API_DELAY (ms).
+  window.BOOKED = {}; window.ASSIGN_FAIL = {}; window.UNASSIGN_FAIL = {}; window.ASSIGN_IGNORE = {};
+  window.calls = [];   // [kind, appt, techs] for every assign / unassign
+  window.apiCalls = 0;
+  const failing = (map, a) => { const f = map[a]; if (!f) return false; if (f === 'always') return true; map[a] = f - 1; return true; };
+  const pause = (ms, signal) => new Promise((res, rej) => {
+    const t = setTimeout(res, ms);
+    if (signal) signal.addEventListener('abort', () => { clearTimeout(t); rej(new DOMException('The user aborted a request.', 'AbortError')); });
+  });
+  const realFetch = window.fetch;
+  window.fetch = async (url, opts) => {
+    const u = String(url);
+    const json = (o, st) => new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    const body = opts && opts.body ? JSON.parse(opts.body) : null;
+    window.apiCalls++;
+    await pause(window.API_DELAY || 30, opts && opts.signal);
+    if (window.API_401) return new Response('', { status: 401 });
+    let m;
+    if (u.indexOf('/api/cp/settings/special/permission-settings') === 0) return json({ Settings: [] });
+    if (u.indexOf('/app/api/data/technicians') === 0) return window.TECH_API_DOWN ? json({}, 500) : json(TECHS);
+    if ((m = /GetJobEditFlyoutData\?appointmentId=(\d+)/.exec(u))) {
+      const a = APPTS[m[1]];
+      if (!a) return json({}, 404);
+      const visits = Object.keys(APPTS).filter(k => APPTS[k].job === a.job);
+      return json({ jobId: a.job, jobNumber: String(a.job), jobStatus: a.status, jobType: { id: 1, name: 'Install' }, businessUnitId: a.bu, jobTotal: a.total,
+        jobAppointments: visits.map(k => ({ id: Number(k), number: APPTS[k].n, start: APPTS[k].s.toISOString(), end: APPTS[k].e.toISOString(), arrivalWindowStart: null, arrivalWindowEnd: null,
+          technicians: APPTS[k].techs.map(id => ({ id, name: tname(id), assignmentStatus: 'Assigned' })), jobAppointmentStatus: APPTS[k].status, isConfirmed: true })),
+        hasJobNotificationsEnabled: true });
+    }
+    if ((m = /GetJobOverviewData\?jobId=(\d+)/.exec(u))) {
+      const k = Object.keys(APPTS).find(x => String(APPTS[x].job) === m[1]);
+      if (!k) return json({}, 404);
+      return json({ jobTags: [], skills: APPTS[k].skills.map(id => ({ id, name: SKILLS[id], active: true })), businessUnit: { id: APPTS[k].bu, name: APPTS[k].bu === 2 ? 'Gulfport Branch' : 'Mendenhall Branch' } });
+    }
+    if (u.indexOf('/Job/TechniciansAreBooked') === 0) {
+      window.lastBooked = body;
+      return json(body.technicianIds.map(id => ({ TechnicianId: id, IsBookedForJob: !!BOOKED[id], IsBookedForNonJobEvent: false, IsBookedForRecurring: false })));
+    }
+    if ((m = /\/dispatch\/job-edit-flyout\/(Assign|Unassign)Technicians/.exec(u))) {
+      const a = APPTS[body.appointmentId];
+      if (!a) return json({}, 404);
+      window.calls.push([m[1].toLowerCase(), body.appointmentId, body.technicianIds.slice()]);
+      if (m[1] === 'Assign') {
+        if (failing(ASSIGN_FAIL, body.appointmentId)) return json({ error: 'boom' }, 500);
+        if (ASSIGN_IGNORE[body.appointmentId]) return new Response('', { status: 200 });
+        const next = a.techs.concat(body.technicianIds.filter(id => a.techs.indexOf(id) < 0));
+        // Like ServiceTitan: a job with a price keeps a managed tech.
+        if (a.total > 0 && !next.some(id => (TECHS.find(t => t.id === id) || {}).isManagedTechnician)) return json({ error: 'managed' }, 400);
+        a.techs = next;
+      } else {
+        if (failing(UNASSIGN_FAIL, body.appointmentId)) return json({ error: 'boom' }, 500);
+        const next = a.techs.filter(id => body.technicianIds.indexOf(id) < 0);
+        if (a.total > 0 && next.length && !next.some(id => (TECHS.find(t => t.id === id) || {}).isManagedTechnician)) return json({ error: 'managed' }, 400);
+        a.techs = next;
+      }
+      if (!window.BOARD_LAG) setTimeout(render, 50);
+      return new Response('', { status: 200 });
+    }
+    if (u.indexOf('/Dispatch/GetJobs') === 0) {
+      window.lastGetJobs = body;
+      if (body.JobType !== 'Unassigned') return json({ Jobs: [], Count: 0 });
+      const rows = Object.keys(APPTS).filter(k => !APPTS[k].techs.length && body.QueryFilter.BusinessUnitIds.indexOf(APPTS[k].bu) > -1).map(rowFor);
+      return json({ Jobs: rows.slice(body.QueryFilter.Skip, body.QueryFilter.Skip + body.QueryFilter.Take), Count: rows.length });
+    }
+    return realFetch(url, opts);
+  };
+  // One appointment as the board's data has it.
+  const rowFor = k => {
+    const a = APPTS[k];
+    return { Id: Number(k), JobId: a.job, AppointmentNumber: a.n, Customer: a.cust, Start: a.s, End: a.e, BusinessUnitId: a.bu,
+      Technicians: a.techs.map(id => ({ Id: id, Name: tname(id) })), TechnicianId: a.techs[0] || 0, AppointmentStatus: a.status };
+  };
+  window.opened = [];
+  function render() {
+    const h = location.hash.split('?')[0];
+    const root = document.getElementById('root');
+    root.innerHTML = '';
+    if (/^#\/DispatchBoard/.test(h)) {
+      // Timeline: one row per tech, a bubble per appointment of theirs (a job with two techs shows twice).
+      root.innerHTML = '<div class="team-container"><div class="team-name">Install HVAC</div>' + TECHS.filter(t => t.active).map(t => '<div class="technician" data-technician-id="' + t.id + '"><span class="name">' + t.name + '</span></div>').join('') + '</div>' +
+        TECHS.filter(t => t.active).map(t => '<div class="row" id="team-timeline-row-' + t.id + '">' + Object.keys(APPTS).filter(k => APPTS[k].techs.indexOf(t.id) > -1).map(k =>
+          '<a class="appointment" data-job-id="' + APPTS[k].job + '" data-id="' + k + '" data-technician-id="' + t.id + '">' + APPTS[k].cust + '</a>').join('') + '</div>').join('') +
+        '<div class="job-list"><div class="toolbar">Unassigned</div><div><table class="k-grid-table"><tbody>' +
+        Object.keys(APPTS).filter(k => !APPTS[k].techs.length).map(k => '<tr class="row__BK7JR qa-job-' + APPTS[k].job + '"><td>Quote</td><td>' + APPTS[k].cust + '</td></tr>').join('') + '</tbody></table></div></div>';
+      const jl = root.querySelector('.job-list');
+      jl.__vm = {
+        JobList: { View: ko.observable({ Caption: 'Unassigned' }), AllVisibleJobs: ko.observable(Object.keys(APPTS).filter(k => !APPTS[k].techs.length).map(rowFor)) },
+        Date: ko.observable(today),
+        BusinessUnitFilter: { getIds: () => [1] },
+        // The board's own data: today's appointments and one from tomorrow (it keeps days you've looked at).
+        Assignments: ko.observable(Object.keys(APPTS).filter(k => APPTS[k].techs.length).map(rowFor))
+      };
+      root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => window.opened.push(a.getAttribute('data-job-id'))));
+      jl.querySelectorAll('tr').forEach(tr => tr.addEventListener('click', () => window.opened.push('tray')));
+    }
+  }
+  addEventListener('hashchange', render);
+  addEventListener('DOMContentLoaded', render);
+</script>
+</head><body><div id="root"></div></body></html>
