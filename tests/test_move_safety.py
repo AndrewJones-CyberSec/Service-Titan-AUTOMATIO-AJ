@@ -59,7 +59,7 @@ def tick(page, kind):
 # Puts the fake board back the way it started, and clears every switch.
 START = None
 def restore(page):
-    page.evaluate("(start) => { Object.keys(start).forEach(k => { Object.assign(APPTS[k], start[k], { s: new Date(start[k].s), e: new Date(start[k].e), techs: start[k].techs.slice() }); delete APPTS[k].boardStatus; }); "
+    page.evaluate("(start) => { Object.keys(start).forEach(k => { Object.assign(APPTS[k], start[k], { s: new Date(start[k].s), e: new Date(start[k].e), techs: start[k].techs.slice() }); delete APPTS[k].boardStatus; delete APPTS[k].statusNum; }); "
              "BOOKED = {}; NONJOB = {}; ASSIGN_FAIL = {}; UNASSIGN_FAIL = {}; ASSIGN_IGNORE = {}; ASSIGN_LOST = {}; UNASSIGN_LOST = {}; "
              "BOOKED_BY_SCHEDULE = false; BOOKED_DRIFT = false; API_401 = false; APPT_401 = false; PERM_HANG = false; SIGNOUT_AFTER_ASSIGN = false; API_DELAY = 0; "
              "window.calls = []; localStorage.removeItem('stMoveUndo'); render(); }", START)
@@ -331,6 +331,32 @@ with sync_playwright() as p:
     go(page)
     lg = log(page)
     check('is Dispatched now, not Scheduled' in lg and calls(page) == [] and techs(page, 9001) == [101], 'status: dispatched after the review is caught right before, nothing changed')
+    restore(page)
+    # Canceled (5) while the board still says Dispatched: left alone, never a tickable warning.
+    ev(page, "() => { APPTS[9001].status = 'Canceled'; APPTS[9001].boardStatus = 'Dispatched'; render(); }")
+    t = review(page)
+    check('appointment is Canceled, left alone' in t and 'Not Scheduled' not in t and not go_enabled(page), 'status: Canceled is left alone even when the board still says Dispatched')
+    B(page, 'Cancel').click()
+    # Canceled after the review: left alone right before, even with the Not Scheduled warning ticked.
+    ev(page, "() => { APPTS[9001].status = 'Working'; delete APPTS[9001].boardStatus; render(); }")
+    t = review(page)
+    check("it's Working, not Scheduled" in t, 'status: Working (2) warns')
+    tick(page, 'status')
+    ev(page, "() => { APPTS[9001].status = 'Canceled'; APPTS[9001].boardStatus = 'Working'; render(); window.calls = []; }")
+    go(page)
+    lg = log(page)
+    check('appointment is Canceled, left alone' in lg and calls(page) == [] and techs(page, 9001) == [101], 'status: canceled after the review is left alone even with the warning ticked')
+    restore(page)
+    # Hold (3) warns like Dispatched.
+    ev(page, "() => { APPTS[9001].status = 'Hold'; render(); }")
+    t = review(page)
+    check("it's Hold, not Scheduled" in t and not go_enabled(page), 'status: Hold (3) warns and needs a tick')
+    B(page, 'Cancel').click()
+    # A number the Toolbox doesn't know: left alone, even if the board says Scheduled.
+    ev(page, "() => { APPTS[9001].statusNum = 7; render(); }")
+    t = review(page)
+    check("appointment has a status the Toolbox doesn't know (7), left alone" in t and not go_enabled(page), 'status: an unknown status number is left alone, not guessed')
+    B(page, 'Cancel').click()
     restore(page)
     # The other way: the board says Dispatched but the fresh reading says Scheduled (0). The fresh one wins.
     ev(page, "() => { APPTS[9001].boardStatus = 'Dispatched'; render(); }")

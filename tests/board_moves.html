@@ -33,7 +33,7 @@
     { id: 104, name: 'Dana K', active: true, isManagedTechnician: true, skillIds: [1, 2] },
     { id: 105, name: 'Old Tech', active: false, isManagedTechnician: true, skillIds: [1, 2] }
   ];
-  // Like ServiceTitan (seen Oct 2026): the job panel's data has the status as a number; the board has the word.
+  // Like ServiceTitan (all six checked live, Oct 2026): the job panel's data has the status as a number; the board has the word.
   const STATUS_NUM = { Scheduled: 0, Dispatched: 1, Working: 2, Hold: 3, Done: 4, Canceled: 5 };
   const tname = id => (TECHS.find(t => t.id === id) || {}).name || ('#' + id);
   // Appointments: appointment id -> job, visit, customer, time, techs, branch, price, status, skills the job needs.
@@ -80,7 +80,7 @@
       const visits = Object.keys(APPTS).filter(k => APPTS[k].job === a.job);
       return json({ jobId: a.job, jobNumber: String(a.job), jobStatus: a.status, jobType: { id: 1, name: 'Install' }, businessUnitId: a.bu, jobTotal: a.total,
         jobAppointments: visits.map(k => ({ id: Number(k), number: APPTS[k].n, start: APPTS[k].s.toISOString(), end: APPTS[k].e.toISOString(), arrivalWindowStart: null, arrivalWindowEnd: null,
-          technicians: APPTS[k].techs.map(id => ({ id, name: tname(id), assignmentStatus: 'Assigned' })), jobAppointmentStatus: STATUS_NUM[APPTS[k].status], isConfirmed: true })),
+          technicians: APPTS[k].techs.map(id => ({ id, name: tname(id), assignmentStatus: 'Assigned' })), jobAppointmentStatus: APPTS[k].statusNum != null ? APPTS[k].statusNum : STATUS_NUM[APPTS[k].status], isConfirmed: true })),   // statusNum: a number ServiceTitan might send that isn't one of the six
         hasJobNotificationsEnabled: true });
     }
     if ((m = /GetJobOverviewData\?jobId=(\d+)/.exec(u))) {

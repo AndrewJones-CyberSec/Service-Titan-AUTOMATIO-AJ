@@ -3548,8 +3548,7 @@
         apptId: u(x.Id), jobId: S(u(x.JobId)), number: u(x.AppointmentNumber),
         customer: norm(u(x.Customer)), start: toDate(x.Start), end: toDate(x.End),
         techs: (u(x.Technicians) || []).map(t => ({ id: u(t.Id), name: norm(u(t.Name)) })).filter(t => t.id != null),
-        bu: u(x.BusinessUnitId),
-        status: (() => { const s = u(x.AppointmentStatus); return typeof s === 'string' ? norm(s) : ''; })()   // the board has words: Scheduled, Done...
+        bu: u(x.BusinessUnitId)
       };
       r.techs.forEach(t => { if (t.name) seenNames.set(S(t.id), t.name); });
       return r;
@@ -3860,22 +3859,26 @@
       if (d.add.length) return (cur.length ? '+ ' : '') + names(d.add);
       return '− ' + names(d.remove) + (fin.length ? '' : ' (to Unassigned)');
     };
-    // Appointment status. The job panel's data (read fresh each time) has a number. Seen Oct 2026:
-    // 0 = Scheduled, 4 = Done. The others are taken to follow ServiceTitan's order (1 Dispatched,
-    // 2 Working, 3 Hold, 5 Canceled). The fresh number decides: only 0 is Scheduled, and anything
-    // else gets the "not Scheduled" warning. The board's word is only used to name a status, never
-    // to decide, since the board can be behind (still saying Scheduled after a Dispatch).
+    // Appointment status, from the job panel's data (read fresh each time), never the board's word
+    // (the board can be behind). All six numbers were checked against the board on the live
+    // account in Oct 2026: 0 Scheduled, 1 Dispatched, 2 Working, 3 Hold, 4 Done, 5 Canceled.
+    //   Scheduled: fine.  Dispatched, Working, Hold: a warning you have to tick.
+    //   Done, Canceled, or anything else (a number or word the Toolbox doesn't know): left alone.
     const STATUS_NAMES = ['Scheduled', 'Dispatched', 'Working', 'Hold', 'Done', 'Canceled'];
-    const isOver = name => /^(done|completed?|cancell?ed)$/i.test(norm(name));
-    const isScheduled = name => /^scheduled$/i.test(norm(name));
-    const statusName = (raw, row) => {
-      if (typeof raw !== 'number') return norm(raw);   // older pages sent the word itself
-      if (raw === 0 || raw === 4) return STATUS_NAMES[raw];
-      // Not Scheduled. The board's word names it, if it says something other than Scheduled.
-      const word = row && row.status && !isScheduled(row.status) ? row.status : '';
-      return word || STATUS_NAMES[raw] || 'status ' + raw;
+    const isScheduled = name => name === 'Scheduled';
+    // The status's name, or '' if the Toolbox doesn't know it.
+    const statusName = raw => {
+      if (typeof raw === 'number') return STATUS_NAMES[raw] || '';
+      const w = norm(raw).toLowerCase().replace('cancelled', 'canceled');
+      return STATUS_NAMES.find(n => n.toLowerCase() === w) || '';
     };
-    const rowFor = apptId => dayRows().find(r => S(r.apptId) === S(apptId)) || null;
+    // Why a job is left alone because of its status, or '' if it isn't.
+    const statusStop = raw => {
+      const name = statusName(raw);
+      if (!name) return 'appointment has a status the Toolbox doesn\'t know (' + raw + '), left alone';
+      if (name === 'Done' || name === 'Canceled') return 'appointment is ' + name + ', left alone';
+      return '';
+    };
     const sameSet = (a, b) => a.length === b.length && a.every(id => hasId(b, id));
     const overlap = (a, b) => !!(a && b && a.start && a.end && b.start && b.end) && new Date(a.start) < new Date(b.end) && new Date(b.start) < new Date(a.end);
     // A read that came back in a shape the Toolbox doesn't know also shows the yellow warning bar.
@@ -3964,7 +3967,6 @@
         await loadTechs(true);
         pickers3.forEach(p => p.fill());
         if (reviewStop) { say('Stopped checking. Nothing changed.'); return; }
-        const rows = new Map(dayRows().map(r => [S(r.apptId), r]));
         // Swaps: the appointments each tech is leaving. Those don't count as "booked" for the job
         // they're getting; anything else at that time (another job, time off, a meeting) does.
         const leaving = new Map();   // tech id -> [{ apptId, start, end }]
@@ -3988,13 +3990,13 @@
           const now = await st.appointment(it.r.apptId);
           if (!alive()) return null;
           const a = now.appointment, cur = a.techIds;
-          const status = statusName(a.status, rows.get(S(it.r.apptId)));
+          const status = statusName(a.status), stopWhy = statusStop(a.status);
           const out = { it, cur, total: now.jobTotal, bu: now.businessUnitId, jobId: S(now.jobId), start: a.start, end: a.end, status, warn: {} };
           if (m === 'putback') {
             if (!it.p.expect) return Object.assign(out, { skip: 'the earlier run couldn\'t confirm what it did to this job, so it\'s left for you to check (it started as ' + (it.p.want.length ? names(it.p.want) : 'unassigned') + ', now ' + (cur.length ? names(cur) : 'unassigned') + ')', kind: 'skipped' });
             if (!sameSet(cur, it.p.expect)) return Object.assign(out, { skip: 'changed since the move (now ' + (cur.length ? names(cur) : 'unassigned') + '), left alone', kind: 'skipped' });
           }
-          if (isOver(status)) return Object.assign(out, { skip: 'appointment is ' + status + ', left alone', kind: 'skipped' });
+          if (stopWhy) return Object.assign(out, { skip: stopWhy, kind: 'skipped' });
           if (m === 'swapDays') {
             const hA = hasId(cur, it.p.a), hB = hasId(cur, it.p.b);
             if (hA === hB) return Object.assign(out, { skip: hA ? 'has both ' + techName(it.p.a) + ' and ' + techName(it.p.b) : 'has neither tech now', kind: 'skipped' });
@@ -4180,8 +4182,8 @@
       const cur = now.appointment.techIds;
       x.lastSeen = cur.slice();
       if (!x.origin) x.origin = cur.slice();
-      const status = statusName(now.appointment.status, rowFor(r.apptId));
-      if (isOver(status)) return res('appointment is ' + status + ', left alone', 'skipped');
+      const status = statusName(now.appointment.status), stopWhy = statusStop(now.appointment.status);
+      if (stopWhy) return res(stopWhy, 'skipped');
       const d = decide(kindOf(m), cur, x.it.p);
       if (d.skip) return res(d.skip, d.kind);
       // Only what the review showed: a tech to add, or one to take off, that wasn't in it means
