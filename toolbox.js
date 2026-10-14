@@ -3778,11 +3778,13 @@
     };
     const kindOf = m => m === 'move' || m === 'add' || m === 'unassign' ? m : 'exact';
     const after = (cur, d) => cur.filter(x => !hasId(d.remove, x)).concat(d.add.filter(x => !hasId(cur, x)));
-    // ServiceTitan keeps at least one managed tech on every job with a price.
+    // ServiceTitan's own rule (its job panel greys these techs out): a tech who isn't a managed
+    // tech can only be alone on a job whose invoice is $0. It asks for a managed tech first.
     const managedProblem = (total, fin) => {
       if (!(total > 0) || !fin.length) return '';
       if (fin.some(id => { const t = techById(id); return !t || t.managed; })) return '';
-      return 'ServiceTitan needs a managed tech on every job with a price, and ' + names(fin) + (fin.length === 1 ? ' isn\'t' : ' aren\'t') + ' managed';
+      return 'ServiceTitan won\'t allow it: ' + names(fin) + (fin.length === 1 ? ' isn\'t a managed tech' : ' aren\'t managed techs') +
+        ', so the invoice must be $0 (it\'s $' + Number(total).toFixed(2) + '). Put a managed tech on it too';
     };
     const changeText = (cur, d) => {
       const fin = after(cur, d);

@@ -134,7 +134,7 @@ with sync_playwright() as p:
     clear_jobs(page); type_jobs(page, '7002'); pick_to(page, 103)
     t = review(page)
     print(t)
-    check('needs a managed tech' in t and 'Left alone (1)' in t, 'replacing the only managed tech on a priced job is refused')
+    check("ServiceTitan won't allow it: Andrew J isn't a managed tech, so the invoice must be $0 (it's $500.00)" in t and 'Left alone (1)' in t, "replacing the only managed tech on a priced job is refused, in ServiceTitan's words")
     check(calls(page) == [], 'nothing sent for it')
     B(page, 'Cancel').click()
     mode(page, 'Add a tech')
