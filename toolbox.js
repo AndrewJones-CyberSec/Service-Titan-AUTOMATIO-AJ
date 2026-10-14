@@ -21,7 +21,7 @@
 (() => {
   const VERSION = '1.6';
   const WHATS_NEW = {
-    '1.6': 'New: 🔀 Move Jobs. Move jobs to a tech, add or unassign a tech, or swap two jobs or two techs\' whole day, without dragging. ＋ All Unassigned puts every unassigned job on one tech in one go. Review first: it warns about skills, double-booking and jobs from another branch, and ↩ Put back undoes it.',
+    '1.6': 'New: 🔀 Move Jobs. Move jobs to a tech, add or unassign a tech, or swap two jobs or two techs\' whole day, without dragging. ＋ All Unassigned puts every unassigned job on one tech in one go. Review first: it warns about skills, double-booking and jobs from another branch. ↩ Put back undoes it, even after closing the Toolbox (kept for a day), and the board refreshes itself after a move.',
     '1.5.4': 'New: 🔕 Job Notifications can turn notifications back ON (Turn on notifications…), not just off. Fix: 📱 Customer Texts works again for logins that can\'t open job records (it wrongly stopped as if you weren\'t signed in). It now reads phone numbers from the customer instead.',
     '1.5.3': 'Fix: 📝 Notes no longer opens a "This Page Could Not Be Found" page. When you click a job, ServiceTitan shows a blank customer link for about a second while the job loads; Notes now waits for the real customer instead of following the blank one.',
     '1.5.2': 'Steadier runs: Stop works right away, even while jobs are still being read. If ServiceTitan signs you out, a run stops and says so. If ServiceTitan is slow, the Toolbox eases off. Customer Texts skips a hold that has been booked since you loaded the list.',
@@ -3654,7 +3654,9 @@
 
     const actions = el('div', 'display:flex;flex-wrap:wrap;gap:6px');
     const reviewBtn = smallBtn('Review (changes nothing)', () => review(mode), PRIMARY);
-    actions.appendChild(reviewBtn);
+    const undoBtn = smallBtn('↩ Put back', () => review('putback'));
+    // ↩ Put back sits by Review, so it's there even before a run (a saved one from earlier).
+    actions.append(reviewBtn, undoBtn);
 
     const reviewBox = el('div', 'display:none;padding:8px;border:1px solid #c9b3dd;background:#f6f0fb;border-radius:6px;font-size:12px;gap:6px');
     const reviewText = el('div', 'white-space:pre-wrap;max-height:260px;overflow:auto');
@@ -3671,10 +3673,9 @@
     const requestStop = () => { if (!running) return; stop = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping after this job...'; };
     const stopBtn = smallBtn('Stop', () => requestStop());
     const copyBtn = smallBtn('Copy results', async () => { if (await copy(log.textContent)) copyBtn.textContent = 'Copied'; });
-    const undoBtn = smallBtn('↩ Put back', () => review('putback'));
     const notifBtn = smallBtn('🔕 Notifications…', () => handOff());
     notifBtn.title = 'Opens Job Notifications with these jobs picked, to turn their notifications off (or on). Needs permission to open job records.';
-    progRow.append(stopBtn, copyBtn, undoBtn, notifBtn);
+    progRow.append(stopBtn, copyBtn, notifBtn);
     progress.append(log, progRow);
     const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
     navRow.append(smallBtn('← Menu', () => { if (!busy) showView('menu'); }));
@@ -3694,7 +3695,25 @@
     let busy = false, running = false, stop = false;
     let planned = null;   // the last review: { mode, items, at }
     let undo = [];        // [{ apptId, jobId, number, customer, before, after }] from the last run
+    let undoDay = null;   // the day the last run was on (Put back works from any day)
     let movedJobs = [];   // job numbers the last run changed (for Notifications)
+    // ↩ Put back is saved in this browser, so it still works after the Toolbox is closed, the page
+    // is reloaded, or a new copy is loaded. It's kept for a day. Putting back is still safe later:
+    // a job someone changed since the move is left alone.
+    const UNDO_KEY = 'stMoveUndo', UNDO_KEEP_MS = 24 * 3600 * 1000;
+    const saveUndo = () => {
+      if (!undo.length) { try { localStorage.removeItem(UNDO_KEY); } catch (e) {} return; }
+      set(UNDO_KEY, JSON.stringify({ at: Date.now(), day: undoDay ? undoDay.getTime() : null, items: undo }));
+    };
+    const loadUndo = () => {
+      try {
+        const s = JSON.parse(get(UNDO_KEY) || 'null');
+        if (!s || !Array.isArray(s.items) || !(Date.now() - s.at < UNDO_KEEP_MS)) { undo = []; undoDay = null; return; }
+        undo = s.items.filter(z => z && z.apptId != null && Array.isArray(z.before) && Array.isArray(z.after));
+        undoDay = s.day ? new Date(s.day) : null;
+      } catch (e) { undo = []; undoDay = null; }
+    };
+    loadUndo();
     const add = s => { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
     const clearReview = () => { planned = null; reviewBox.style.display = 'none'; };
 
@@ -3726,6 +3745,7 @@
       reviewBtn.disabled = !ready; reviewBtn.style.opacity = ready ? '1' : '.5';
       undoBtn.style.display = !busy && undo.length ? 'inline-block' : 'none';
       undoBtn.textContent = '↩ Put back (' + undo.length + ')';
+      undoBtn.title = 'Undoes the last run' + (undoDay ? ' on ' + dayText(undoDay) : '') + '. Kept for a day, even if the Toolbox is closed.';
       notifBtn.style.display = !busy && movedJobs.length ? 'inline-block' : 'none';
       notifBtn.textContent = '🔕 Notifications for these ' + plural(movedJobs.length, 'job') + '…';
     };
@@ -3824,9 +3844,13 @@
       if (busy) return;
       if (lock) return say('Wait for ' + lock + ' to finish first.');
       if (!onBoard()) return say('Open the Dispatch board first.');
-      const day = boardDay();
+      let day = boardDay();
       let list = [], missing = [];
       if (m === 'putback') {
+        // The saved copy is the one to trust (another tab, or a reload, may have changed it).
+        loadUndo(); updateButtons();
+        if (!undo.length) return say('There\'s nothing to put back (it\'s kept for a day).');
+        if (undoDay) day = undoDay;
         list = undo.map(x => ({ r: { apptId: x.apptId, jobId: x.jobId, number: x.number, customer: x.customer, start: null, end: null, bu: null, techs: [] }, p: { want: x.before, expect: x.after } }));
       } else {
         ({ list, missing } = targets(m));
@@ -3964,6 +3988,32 @@
       goBtn.disabled = !n; goBtn.style.opacity = n ? '1' : '.5';
     };
 
+    // ---------- The board catching up ----------
+    // Jobs from a run that the board (on the day it shows) doesn't show with their new techs yet.
+    const boardBehind = runList => {
+      const rows = dayRows();
+      return runList.filter(z => {
+        const row = rows.find(rr => S(rr.apptId) === S(z.apptId));
+        if (!row) return false;
+        const ids = row.techs.map(t => t.id);
+        return ids.length !== z.after.length || ids.some(id => !hasId(z.after, id));
+      });
+    };
+    // Reloads the board's data with the board's own refresh (seen Oct 2026: refreshData, the
+    // same reload the board does itself; keeps the day and filters). Waits until it's done.
+    // Returns false if it couldn't (then the run says to press F5).
+    const refreshBoard = async () => {
+      const vm = boardVM();
+      if (!vm || typeof vm.refreshData !== 'function') return false;
+      // The board skips its refresh while one of its menus is open (and then stays "refreshing").
+      if (document.querySelector('.trello-dropdown.open')) return false;
+      const loading = v => !!(v && (u(v.IsRefreshing) || u(v.LoadingData)));
+      if (loading(vm) && !await until(() => !loading(boardVM()), 15000, 300)) return false;
+      try { vm.refreshData(); } catch (e) { return false; }
+      await wait(400);
+      return !!await until(() => { const v = boardVM(); return v && !loading(v); }, 20000, 300);
+    };
+
     // ---------- Doing it ----------
     // Waits (a few seconds) until ServiceTitan's data for the appointment passes ok(techIds).
     const confirmTechs = async (apptId, ok) => {
@@ -4073,6 +4123,7 @@
           undo = undo.filter(z => { const y = results.get(S(z.apptId)); return !(y && (y.rr.kind === 'done' || y.rr.kind === 'already')); });
         } else {
           undo = lastRun.filter(z => z.before && z.after);
+          undoDay = p.day || null;
           movedJobs = Array.from(new Set(lastRun.map(z => z.jobId)));
           // Done jobs come off the picked list; anything with a problem stays so you can try again.
           if (m !== 'swapDays') {
@@ -4088,10 +4139,15 @@
         if (left.length) add('Needs a look: ' + left.join(', '));
         if (undo.length && m !== 'putback') add('↩ Put back can undo ' + plural(undo.length, 'job') + '.');
         if (lastRun.length) {
-          // The board usually updates by itself. Say so if it hasn't caught up.
+          // The board usually updates by itself. If it hasn't caught up, reload the board's data
+          // (the board's own refresh: same day and filters, no page reload), then check again.
           await wait(2500);
-          const rows = dayRows();
-          const behind = lastRun.filter(z => { const row = rows.find(rr => S(rr.apptId) === S(z.apptId)); if (!row) return false; const ids = row.techs.map(t => t.id); return ids.length !== z.after.length || ids.some(id => !hasId(z.after, id)); });
+          let behind = boardBehind(lastRun);
+          if (behind.length && onBoard()) {
+            say('Refreshing the board...');
+            if (await refreshBoard()) behind = boardBehind(lastRun);
+            if (!behind.length) add('Refreshed the board to show the changes.');
+          }
           if (behind.length) add('The board hasn\'t caught up yet on ' + plural(behind.length, 'job') + '. ServiceTitan has the change; refresh the page (F5) if the board doesn\'t update in a moment.');
         }
         if (lastRun.length) health.clear(TOOL);
@@ -4099,8 +4155,13 @@
       } catch (e) {
         if (st.isSignedOut(e)) { add('⚠️ ' + e.message); say('⚠️ ' + e.message); }
         else say('⚠️ Stopped by an error: ' + errText(e));
-        results.forEach(({ x, rr }) => { if (rr.changed && rr.before && rr.after && !undo.some(z => S(z.apptId) === S(x.it.r.apptId))) undo.push({ apptId: x.it.r.apptId, jobId: x.it.r.jobId, number: x.it.r.number, customer: x.it.r.customer, before: rr.before, after: rr.after }); });
+        // Whatever this run had already changed can still be put back.
+        const changed = [];
+        results.forEach(({ x, rr }) => { if (rr.changed && rr.before && rr.after) changed.push({ apptId: x.it.r.apptId, jobId: x.it.r.jobId, number: x.it.r.number, customer: x.it.r.customer, before: rr.before, after: rr.after }); });
+        if (m === 'putback') undo = undo.filter(z => { const y = results.get(S(z.apptId)); return !(y && (y.rr.kind === 'done' || y.rr.kind === 'already')); });
+        else if (changed.length) { undo = changed; undoDay = p.day || null; }
       } finally {
+        saveUndo();
         busy = running = false; lock = null;
         stopBtn.style.display = 'none';
         updateButtons();
@@ -4119,6 +4180,7 @@
 
     const refresh = async () => {
       if (busy) return;
+      loadUndo();   // a run in another tab may have saved a newer one
       layout();
       fit();
       if (!onBoard()) say('Open the Dispatch board to move jobs.');

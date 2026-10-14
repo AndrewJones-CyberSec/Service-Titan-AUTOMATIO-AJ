@@ -9,6 +9,8 @@
   - The new tech is always added before the old one comes off, so a job is never left in Unassigned halfway. Unassigning a job from another branch (which would drop off your board) needs its own tick.
   - Each job gets a fresh look right before it changes, each change is confirmed from ServiceTitan's data, problem jobs get one more try, and **↩ Put back** undoes the last run.
   - **🔕 Notifications for these jobs…** hands the moved jobs to Job Notifications.
+  - **↩ Put back is saved in your browser for a day**, so it still works after the Toolbox is closed, the page is reloaded, or a new copy is loaded, and from any day on the board. A job someone changed since the move is still left alone.
+  - **The board refreshes itself** if it hasn't shown a move after a couple of seconds (the board's own refresh: same day and filters, no page reload). Only if that doesn't work does it say to press F5.
 - Job Notifications can now take a list of jobs from another tool.
 - Added tests for Move Jobs (`tests/test_move_jobs.py`, `tests/board_moves.html`).
 

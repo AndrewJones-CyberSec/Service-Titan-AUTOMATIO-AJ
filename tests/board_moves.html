@@ -48,7 +48,7 @@
     9103: { job: 7103, n: 1, cust: 'Kim Wu', s: at(14), e: at(16), techs: [], bu: 1, total: 0, status: 'Scheduled', skills: [] }
   };
   // Test switches: BOOKED[tech] = true (already booked), BOOKED_BY_SCHEDULE (booked when another of their jobs overlaps), ASSIGN_FAIL[appt] / UNASSIGN_FAIL[appt] = 'always' | number of times,
-  // ASSIGN_IGNORE[appt] (says OK, changes nothing), BOARD_LAG (the board doesn't redraw after a change),
+  // ASSIGN_IGNORE[appt] (says OK, changes nothing), BOARD_LAG (the board doesn't redraw after a change), NO_REFRESH (no board reload),
   // TECH_API_DOWN (no technician list), API_401 (signed out), API_DELAY (ms).
   window.BOOKED = {}; window.ASSIGN_FAIL = {}; window.UNASSIGN_FAIL = {}; window.ASSIGN_IGNORE = {};
   window.calls = [];   // [kind, appt, techs] for every assign / unassign
@@ -142,7 +142,14 @@
         Date: ko.observable(today),
         BusinessUnitFilter: { getIds: () => [1] },
         // The board's own data: today's appointments and one from tomorrow (it keeps days you've looked at).
-        Assignments: ko.observable(Object.keys(APPTS).filter(k => APPTS[k].techs.length).map(rowFor))
+        Assignments: ko.observable(Object.keys(APPTS).filter(k => APPTS[k].techs.length).map(rowFor)),
+        // The board's own reload (seen Oct 2026: refreshData). NO_REFRESH: the board doesn't have it.
+        IsRefreshing: ko.observable(false), LoadingData: ko.observable(false)
+      };
+      if (!window.NO_REFRESH) jl.__vm.refreshData = function () {
+        window.refreshes = (window.refreshes || 0) + 1;
+        this.IsRefreshing(true); this.LoadingData(true);
+        setTimeout(render, 200);
       };
       root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => window.opened.push(a.getAttribute('data-job-id'))));
       jl.querySelectorAll('tr').forEach(tr => tr.addEventListener('click', () => window.opened.push('tray')));

@@ -76,7 +76,8 @@ Pick jobs with **🖱️ Pick on board**, **+ All in the list**, typed job numbe
 - **Never left in Unassigned halfway:** the new tech is always added before the old one comes off, and only once ServiceTitan shows the new tech on the job.
 - **Another branch's job:** unassigning a job that isn't in your board's branch sends it to that branch's Unassigned list, where it drops off your board. Those are listed with a warning and only unassigned if you tick that box.
 - Right before each job it takes one more look, in case someone changed it since the review (a changed job is left for you to look at). Each change is confirmed from ServiceTitan's data, problem jobs get one more try, and there's a Stop button and a copyable list of results.
-- **↩ Put back** returns the jobs from the last run to exactly the techs they had.
+- **↩ Put back** returns the jobs from the last run to exactly the techs they had. It's saved in your browser for a day, so closing the Toolbox or reloading the page doesn't lose it.
+- If the board doesn't show a move after a couple of seconds, Move Jobs refreshes the board for you (same day and filters).
 - **🔕 Notifications for these jobs…** opens Job Notifications with the moved jobs already picked, to turn their notifications off. That part needs permission to open job records.
 
 It sends the same requests the job panel's ⋮ → Assign/Unassign sends, one job at a time: about a second or two per job, where clicking through the panel takes several. Up to 300 jobs per run.
