@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.4
+
+- **Fix: 📱 Customer Texts said "ServiceTitan has signed you out" while you were signed in**, and sent nothing. Since October 2026 many dispatcher logins can't open the job record, and ServiceTitan refuses that the same way it refuses a signed-out session. Customer Texts read phone numbers from the job record, so it stopped every run.
+  - Phone numbers now come from the **customer** (the same list as the customer page's Contact Methods panel), which those logins can still see. Who gets texted, landline-to-mobile, STOP, unread replies and the repeat rules all work as before.
+  - When ServiceTitan refuses something, the Toolbox now checks whether you're still signed in. It only says "signed out" if you really are; otherwise it says your login doesn't have permission to see that. This applies to every tool.
+  - Without job-record access, a typed job number that isn't on the board can't be looked up, so it says to pick the job on the board or from the Hold list instead.
+  - Without job-record access, holds booked since the Hold list was loaded can't be spotted. The check screen says so; reload the Hold list if it's been a while.
+- Added tests for a login without job-record access (`tests/test_no_permission.py`).
+
 ## 1.5.3
 
 - **Fix: 📝 Notes opened a "This Page Could Not Be Found" page** and showed the yellow "Can't find the Add Note button" warning. When you click a job, ServiceTitan's job panel first shows a blank link to customer #0 for about a second while the job loads. Notes followed that blank link if you picked the note first, or picked it right after clicking the job. Notes now waits for the real customer (it says "Job loading..." meanwhile).

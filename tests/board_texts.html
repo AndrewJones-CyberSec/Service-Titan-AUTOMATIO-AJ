@@ -100,6 +100,21 @@
     window.apiCalls++; window.apiLog.push(u.split('&_=')[0]);
     await pause(window.API_DELAY || 60, opts && opts.signal);
     if (window.API_401) return new Response('', { status: 401 });
+    // Every signed-in user can read this (the Toolbox asks it after a 401 to tell "signed out"
+    // from "not allowed").
+    if (u.indexOf('/api/cp/settings/special/permission-settings') === 0) return json({ Settings: [] });
+    // The customer page's Contact Methods (type 1 = email, 2 = phone, 3 = mobile).
+    // CONTACTS_DOWN = true breaks it.
+    let cm = /^\/app\/api\/contact-methods\/getContactMethods\?ownerId=(\d+)&ownerType=Customer/.exec(u);
+    if (cm) {
+      if (window.CONTACTS_DOWN) return json({}, 500);
+      const cu = C[cm[1]];
+      if (!cu) return json([]);
+      return json([{ id: 1, type: 1, value: 'x@y.z' }].concat(cu.c.map((x, i) => ({ id: i + 10, type: x[0] === 'M' ? 3 : 2, value: x[1], memo: '' }))));
+    }
+    // JOB_NO_PERMISSION = true: this login can't open job records (ServiceTitan answers 401
+    // while still signed in, as it does since Oct 2026 for many dispatchers).
+    if (window.JOB_NO_PERMISSION && u.indexOf('/Job/Index/') === 0) return new Response('', { status: 401 });
     if (u.indexOf('/Dispatch/GetJobs') === 0) {
       const b = JSON.parse(opts.body);
       window.lastGetJobs = b;

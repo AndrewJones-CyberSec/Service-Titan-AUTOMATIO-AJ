@@ -18,8 +18,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.5.3';
+  const VERSION = '1.5.4';
   const WHATS_NEW = {
+    '1.5.4': 'Fix: 📱 Customer Texts no longer says "ServiceTitan has signed you out" when you\'re signed in but your login can\'t open job records. It now reads phone numbers from the customer (like the Contact Methods panel), so it works without that permission.',
     '1.5.3': 'Fix: 📝 Notes no longer opens a "This Page Could Not Be Found" page. When you click a job, ServiceTitan shows a blank customer link for about a second while the job loads; Notes now waits for the real customer instead of following the blank one.',
     '1.5.2': 'Steadier runs: Stop works right away, even while jobs are still being read. If ServiceTitan signs you out, a run stops and says so. If ServiceTitan is slow, the Toolbox eases off. Customer Texts skips a hold that has been booked since you loaded the list.',
     '1.5.1': 'Faster and smarter: Check jobs in Job Notifications and Business Unit now takes seconds instead of minutes, and Customer Texts checks everyone before it starts, so you see exactly who will be texted (and who is skipped, and why). Every job-picking tool also has + All in the list.',
@@ -112,19 +113,29 @@
   const st = (() => {
     const HEADERS = { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' };
     // Every failure says what kind it is, so a run can react the right way:
-    //   signedOut: the session has ended (ServiceTitan answers 401). Nothing more will work.
-    //   trouble:   ServiceTitan is slow or failing (no answer in time, 5xx, can't connect).
-    //   bad:       that one request didn't work (no such job, an odd answer).
+    //   signedOut:    the session has ended. Nothing more will work.
+    //   noPermission: still signed in, but this login isn't allowed to see that (ServiceTitan
+    //                 answers 401 for both, so a 401 is double-checked with stillSignedIn()).
+    //   trouble:      ServiceTitan is slow or failing (no answer in time, 5xx, can't connect).
+    //   bad:          that one request didn't work (no such job, an odd answer).
     const SIGNED_OUT = 'ServiceTitan has signed you out. Reload the page, sign back in, then run it again.';
+    const NO_PERMISSION = 'your ServiceTitan login doesn\'t have permission to see this';
     const fail = (kind, msg) => Object.assign(new Error(msg), { kind });
     const isSignedOut = e => !!(e && e.kind === 'signedOut');
+    const isNoPermission = e => !!(e && e.kind === 'noPermission');
+    // Is the session still alive? Asks for something every signed-in user can read. Reads refused
+    // at the same moment share one question.
+    let asking = null;
+    const stillSignedIn = () => asking || (asking = fetch('/api/cp/settings/special/permission-settings?_=' + Date.now(), { credentials: 'include', headers: HEADERS })
+      .then(r => r.ok && !(r.redirected && /\/(auth|account|login|signin)\b/i.test(r.url)), () => false)
+      .then(v => { asking = null; return v; }));
     const getJSON = async (url, ms) => {
       const ctl = typeof AbortController === 'function' ? new AbortController() : null;
       const timer = ctl ? setTimeout(() => ctl.abort(), ms || 15000) : null;
       let r, text;
       try {
         r = await fetch(url + (url.indexOf('?') < 0 ? '?' : '&') + '_=' + Date.now(), { credentials: 'include', headers: HEADERS, signal: ctl ? ctl.signal : undefined });
-        if (r.status === 401) throw fail('signedOut', SIGNED_OUT);
+        if (r.status === 401 || r.status === 403) throw (await stillSignedIn()) ? fail('noPermission', NO_PERMISSION) : fail('signedOut', SIGNED_OUT);
         if (r.redirected && /\/(auth|account|login|signin)\b/i.test(r.url)) throw fail('signedOut', SIGNED_OUT);
         if (r.status >= 500 || r.status === 408 || r.status === 429) throw fail('trouble', 'ServiceTitan answered ' + r.status);
         if (!r.ok) throw fail('bad', 'ServiceTitan answered ' + r.status);
@@ -215,7 +226,18 @@
       try { const g = window.App && window.App.Enums && window.App.Enums[group]; if (g && typeof g[name] === 'number') return g[name]; } catch (e) {}
       return backup;
     };
-    return { getJSON, pool, NOT_RUN, haltNote, SIGNED_OUT, isSignedOut, job, jobEdit, chatThread, chatMessages, code };
+    // A customer's phone numbers, as the customer page's Contact Methods panel reads them. Works
+    // for logins that can't open the job record. [{ num, mobile }] in ServiceTitan's order
+    // (primary first). Seen Oct 2026: type 1 = email, 3 = mobile phone.
+    const CONTACT_EMAIL = 1, CONTACT_MOBILE = 3;
+    const customerPhones = async customerId => {
+      const d = await getJSON('/app/api/contact-methods/getContactMethods?ownerId=' + encodeURIComponent(customerId) + '&ownerType=Customer');
+      if (!Array.isArray(d)) throw fail('bad', 'the customer\'s contact methods came back in a shape the Toolbox doesn\'t know');
+      const isType = (t, n, word) => t === n || (typeof t === 'string' && new RegExp('^' + word + '$', 'i').test(t.replace(/\s/g, '')));
+      return d.filter(x => x && !isType(x.type, CONTACT_EMAIL, 'email') && last10(x.value).length === 10)
+        .map(x => ({ num: last10(x.value), mobile: isType(x.type, CONTACT_MOBILE, 'mobile(phone)?') }));
+    };
+    return { getJSON, pool, NOT_RUN, haltNote, SIGNED_OUT, isSignedOut, isNoPermission, job, jobEdit, chatThread, chatMessages, customerPhones, code };
   })();
 
   // The editable list used by ✏️ Edit notes and ✏️ Edit messages: a name and a text per item,
@@ -2911,6 +2933,7 @@
         skips.slice(0, 40).forEach(x => lines.push('• ' + (x.r.customer || 'job #' + x.r.jobId) + (x.num ? ' ' + showNum(x.num) : '') + ': ' + x.why));
         if (skips.length > 40) lines.push('…and ' + (skips.length - 40) + ' more (all listed in the results)');
       }
+      if (jobRecordBlocked && pending.some(r => r.hold)) lines.push('', 'ℹ️ Your ServiceTitan login can\'t open job records, so holds booked since the Hold list loaded can\'t be spotted. Reload the Hold list first if it\'s been a while.');
       confHead.textContent = 'Check before texting';
       confText.textContent = lines.join('\n');
       confAsk.textContent = ''; confInput.value = '';
@@ -2956,12 +2979,42 @@
     });
 
     // ---------- Talking to ServiceTitan ----------
-    // The Bill To's phone numbers, from the job's own data. Primary first.
-    const billTo = async jobId => {
-      let j;
-      try { j = await st.job(jobId); } catch (e) { throw st.isSignedOut(e) ? e : Object.assign(new Error('the job didn\'t load (' + errText(e) + ')'), { kind: e.kind }); }
-      const c = j && j.Customer;
+    // Many logins can't open the job record any more (ServiceTitan answers "not allowed"). Once
+    // that's seen, job records aren't asked for again this session.
+    let jobRecordBlocked = false;
+    const NO_JOB_RECORD = 'your ServiceTitan login can\'t open job records, so a typed job number can\'t be looked up. Pick the job on the board or from the Hold list instead';
+    // The job record (for its status, or a typed job's customer), or null if this login can't see it.
+    const jobRecord = async jobId => {
+      if (jobRecordBlocked) return null;
+      try { return await st.job(jobId); }
+      catch (e) {
+        if (st.isNoPermission(e)) { jobRecordBlocked = true; return null; }
+        throw st.isSignedOut(e) ? e : Object.assign(new Error('the job didn\'t load (' + errText(e) + ')'), { kind: e.kind });
+      }
+    };
+    // The Bill To's phone numbers, primary first. Read from the customer (the same data as the
+    // customer page's Contact Methods), which works without permission to view job records. A
+    // typed job number has no customer yet, so that one comes from the job record.
+    // alive(): optional; once false, the answer isn't wanted any more, so it stops asking.
+    const billTo = async (r, alive) => {
+      if (r.customerId) {
+        let phones;
+        try { phones = await st.customerPhones(r.customerId); }
+        catch (e) {
+          if (st.isSignedOut(e)) throw e;
+          if (st.isNoPermission(e)) throw Object.assign(new Error('your ServiceTitan login doesn\'t have permission to see this customer\'s phone numbers'), { kind: e.kind });
+          if (e && e.kind === 'bad' && /shape/.test(errText(e))) health.flag(TOOL, 'can\'t read the customer\'s phone numbers', 'contact-methods/getContactMethods');
+          throw Object.assign(new Error('the customer\'s phone numbers didn\'t load (' + errText(e) + ')'), { kind: e.kind });
+        }
+        // Only a Hold-list job needs its status (to skip ones booked since the list loaded).
+        const j = r.hold && (!alive || alive()) ? await jobRecord(r.jobId) : null;
+        return { name: '', phones, status: j && typeof j.Status === 'string' ? j.Status : '' };
+      }
+      const j = await jobRecord(r.jobId);
+      if (!j) throw Object.assign(new Error(NO_JOB_RECORD), { kind: 'noPermission' });
+      const c = j.Customer;
       if (!c || !Array.isArray(c.Contacts)) { health.flag(TOOL, 'can\'t read the Bill To phone numbers from a job', 'Job/Index Customer.Contacts'); throw new Error('no Bill To contacts in the job data'); }
+      if (c.Id && !r.customerId) r.customerId = c.Id;
       const phones = c.Contacts.filter(x => x && /phone/i.test(x.Type || '') && last10(x.Value).length === 10)
         .map(x => ({ num: last10(x.Value), mobile: /mobile/i.test(x.Type || '') }));
       return { name: norm(c.Name), phones, status: typeof j.Status === 'string' ? j.Status : '' };
@@ -3093,7 +3146,7 @@
       let chatTrouble = 0;
       const results = await st.pool(list, 4, async (r, i, alive) => {
         if (uses(tmpl, 'tech') && !r.tech) return { skips: [{ why: 'no tech on the board for {tech}', kind: 'skipped' }] };
-        const info = await billTo(r.jobId);
+        const info = await billTo(r, alive);
         if (!alive()) return null;
         if (holdGone(r, info.status)) return { info, skips: [{ why: holdGone(r, info.status), kind: 'skipped' }] };
         const name = info.name || r.customer;
@@ -3209,7 +3262,7 @@
           // reply or a STOP? If ServiceTitan has signed you out, stop here.
           let fresh = null;
           try {
-            if (r.hold && r.listStatus) { const j = await st.job(r.jobId); const why = holdGone(r, j && typeof j.Status === 'string' ? j.Status : ''); if (why) fresh = { skip: why, kind: 'skipped' }; }
+            if (r.hold && r.listStatus) { const j = await jobRecord(r.jobId); const why = holdGone(r, j && typeof j.Status === 'string' ? j.Status : ''); if (why) fresh = { skip: why, kind: 'skipped' }; }
             if (!fresh && !x.unchecked) fresh = await checkNumber(num, f, text);
           } catch (e) {
             if (st.isSignedOut(e)) { signedOut = true; add('⚠️ ' + e.message + ' Stopped. ' + s1(sends.length - n, 'text') + ' not sent.'); break; }
