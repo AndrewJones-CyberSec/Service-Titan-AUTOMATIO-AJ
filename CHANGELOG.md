@@ -17,7 +17,9 @@
   - **Swaps check bookings:** time off, meetings, recurring events and other jobs now count for both swaps. Only the job each tech is leaving doesn't.
   - **Stacking:** the review says when jobs going on one tech overlap. During the run, the run's own jobs don't count as booked, but a real new booking still stops that job.
   - **Fresh checks:** the tech list (skills, managed techs) is read every review, and a review over 5 minutes old has to be done again.
-  - **Status:** ServiceTitan now sends appointment status as a number, so Done appointments weren't being recognized. Fixed, and a job that isn't Scheduled (on the way, working, on hold) now gets a warning you have to tick.
+  - **Status:** ServiceTitan now sends appointment status as a number, so Done appointments weren't being recognized. Fixed, and a job that isn't Scheduled (on the way, working, on hold) now gets a warning you have to tick. The fresh reading decides, never the board's word, so a board that's behind can't hide a Dispatch.
+  - **Managed tech:** a tech who isn't in the tech list is no longer counted as managed. A priced job with no known managed tech is left alone for you to check.
+  - **Known limit (on purpose):** when three or more overlapping jobs go onto one tech, a booking made by someone else during the run on a job your board's filters hide can't be told apart from the run's own jobs. The review itself is exact, and time off or meetings are always caught. Treating it as booked would stop every third overlapping job in a stack.
   - **Answers in a shape the Toolbox doesn't know** (a renamed booked check, a missing job total or status) stop that job and show the yellow warning bar, instead of being read as "free" or "$0".
   - **Stop checking** stops a slow review.
 - **All tools:** the "are you still signed in?" check now gives up after 8 seconds, and a check that doesn't answer is treated as ServiceTitan being slow, not as signed out. Before, it could hang a run forever.

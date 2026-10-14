@@ -59,7 +59,7 @@ def tick(page, kind):
 # Puts the fake board back the way it started, and clears every switch.
 START = None
 def restore(page):
-    page.evaluate("(start) => { Object.keys(start).forEach(k => { Object.assign(APPTS[k], start[k], { s: new Date(start[k].s), e: new Date(start[k].e) }); }); "
+    page.evaluate("(start) => { Object.keys(start).forEach(k => { Object.assign(APPTS[k], start[k], { s: new Date(start[k].s), e: new Date(start[k].e), techs: start[k].techs.slice() }); delete APPTS[k].boardStatus; }); "
              "BOOKED = {}; NONJOB = {}; ASSIGN_FAIL = {}; UNASSIGN_FAIL = {}; ASSIGN_IGNORE = {}; ASSIGN_LOST = {}; UNASSIGN_LOST = {}; "
              "BOOKED_BY_SCHEDULE = false; BOOKED_DRIFT = false; API_401 = false; APPT_401 = false; PERM_HANG = false; SIGNOUT_AFTER_ASSIGN = false; API_DELAY = 0; "
              "window.calls = []; localStorage.removeItem('stMoveUndo'); render(); }", START)
@@ -316,6 +316,73 @@ with sync_playwright() as p:
     tick(page, 'status')
     go(page)
     check(techs(page, 9001) == [102], 'status: moved after ticking')
+    restore(page)
+    # The board is behind: it still says Scheduled, but the fresh reading says Dispatched.
+    ev(page, "() => { APPTS[9001].status = 'Dispatched'; APPTS[9001].boardStatus = 'Scheduled'; render(); }")
+    clear_jobs(page); type_jobs(page, '7001')
+    t = review(page)
+    check("it's Dispatched, not Scheduled" in t and not go_enabled(page), 'status: a board still saying Scheduled doesn\'t hide a fresh Dispatched')
+    B(page, 'Cancel').click()
+    # Dispatched after the review, board still behind: checked again right before, left alone.
+    ev(page, "() => { APPTS[9001].status = 'Scheduled'; render(); }")
+    t = review(page)
+    check(go_enabled(page) and 'Not Scheduled' not in t, 'status: Scheduled again, ready')
+    ev(page, "() => { APPTS[9001].status = 'Dispatched'; APPTS[9001].boardStatus = 'Scheduled'; render(); window.calls = []; }")
+    go(page)
+    lg = log(page)
+    check('is Dispatched now, not Scheduled' in lg and calls(page) == [] and techs(page, 9001) == [101], 'status: dispatched after the review is caught right before, nothing changed')
+    restore(page)
+    # The other way: the board says Dispatched but the fresh reading says Scheduled (0). The fresh one wins.
+    ev(page, "() => { APPTS[9001].boardStatus = 'Dispatched'; render(); }")
+    t = review(page)
+    check(go_enabled(page) and 'Not Scheduled' not in t, 'status: the fresh Scheduled (0) wins over an older board word')
+    B(page, 'Cancel').click()
+    restore(page)
+
+    # ================= Managed tech: an unknown tech isn't counted as managed =================
+    # $500 job on a tech the tech list doesn't know (#999), adding Andrew J (not managed).
+    mode(page, 'Add a tech'); pick_to(page, 103)
+    ev(page, "() => { APPTS[9002].techs = [999]; render(); window.calls = []; }")
+    clear_jobs(page); type_jobs(page, '7002')
+    t = review(page)
+    check("couldn't confirm a managed tech on this $500.00 job" in t and "isn't in the tech list" in t and not go_enabled(page) and calls(page) == [], 'managed: an unknown tech on a priced job is left alone, not assumed managed')
+    B(page, 'Cancel').click()
+    # A known managed tech on it is enough, even with an unknown tech too.
+    ev(page, "() => { APPTS[9002].techs = [999, 101]; render(); }")
+    t = review(page)
+    check('+ Andrew J' in t and "couldn't confirm a managed tech" not in t and 'Left alone' not in t, 'managed: a known managed tech on the job is enough')
+    B(page, 'Cancel').click()
+    restore(page)
+    mode(page, 'Move to a tech')
+
+    # ================= Known limit: a job the board doesn't show, booked mid-run, in a 3-job stack =================
+    pick_to(page, 104)
+    three = "() => { APPTS[9103].s = new Date(APPTS[9101].s); APPTS[9103].s.setHours(10); APPTS[9103].e = new Date(APPTS[9101].s); APPTS[9103].e.setHours(13); BOOKED_BY_SCHEDULE = true; render(); window.calls = []; }"
+    # Hidden from the board but already there at the review: ServiceTitan's check catches it (exact at review).
+    ev(page, three); ev(page, "() => { BOOKED[104] = true; }")
+    clear_jobs(page); type_jobs(page, '7101 7102 7103')
+    t = review(page)
+    check('Already booked at that time (3)' in t and not go_enabled(page), 'limit: a booking the board doesn\'t show is still caught at the review')
+    B(page, 'Cancel').click()
+    restore(page)
+    # Added mid-run (after the 2nd job): for the 3rd job ServiceTitan can only leave out one of the run's
+    # two overlapping jobs, and the board doesn't show the new one, so it can't be told apart. The 3rd
+    # job goes through. Documented limit (treating it as booked would stop every 3-job stack).
+    ev(page, three)
+    clear_jobs(page); type_jobs(page, '7101 7102 7103')
+    review(page)
+    page.evaluate("""() => { const f = window.fetch; let n = 0; window.fetch = async (url, opts) => { const r = await f(url, opts); if (/\\/AssignTechnicians/.test(String(url)) && ++n === 2) { BOOKED[104] = true; window.fetch = f; } return r; }; }""")
+    go(page)
+    check(all(techs(page, a) == [104] for a in (9101, 9102, 9103)), 'limit (documented): a hidden job booked mid-run can\'t be told apart in a 3-job stack; the 3rd job goes on')
+    restore(page)
+    # Time off added mid-run is still caught in the same case (non-job events always count).
+    ev(page, three)
+    clear_jobs(page); type_jobs(page, '7101 7102 7103')
+    review(page)
+    page.evaluate("""() => { const f = window.fetch; let n = 0; window.fetch = async (url, opts) => { const r = await f(url, opts); if (/\\/AssignTechnicians/.test(String(url)) && ++n === 2) { NONJOB[104] = true; window.fetch = f; } return r; }; }""")
+    go(page)
+    lg = log(page)
+    check(techs(page, 9103) == [] and 'Kim Wu: Dana K has a non-job event then' in lg and '(since the review)' in lg, 'limit: time off added mid-run is still caught in a 3-job stack')
     restore(page)
 
     # ================= Closing waits for the run to really stop =================

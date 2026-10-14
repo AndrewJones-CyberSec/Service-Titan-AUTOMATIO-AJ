@@ -139,7 +139,7 @@
   const rowFor = k => {
     const a = APPTS[k];
     return { Id: Number(k), JobId: a.job, AppointmentNumber: a.n, Customer: a.cust, Start: a.s, End: a.e, BusinessUnitId: a.bu,
-      Technicians: a.techs.map(id => ({ Id: id, Name: tname(id) })), TechnicianId: a.techs[0] || 0, AppointmentStatus: a.status };
+      Technicians: a.techs.map(id => ({ Id: id, Name: tname(id) })), TechnicianId: a.techs[0] || 0, AppointmentStatus: a.boardStatus || a.status };   // boardStatus: the board showing an older word
   };
   window.opened = [];
   function render() {

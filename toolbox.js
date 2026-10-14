@@ -3844,9 +3844,13 @@
     const after = (cur, d) => cur.filter(x => !hasId(d.remove, x)).concat(d.add.filter(x => !hasId(cur, x)));
     // ServiceTitan's own rule (its job panel greys these techs out): a tech who isn't a managed
     // tech can only be alone on a job whose invoice is $0. It asks for a managed tech first.
+    // A tech who isn't in the tech list can't be counted as managed: if no known tech on the job is
+    // managed, the job is left alone rather than guessed.
     const managedProblem = (total, fin) => {
       if (!(total > 0) || !fin.length) return '';
-      if (fin.some(id => { const t = techById(id); return !t || t.managed; })) return '';
+      if (fin.some(id => { const t = techById(id); return t && t.managed; })) return '';
+      const unknown = fin.filter(id => !techById(id));
+      if (unknown.length) return 'couldn\'t confirm a managed tech on this $' + Number(total).toFixed(2) + ' job (' + names(unknown) + (unknown.length === 1 ? ' isn\'t' : ' aren\'t') + ' in the tech list). Check it by hand';
       return 'ServiceTitan won\'t allow it: ' + names(fin) + (fin.length === 1 ? ' isn\'t a managed tech' : ' aren\'t managed techs') +
         ', so the invoice must be $0 (it\'s $' + Number(total).toFixed(2) + '). Put a managed tech on it too';
     };
@@ -3856,17 +3860,20 @@
       if (d.add.length) return (cur.length ? '+ ' : '') + names(d.add);
       return '− ' + names(d.remove) + (fin.length ? '' : ' (to Unassigned)');
     };
-    // Appointment status. The job panel's data has a number (seen Oct 2026: 0 = Scheduled, 4 = Done;
-    // the others are taken to follow ServiceTitan's order: 1 Dispatched, 2 Working, 3 Hold,
-    // 5 Canceled). The board has the word, used when the job is on the board (unless the number says
-    // Done or Canceled). A status the Toolbox can't name is treated as "not Scheduled".
+    // Appointment status. The job panel's data (read fresh each time) has a number. Seen Oct 2026:
+    // 0 = Scheduled, 4 = Done. The others are taken to follow ServiceTitan's order (1 Dispatched,
+    // 2 Working, 3 Hold, 5 Canceled). The fresh number decides: only 0 is Scheduled, and anything
+    // else gets the "not Scheduled" warning. The board's word is only used to name a status, never
+    // to decide, since the board can be behind (still saying Scheduled after a Dispatch).
     const STATUS_NAMES = ['Scheduled', 'Dispatched', 'Working', 'Hold', 'Done', 'Canceled'];
     const isOver = name => /^(done|completed?|cancell?ed)$/i.test(norm(name));
     const isScheduled = name => /^scheduled$/i.test(norm(name));
     const statusName = (raw, row) => {
-      const fromData = typeof raw === 'number' ? (STATUS_NAMES[raw] || 'status ' + raw) : norm(raw);
-      if (isOver(fromData)) return fromData;
-      return (row && row.status) || fromData;
+      if (typeof raw !== 'number') return norm(raw);   // older pages sent the word itself
+      if (raw === 0 || raw === 4) return STATUS_NAMES[raw];
+      // Not Scheduled. The board's word names it, if it says something other than Scheduled.
+      const word = row && row.status && !isScheduled(row.status) ? row.status : '';
+      return word || STATUS_NAMES[raw] || 'status ' + raw;
     };
     const rowFor = apptId => dayRows().find(r => S(r.apptId) === S(apptId)) || null;
     const sameSet = (a, b) => a.length === b.length && a.every(id => hasId(b, id));
@@ -3879,6 +3886,11 @@
     // leave out one appointment itself. With two or more to leave out, a job booking only counts
     // if the board shows another job of theirs at that time. Non-job and recurring events always
     // count. Returns [{ id, why }] for the booked techs.
+    // Known limit (kept on purpose): in that two-or-more case, a job the board doesn't show (hidden
+    // by the board's branch or team filter) can't be seen. It only comes up during a run (stacking
+    // three or more overlapping jobs, after the review's exact check), or in a whole-day swap where
+    // a tech already has overlapping jobs. Treating it as booked instead would stop every third
+    // overlapping job in a stack, with no box to tick at the review to allow it.
     const bookedAt = async (techIds, appt, ignore) => {
       const out = [], plain = [];
       for (const id of techIds) {
