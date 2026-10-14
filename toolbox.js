@@ -4008,7 +4008,7 @@
           const mp = managedProblem(out.total, fin);
           if (mp) return Object.assign(out, { skip: mp, kind: 'skipped' });
           out.d = d;   // only now is it a job to do
-          if (m !== 'putback' && !isScheduled(status)) out.warn.status = 'it\'s ' + status + ', not Scheduled';
+          if (!isScheduled(status)) out.warn.status = 'it\'s ' + status + ', not Scheduled';
           if (!fin.length && m !== 'putback' && otherBranch(out.bu)) out.warn.branch = 'goes to ' + buName(out.bu) + '\'s Unassigned list, not yours';
           if (d.add.length && m !== 'putback') {
             // Skills, as the job panel checks them before assigning.
@@ -4038,6 +4038,26 @@
           else items.push(x);
         });
         missing.forEach(j => items.push({ it: { r: { jobId: S(j), customer: picker.label(j) } }, skip: 'not on the board for ' + dayText(day) + ' (open its day first)', kind: 'skipped' }));
+        // Put back: is a tech going back on a job booked elsewhere since the move? Checked once every
+        // job has been read, because undoing a swap takes each tech off the job they were swapped
+        // onto, and that one doesn't count.
+        if (m === 'putback') {
+          items.forEach(x => { if (x.d && !x.skip) x.d.remove.forEach(id => leave(id, { apptId: x.it.r.apptId, start: x.start, end: x.end })); });
+          const check = items.filter(x => x.d && !x.skip && x.d.add.length);
+          for (let n = 0; n < check.length; n++) {
+            if (reviewStop) { say('Stopped checking. Nothing changed.'); return; }
+            say('Checking bookings... ' + (n + 1) + ' of ' + check.length);
+            const x = check[n];
+            try {
+              const booked = await bookedAt(x.d.add, { apptId: x.it.r.apptId, start: x.start, end: x.end }, id => leaving.get(S(id)) || []);
+              if (booked.length) x.warn.booked = bookedText(booked);
+            } catch (e) {
+              if (st.isSignedOut(e)) throw e;
+              noteBad(e);
+              Object.assign(x, { skip: 'couldn\'t check if the tech is booked (' + errText(e) + ')', kind: 'problem' });
+            }
+          }
+        }
         planned = { mode: m, items, at: Date.now(), day, leaving, params: m === 'move' || m === 'add' ? { to: toPick.value(), from: fromPick.value() } : m === 'unassign' ? { from: fromPick.value() } : m === 'swapDays' ? { a: aPick.value(), b: bPick.value() } : {} };
         showReview();
       } catch (e) {
@@ -4182,6 +4202,9 @@
       const cur = now.appointment.techIds;
       x.lastSeen = cur.slice();
       if (!x.origin) x.origin = cur.slice();
+      // Exactly the techs the review saw, or it's left alone. (On a retry after this run already
+      // changed part of it, the check below, against what the review planned, is the one that applies.)
+      if (!x.touched && x.cur && !sameSet(cur, x.cur)) return res('changed since the review (now ' + nowText(cur) + '). Review again', 'problem', { noRetry: true });
       const status = statusName(now.appointment.status), stopWhy = statusStop(now.appointment.status);
       if (stopWhy) return res(stopWhy, 'skipped');
       const d = decide(kindOf(m), cur, x.it.p);
@@ -4192,11 +4215,11 @@
       const fin = after(cur, d);
       const mp = managedProblem(now.jobTotal, fin);
       if (mp) return res(mp, 'skipped');
-      if (m !== 'putback' && !isScheduled(status) && !okWarn.status) return res('is ' + status + ' now, not Scheduled (not ticked), left alone', 'skipped');
+      if (!isScheduled(status) && !okWarn.status) return res('is ' + status + ' now, not Scheduled (not ticked), left alone', 'skipped');
       if (!fin.length && otherBranch(now.businessUnitId) && !okWarn.branch && m !== 'putback') return res('would go to ' + buName(now.businessUnitId) + '\'s Unassigned list (not ticked)', 'skipped');
       // Booked, checked again right before (someone may have booked the tech since the review).
-      // Jobs this run put on the tech, and the job a swap takes them off, don't count.
-      if (d.add.length && m !== 'putback' && !okWarn.booked) {
+      // Jobs this run put on the tech, and the job a swap (or undoing one) takes them off, don't count.
+      if (d.add.length && !okWarn.booked) {
         try {
           const appt = { apptId: r.apptId, start: now.appointment.start, end: now.appointment.end };
           const since = await bookedAt(d.add, appt, id => (ctx.leaving.get(S(id)) || []).concat(ctx.given.filter(g => hasId(g.ids, id))));
@@ -4207,7 +4230,7 @@
       // 1) Add the new tech(s) first, so the job is never left without a tech halfway.
       if (d.add.length) {
         let sent = null;
-        x.lastSeen = null;
+        x.lastSeen = null; x.touched = true;
         try { await st.assignTechs(r.apptId, d.add); }
         catch (e) { if (st.isSignedOut(e)) throw e; sent = e; }
         // If the request failed, ServiceTitan may still have made the change: look before saying anything.
@@ -4223,7 +4246,7 @@
       // 2) Then take the old one(s) off.
       if (d.remove.length) {
         let sent = null;
-        x.lastSeen = null;
+        x.lastSeen = null; x.touched = true;
         try { await st.unassignTechs(r.apptId, d.remove); }
         catch (e) { if (st.isSignedOut(e)) throw e; sent = e; }
         const got = await confirmTechs(r.apptId, ids => d.remove.every(id => !hasId(ids, id)), x, sent ? 2000 : 6000);
@@ -4251,7 +4274,7 @@
       copyBtn.textContent = 'Copy results';
       updateButtons();
       fit(); progress.scrollIntoView({ block: 'nearest' });
-      todo.forEach(x => { x.origin = null; x.lastSeen = null; });
+      todo.forEach(x => { x.origin = null; x.lastSeen = null; x.touched = false; });
       const results = new Map();   // apptId -> result
       const ctx = { given: [], leaving: p.leaving || new Map() };
       const record = (x, rr, retry) => { results.set(S(x.it.r.apptId), { x, rr }); add(label(x.it.r) + ': ' + (retry ? 'retry: ' : '') + rr.text); };

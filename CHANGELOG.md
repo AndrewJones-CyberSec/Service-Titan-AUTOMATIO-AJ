@@ -22,6 +22,8 @@
   - **Known limit (on purpose):** when three or more overlapping jobs go onto one tech, a booking made by someone else during the run on a job your board's filters hide can't be told apart from the run's own jobs. The review itself is exact, and time off or meetings are always caught. Treating it as booked would stop every third overlapping job in a stack.
   - **Answers in a shape the Toolbox doesn't know** (a renamed booked check, a missing job total or status) stop that job and show the yellow warning bar, instead of being read as "free" or "$0".
   - **Stop checking** stops a slow review.
+  - **Put back checks too:** a tech going back on a job who's been booked elsewhere since the move gets the booked warning (undoing a swap doesn't count the swapped jobs), and a job that's no longer Scheduled needs a tick.
+  - **Exact match before every change:** if a job's techs aren't exactly what the review saw, it's left alone with "changed since the review", for every mode including Put back.
 - **All tools:** the "are you still signed in?" check now gives up after 8 seconds, and a check that doesn't answer is treated as ServiceTitan being slow, not as signed out. Before, it could hang a run forever.
 - Closing the Toolbox during a run now waits until the run has really stopped. Business Unit's confirm step counts clock time.
 - Job Notifications can now take a list of jobs from another tool.
