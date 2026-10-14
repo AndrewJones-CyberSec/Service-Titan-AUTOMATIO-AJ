@@ -11,8 +11,19 @@
   - **🔕 Notifications for these jobs…** hands the moved jobs to Job Notifications.
   - **↩ Put back is saved in your browser for a day**, so it still works after the Toolbox is closed, the page is reloaded, or a new copy is loaded, and from any day on the board. A job someone changed since the move is still left alone.
   - **The board refreshes itself** if it hasn't shown a move after a couple of seconds (the board's own refresh: same day and filters, no page reload). Only if that doesn't work does it say to press F5.
+- **Move Jobs safety fixes (from a code review, each with a test in `tests/test_move_safety.py`):**
+  - **Swap two jobs is both jobs or neither.** One side with an unticked warning, a Done job, or a change since the review means nothing is swapped. Both jobs are read again right before. If the second fails after the first changed, it says *half swapped* and Put back can undo the first.
+  - **Lost answers:** if a change goes through but ServiceTitan's answer never arrives, the Toolbox reads the job to see what happened instead of saying "Nothing changed". Put back always returns jobs to where they were before the run touched them, even after a retry, and keeps a job that changed just before a sign-out.
+  - **Swaps check bookings:** time off, meetings, recurring events and other jobs now count for both swaps. Only the job each tech is leaving doesn't.
+  - **Stacking:** the review says when jobs going on one tech overlap. During the run, the run's own jobs don't count as booked, but a real new booking still stops that job.
+  - **Fresh checks:** the tech list (skills, managed techs) is read every review, and a review over 5 minutes old has to be done again.
+  - **Status:** ServiceTitan now sends appointment status as a number, so Done appointments weren't being recognized. Fixed, and a job that isn't Scheduled (on the way, working, on hold) now gets a warning you have to tick.
+  - **Answers in a shape the Toolbox doesn't know** (a renamed booked check, a missing job total or status) stop that job and show the yellow warning bar, instead of being read as "free" or "$0".
+  - **Stop checking** stops a slow review.
+- **All tools:** the "are you still signed in?" check now gives up after 8 seconds, and a check that doesn't answer is treated as ServiceTitan being slow, not as signed out. Before, it could hang a run forever.
+- Closing the Toolbox during a run now waits until the run has really stopped. Business Unit's confirm step counts clock time.
 - Job Notifications can now take a list of jobs from another tool.
-- Added tests for Move Jobs (`tests/test_move_jobs.py`, `tests/board_moves.html`).
+- Added tests for Move Jobs (`tests/test_move_jobs.py`, `tests/test_move_safety.py`, `tests/board_moves.html`). The fake board now answers the way ServiceTitan did when checked live in Oct 2026.
 
 ## 1.5.4
 

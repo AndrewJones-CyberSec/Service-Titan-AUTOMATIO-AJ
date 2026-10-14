@@ -33,6 +33,8 @@
     { id: 104, name: 'Dana K', active: true, isManagedTechnician: true, skillIds: [1, 2] },
     { id: 105, name: 'Old Tech', active: false, isManagedTechnician: true, skillIds: [1, 2] }
   ];
+  // Like ServiceTitan (seen Oct 2026): the job panel's data has the status as a number; the board has the word.
+  const STATUS_NUM = { Scheduled: 0, Dispatched: 1, Working: 2, Hold: 3, Done: 4, Canceled: 5 };
   const tname = id => (TECHS.find(t => t.id === id) || {}).name || ('#' + id);
   // Appointments: appointment id -> job, visit, customer, time, techs, branch, price, status, skills the job needs.
   window.APPTS = {
@@ -50,7 +52,7 @@
   // Test switches: BOOKED[tech] = true (already booked), BOOKED_BY_SCHEDULE (booked when another of their jobs overlaps), ASSIGN_FAIL[appt] / UNASSIGN_FAIL[appt] = 'always' | number of times,
   // ASSIGN_IGNORE[appt] (says OK, changes nothing), BOARD_LAG (the board doesn't redraw after a change), NO_REFRESH (no board reload),
   // TECH_API_DOWN (no technician list), API_401 (signed out), API_DELAY (ms).
-  window.BOOKED = {}; window.ASSIGN_FAIL = {}; window.UNASSIGN_FAIL = {}; window.ASSIGN_IGNORE = {};
+  window.BOOKED = {}; window.NONJOB = {}; window.ASSIGN_FAIL = {}; window.UNASSIGN_FAIL = {}; window.ASSIGN_IGNORE = {}; window.ASSIGN_LOST = {}; window.UNASSIGN_LOST = {};
   window.calls = [];   // [kind, appt, techs] for every assign / unassign
   window.apiCalls = 0;
   const failing = (map, a) => { const f = map[a]; if (!f) return false; if (f === 'always') return true; map[a] = f - 1; return true; };
@@ -66,8 +68,11 @@
     window.apiCalls++;
     await pause(window.API_DELAY || 30, opts && opts.signal);
     if (window.API_401) return new Response('', { status: 401 });
+    // APPT_401: only the job panel's data is refused (with PERM_HANG: ServiceTitan won't say whether you're signed in).
+    if (window.APPT_401 && u.indexOf('GetJobEditFlyoutData') > -1) return new Response('', { status: 401 });
     let m;
-    if (u.indexOf('/api/cp/settings/special/permission-settings') === 0) return json({ Settings: [] });
+    // PERM_HANG: the sign-in check never answers (until the Toolbox gives up on it).
+    if (u.indexOf('/api/cp/settings/special/permission-settings') === 0) { if (window.PERM_HANG) await pause(600000, opts && opts.signal); return json({ Settings: [] }); }
     if (u.indexOf('/app/api/data/technicians') === 0) return window.TECH_API_DOWN ? json({}, 500) : json(TECHS);
     if ((m = /GetJobEditFlyoutData\?appointmentId=(\d+)/.exec(u))) {
       const a = APPTS[m[1]];
@@ -75,7 +80,7 @@
       const visits = Object.keys(APPTS).filter(k => APPTS[k].job === a.job);
       return json({ jobId: a.job, jobNumber: String(a.job), jobStatus: a.status, jobType: { id: 1, name: 'Install' }, businessUnitId: a.bu, jobTotal: a.total,
         jobAppointments: visits.map(k => ({ id: Number(k), number: APPTS[k].n, start: APPTS[k].s.toISOString(), end: APPTS[k].e.toISOString(), arrivalWindowStart: null, arrivalWindowEnd: null,
-          technicians: APPTS[k].techs.map(id => ({ id, name: tname(id), assignmentStatus: 'Assigned' })), jobAppointmentStatus: APPTS[k].status, isConfirmed: true })),
+          technicians: APPTS[k].techs.map(id => ({ id, name: tname(id), assignmentStatus: 'Assigned' })), jobAppointmentStatus: STATUS_NUM[APPTS[k].status], isConfirmed: true })),
         hasJobNotificationsEnabled: true });
     }
     if ((m = /GetJobOverviewData\?jobId=(\d+)/.exec(u))) {
@@ -84,16 +89,25 @@
       return json({ jobTags: [], skills: APPTS[k].skills.map(id => ({ id, name: SKILLS[id], active: true })), businessUnit: { id: APPTS[k].bu, name: APPTS[k].bu === 2 ? 'Gulfport Branch' : 'Mendenhall Branch' } });
     }
     if (u.indexOf('/Job/TechniciansAreBooked') === 0) {
-      window.lastBooked = body;
-      // BOOKED_BY_SCHEDULE: booked when another job of theirs overlaps that time, like ServiceTitan does.
+      window.lastBooked = body; window.bookedCalls = (window.bookedCalls || 0) + 1;
+      // Like ServiceTitan (seen Oct 2026): only the techs who ARE booked are listed, and
+      // originalAppointmentId leaves out that one appointment (by appointment id, not job number).
+      // BOOKED_BY_SCHEDULE: booked when another appointment of theirs overlaps that time.
+      // BOOKED[tech]: booked on some other job. NONJOB[tech]: a non-job event (time off, meeting).
+      // BOOKED_DRIFT: the answer comes back with renamed fields.
       const s = new Date(body.start), e = new Date(body.end);
-      const busy = id => window.BOOKED_BY_SCHEDULE && Object.keys(APPTS).some(k => APPTS[k].job !== body.originalAppointmentId && APPTS[k].techs.indexOf(id) > -1 && APPTS[k].s < e && s < APPTS[k].e);
-      return json(body.technicianIds.map(id => ({ TechnicianId: id, IsBookedForJob: !!BOOKED[id] || busy(id), IsBookedForNonJobEvent: false, IsBookedForRecurring: false })));
+      const busy = id => window.BOOKED_BY_SCHEDULE && Object.keys(APPTS).some(k => String(k) !== String(body.originalAppointmentId) && APPTS[k].techs.indexOf(id) > -1 && APPTS[k].s < e && s < APPTS[k].e);
+      const out = body.technicianIds.map(id => ({ TechnicianId: id, IsBookedForJob: !!BOOKED[id] || busy(id), IsBookedForNonJobEvent: !!NONJOB[id], IsBookedForRecurring: false }))
+        .filter(x => x.IsBookedForJob || x.IsBookedForNonJobEvent || x.IsBookedForRecurring);
+      if (window.BOOKED_DRIFT) return json(out.length ? out.map(x => ({ technicianId: x.TechnicianId, isBookedForJob: x.IsBookedForJob })) : body.technicianIds.map(id => ({ technicianId: id, isBookedForJob: true })));
+      return json(out);
     }
     if ((m = /\/dispatch\/job-edit-flyout\/(Assign|Unassign)Technicians/.exec(u))) {
       const a = APPTS[body.appointmentId];
       if (!a) return json({}, 404);
       window.calls.push([m[1].toLowerCase(), body.appointmentId, body.technicianIds.slice()]);
+      // ASSIGN_LOST / UNASSIGN_LOST[appt]: ServiceTitan makes the change, but the answer never arrives.
+      const lost = (m[1] === 'Assign' ? ASSIGN_LOST : UNASSIGN_LOST)[body.appointmentId];
       if (m[1] === 'Assign') {
         if (failing(ASSIGN_FAIL, body.appointmentId)) return json({ error: 'boom' }, 500);
         if (ASSIGN_IGNORE[body.appointmentId]) return new Response('', { status: 200 });
@@ -101,6 +115,8 @@
         // Like ServiceTitan: a job with a price keeps a managed tech.
         if (a.total > 0 && !next.some(id => (TECHS.find(t => t.id === id) || {}).isManagedTechnician)) return json({ error: 'managed' }, 400);
         a.techs = next;
+        // SIGNOUT_AFTER_ASSIGN: ServiceTitan signs you out right after this change is made.
+        if (window.SIGNOUT_AFTER_ASSIGN) window.API_401 = true;
       } else {
         if (failing(UNASSIGN_FAIL, body.appointmentId)) return json({ error: 'boom' }, 500);
         const next = a.techs.filter(id => body.technicianIds.indexOf(id) < 0);
@@ -108,6 +124,7 @@
         a.techs = next;
       }
       if (!window.BOARD_LAG) setTimeout(render, 50);
+      if (lost) { if (lost !== 'always') (m[1] === 'Assign' ? ASSIGN_LOST : UNASSIGN_LOST)[body.appointmentId] = 0; throw new TypeError('Failed to fetch'); }
       return new Response('', { status: 200 });
     }
     if (u.indexOf('/Dispatch/GetJobs') === 0) {

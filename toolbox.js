@@ -21,7 +21,7 @@
 (() => {
   const VERSION = '1.6';
   const WHATS_NEW = {
-    '1.6': 'New: 🔀 Move Jobs. Move jobs to a tech, add or unassign a tech, or swap two jobs or two techs\' whole day, without dragging. ＋ All Unassigned puts every unassigned job on one tech in one go. Review first: it warns about skills, double-booking and jobs from another branch. ↩ Put back undoes it, even after closing the Toolbox (kept for a day), and the board refreshes itself after a move.',
+    '1.6': 'New: 🔀 Move Jobs. Move jobs to a tech, add or unassign a tech, or swap two jobs or two techs\' whole day, without dragging. ＋ All Unassigned puts every unassigned job on one tech in one go. Review first: it warns about skills, double-booking and jobs from another branch. ↩ Put back undoes it, even after closing the Toolbox (kept for a day), and the board refreshes itself after a move. Swaps are both jobs or neither and check time off and other jobs too.',
     '1.5.4': 'New: 🔕 Job Notifications can turn notifications back ON (Turn on notifications…), not just off. Fix: 📱 Customer Texts works again for logins that can\'t open job records (it wrongly stopped as if you weren\'t signed in). It now reads phone numbers from the customer instead.',
     '1.5.3': 'Fix: 📝 Notes no longer opens a "This Page Could Not Be Found" page. When you click a job, ServiceTitan shows a blank customer link for about a second while the job loads; Notes now waits for the real customer instead of following the blank one.',
     '1.5.2': 'Steadier runs: Stop works right away, even while jobs are still being read. If ServiceTitan signs you out, a run stops and says so. If ServiceTitan is slow, the Toolbox eases off. Customer Texts skips a hold that has been booked since you loaded the list.',
@@ -128,11 +128,22 @@
     const isSignedOut = e => !!(e && e.kind === 'signedOut');
     const isNoPermission = e => !!(e && e.kind === 'noPermission');
     // Is the session still alive? Asks for something every signed-in user can read. Reads refused
-    // at the same moment share one question.
+    // at the same moment share one question. true: signed in. false: signed out (refused, or sent
+    // to the sign-in page). null: couldn't tell (no answer in time, can't connect, ServiceTitan
+    // failing), which a run treats as ServiceTitan being slow, not as signed out.
     let asking = null;
-    const stillSignedIn = () => asking || (asking = fetch('/api/cp/settings/special/permission-settings?_=' + Date.now(), { credentials: 'include', headers: HEADERS })
-      .then(r => r.ok && !(r.redirected && /\/(auth|account|login|signin)\b/i.test(r.url)), () => false)
-      .then(v => { asking = null; return v; }));
+    const stillSignedIn = () => asking || (asking = (async () => {
+      const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = ctl ? setTimeout(() => ctl.abort(), 8000) : null;
+      try {
+        const r = await fetch('/api/cp/settings/special/permission-settings?_=' + Date.now(), { credentials: 'include', headers: HEADERS, signal: ctl ? ctl.signal : undefined });
+        if (r.redirected && /\/(auth|account|login|signin)\b/i.test(r.url)) return false;
+        if (r.ok) return true;
+        if (r.status === 401 || r.status === 403) return false;
+        return null;
+      } catch (e) { return null; }
+      finally { if (timer) clearTimeout(timer); asking = null; }
+    })());
     // post: when given, sends it as JSON with a POST (the way ServiceTitan's own pages do) instead
     // of a plain read. A POST with an empty answer gives null.
     const getJSON = async (url, ms, post) => {
@@ -144,7 +155,10 @@
         r = isPost
           ? await fetch(url, { method: 'POST', credentials: 'include', headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, HEADERS), body: JSON.stringify(post), signal: ctl ? ctl.signal : undefined })
           : await fetch(url + (url.indexOf('?') < 0 ? '?' : '&') + '_=' + Date.now(), { credentials: 'include', headers: HEADERS, signal: ctl ? ctl.signal : undefined });
-        if (r.status === 401 || r.status === 403) throw (await stillSignedIn()) ? fail('noPermission', NO_PERMISSION) : fail('signedOut', SIGNED_OUT);
+        if (r.status === 401 || r.status === 403) {
+          const signedIn = await stillSignedIn();
+          throw signedIn === true ? fail('noPermission', NO_PERMISSION) : signedIn === false ? fail('signedOut', SIGNED_OUT) : fail('trouble', 'ServiceTitan refused (' + r.status + ') and didn\'t answer whether you\'re still signed in');
+        }
         if (r.redirected && /\/(auth|account|login|signin)\b/i.test(r.url)) throw fail('signedOut', SIGNED_OUT);
         if (r.status >= 500 || r.status === 408 || r.status === 429) throw fail('trouble', 'ServiceTitan answered ' + r.status);
         if (!r.ok) throw fail('bad', 'ServiceTitan answered ' + r.status);
@@ -251,13 +265,23 @@
     // (the ⋮ menu → Assign/Unassign), so they work without permission to open the job record.
     // An appointment as the job panel sees it: { jobId, jobTotal, businessUnitId, appointment:
     // { id, number, start, end, status, techIds } }, or throws.
-    const appointment = async apptId => {
-      const d = await getJSON('/dispatch/job-edit-flyout/GetJobEditFlyoutData?appointmentId=' + encodeURIComponent(apptId));
+    // Anything missing or odd is refused (and the run says why), rather than guessed: a missing
+    // total read as $0 would skip the managed-tech rule, a missing status would hide a Done job.
+    // ms: a shorter time limit, for the quick re-reads that confirm a change.
+    const appointment = async (apptId, ms) => {
+      const d = await getJSON('/dispatch/job-edit-flyout/GetJobEditFlyoutData?appointmentId=' + encodeURIComponent(apptId), ms);
       const a = d && Array.isArray(d.jobAppointments) ? d.jobAppointments.find(x => x && String(x.id) === String(apptId)) : null;
-      if (!a || !Array.isArray(a.technicians)) throw fail('bad', 'the appointment came back in a shape the Toolbox doesn\'t know');
+      const shape = what => fail('bad', 'the appointment came back in a shape the Toolbox doesn\'t know (' + what + ')');
+      if (!a || !Array.isArray(a.technicians)) throw shape('no technicians');
+      if (a.technicians.some(t => !t || t.id == null)) throw shape('a technician without an id');
+      if (d.jobId == null) throw shape('no job number');
+      if (typeof d.jobTotal !== 'number' || !isFinite(d.jobTotal)) throw shape('no job total');
+      // Seen Oct 2026: a number (0 = Scheduled, 4 = Done). Older pages used words.
+      if (typeof a.jobAppointmentStatus !== 'number' && !(typeof a.jobAppointmentStatus === 'string' && norm(a.jobAppointmentStatus))) throw shape('no status');
+      if (!a.start || !a.end || isNaN(new Date(a.start)) || isNaN(new Date(a.end))) throw shape('no start or end time');
       return {
-        jobId: d.jobId, jobTotal: Number(d.jobTotal) || 0, businessUnitId: d.businessUnitId,
-        appointment: { id: a.id, number: a.number, start: a.start, end: a.end, status: norm(a.jobAppointmentStatus), techIds: a.technicians.map(t => t && t.id).filter(x => x != null) }
+        jobId: d.jobId, jobTotal: d.jobTotal, businessUnitId: d.businessUnitId,
+        appointment: { id: a.id, number: a.number, start: a.start, end: a.end, status: a.jobAppointmentStatus, techIds: a.technicians.map(t => t.id) }
       };
     };
     // The skills a job needs: [{ id, name }] (active ones only).
@@ -272,11 +296,24 @@
       if (!Array.isArray(d)) throw fail('bad', 'the technician list came back in a shape the Toolbox doesn\'t know');
       return d.filter(t => t && t.id != null).map(t => ({ id: t.id, name: norm(t.name), active: t.active !== false, managed: !!t.isManagedTechnician, skillIds: Array.isArray(t.skillIds) ? t.skillIds : null }));
     };
-    // Is each tech already booked at that time? [{ id, booked }] (same check the job panel makes).
-    const techsBooked = async (techIds, start, end, jobId) => {
-      const d = await getJSON('/Job/TechniciansAreBooked', 15000, { technicianIds: techIds, start: new Date(start).toISOString(), end: new Date(end).toISOString(), repeatModel: null, originalAppointmentId: jobId, originalAppointmentDefinitionId: null });
-      if (!Array.isArray(d)) throw fail('bad', 'the booked check came back in a shape the Toolbox doesn\'t know');
-      return d.map(x => ({ id: x.TechnicianId, booked: !!(x.IsBookedForJob || x.IsBookedForNonJobEvent || x.IsBookedForRecurring) }));
+    // Is each tech already booked at that time? The same check the job panel makes. Seen Oct 2026:
+    // ServiceTitan only lists the techs who ARE booked (a free tech isn't in the answer at all),
+    // and leaves out one appointment (by its appointment id, not the job number), for "not counting
+    // the job they're leaving". Returns [{ id, job, nonJob, recurring, booked, why }] for the techs
+    // listed. Any listed entry it can't read stops the check (a renamed field must not read as free).
+    const techsBooked = async (techIds, start, end, skipApptId) => {
+      const d = await getJSON('/Job/TechniciansAreBooked', 15000, { technicianIds: techIds, start: new Date(start).toISOString(), end: new Date(end).toISOString(), repeatModel: null, originalAppointmentId: skipApptId == null ? null : skipApptId, originalAppointmentDefinitionId: null });
+      const bad = () => fail('bad', 'the already-booked check came back in a shape the Toolbox doesn\'t know');
+      if (!Array.isArray(d)) throw bad();
+      const asked = techIds.map(String);
+      return d.map(x => {
+        if (!x || x.TechnicianId == null || asked.indexOf(String(x.TechnicianId)) < 0) throw bad();
+        if (['IsBookedForJob', 'IsBookedForNonJobEvent', 'IsBookedForRecurring'].some(k => typeof x[k] !== 'boolean')) throw bad();
+        const r = { id: x.TechnicianId, job: x.IsBookedForJob, nonJob: x.IsBookedForNonJobEvent, recurring: x.IsBookedForRecurring };
+        r.booked = r.job || r.nonJob || r.recurring;
+        r.why = r.nonJob ? 'has a non-job event then (meeting, time off...)' : r.recurring ? 'has a recurring event then' : 'is already booked on another job then';
+        return r;
+      });
     };
     const assignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/AssignTechnicians', 20000, { appointmentId: apptId, technicianIds: techIds });
     const unassignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/UnassignTechnicians', 20000, { appointmentId: apptId, technicianIds: techIds });
@@ -2360,9 +2397,11 @@
       if (!d || typeof d.BusinessUnit !== 'string') throw new Error('no Business Unit in the job data');
       return { from: norm(d.BusinessUnit), locked: !!d.IsBusinessUnitReadOnly };
     };
-    // Waits (up to a few seconds) for the job data to show the new branch. True once it does.
+    // Waits (up to a few seconds of clock time, however slow the reads are) for the job data to
+    // show the new branch. True once it does.
     const confirmedByData = async (j, to) => {
-      for (let w = 0; w < 5000; w += 400) {
+      const end = Date.now() + 5000;
+      while (Date.now() < end) {
         await wait(400);
         let now;
         try { now = (await readJob(j)).from; } catch (e) { return false; }
@@ -3509,7 +3548,8 @@
         apptId: u(x.Id), jobId: S(u(x.JobId)), number: u(x.AppointmentNumber),
         customer: norm(u(x.Customer)), start: toDate(x.Start), end: toDate(x.End),
         techs: (u(x.Technicians) || []).map(t => ({ id: u(t.Id), name: norm(u(t.Name)) })).filter(t => t.id != null),
-        bu: u(x.BusinessUnitId)
+        bu: u(x.BusinessUnitId),
+        status: (() => { const s = u(x.AppointmentStatus); return typeof s === 'string' ? norm(s) : ''; })()   // the board has words: Scheduled, Done...
       };
       r.techs.forEach(t => { if (t.name) seenNames.set(S(t.id), t.name); });
       return r;
@@ -3656,7 +3696,8 @@
     const reviewBtn = smallBtn('Review (changes nothing)', () => review(mode), PRIMARY);
     const undoBtn = smallBtn('↩ Put back', () => review('putback'));
     // ↩ Put back sits by Review, so it's there even before a run (a saved one from earlier).
-    actions.append(reviewBtn, undoBtn);
+    const reviewStopBtn = smallBtn('Stop checking', () => { reviewStop = true; reviewStopBtn.disabled = true; });
+    actions.append(reviewBtn, reviewStopBtn, undoBtn);
 
     const reviewBox = el('div', 'display:none;padding:8px;border:1px solid #c9b3dd;background:#f6f0fb;border-radius:6px;font-size:12px;gap:6px');
     const reviewText = el('div', 'white-space:pre-wrap;max-height:260px;overflow:auto');
@@ -3693,6 +3734,7 @@
     const onResize = () => fit();
     window.addEventListener('resize', onResize);
     let busy = false, running = false, stop = false;
+    let reviewing = false, reviewStop = false;   // a review in progress, and Stop checking pressed
     let planned = null;   // the last review: { mode, items, at }
     let undo = [];        // [{ apptId, jobId, number, customer, before, after }] from the last run
     let undoDay = null;   // the day the last run was on (Put back works from any day)
@@ -3709,7 +3751,7 @@
       try {
         const s = JSON.parse(get(UNDO_KEY) || 'null');
         if (!s || !Array.isArray(s.items) || !(Date.now() - s.at < UNDO_KEEP_MS)) { undo = []; undoDay = null; return; }
-        undo = s.items.filter(z => z && z.apptId != null && Array.isArray(z.before) && Array.isArray(z.after));
+        undo = s.items.filter(z => z && z.apptId != null && Array.isArray(z.before) && (Array.isArray(z.after) || z.after === null));   // after null: a change that couldn't be confirmed
         undoDay = s.day ? new Date(s.day) : null;
       } catch (e) { undo = []; undoDay = null; }
     };
@@ -3743,6 +3785,8 @@
       if (mode === 'swapJobs') ready = ready && picker.size() === 2;
       if (mode === 'swapDays') ready = ready && !!aPick.value() && !!bPick.value() && S(aPick.value()) !== S(bPick.value());
       reviewBtn.disabled = !ready; reviewBtn.style.opacity = ready ? '1' : '.5';
+      reviewStopBtn.style.display = reviewing ? 'inline-block' : 'none';
+      if (!reviewing) reviewStopBtn.disabled = false;
       undoBtn.style.display = !busy && undo.length ? 'inline-block' : 'none';
       undoBtn.textContent = '↩ Put back (' + undo.length + ')';
       undoBtn.title = 'Undoes the last run' + (undoDay ? ' on ' + dayText(undoDay) : '') + '. Kept for a day, even if the Toolbox is closed.';
@@ -3812,7 +3856,44 @@
       if (d.add.length) return (cur.length ? '+ ' : '') + names(d.add);
       return '− ' + names(d.remove) + (fin.length ? '' : ' (to Unassigned)');
     };
-    const isOver = status => /^(done|completed?|cancell?ed)$/i.test(norm(status));
+    // Appointment status. The job panel's data has a number (seen Oct 2026: 0 = Scheduled, 4 = Done;
+    // the others are taken to follow ServiceTitan's order: 1 Dispatched, 2 Working, 3 Hold,
+    // 5 Canceled). The board has the word, used when the job is on the board (unless the number says
+    // Done or Canceled). A status the Toolbox can't name is treated as "not Scheduled".
+    const STATUS_NAMES = ['Scheduled', 'Dispatched', 'Working', 'Hold', 'Done', 'Canceled'];
+    const isOver = name => /^(done|completed?|cancell?ed)$/i.test(norm(name));
+    const isScheduled = name => /^scheduled$/i.test(norm(name));
+    const statusName = (raw, row) => {
+      const fromData = typeof raw === 'number' ? (STATUS_NAMES[raw] || 'status ' + raw) : norm(raw);
+      if (isOver(fromData)) return fromData;
+      return (row && row.status) || fromData;
+    };
+    const rowFor = apptId => dayRows().find(r => S(r.apptId) === S(apptId)) || null;
+    const sameSet = (a, b) => a.length === b.length && a.every(id => hasId(b, id));
+    const overlap = (a, b) => !!(a && b && a.start && a.end && b.start && b.end) && new Date(a.start) < new Date(b.end) && new Date(b.start) < new Date(a.end);
+    // A read that came back in a shape the Toolbox doesn't know also shows the yellow warning bar.
+    const noteBad = e => { if (e && e.kind === 'bad') health.flag(TOOL, errText(e)); };
+
+    // Which techs are booked at an appointment's time, not counting the appointments in ignore(id):
+    // jobs a swap takes them off, and jobs this run already put on them. ServiceTitan's check can
+    // leave out one appointment itself. With two or more to leave out, a job booking only counts
+    // if the board shows another job of theirs at that time. Non-job and recurring events always
+    // count. Returns [{ id, why }] for the booked techs.
+    const bookedAt = async (techIds, appt, ignore) => {
+      const out = [], plain = [];
+      for (const id of techIds) {
+        const ig = (ignore ? ignore(id) : []).filter(g => S(g.apptId) !== S(appt.apptId) && overlap(g, appt));
+        if (!ig.length) { plain.push(id); continue; }
+        const b = (await st.techsBooked([id], appt.start, appt.end, ig.length === 1 ? ig[0].apptId : appt.apptId)).find(y => S(y.id) === S(id));
+        if (!b || !b.booked) continue;
+        if (b.nonJob || b.recurring || ig.length === 1) { out.push({ id, why: b.why }); continue; }
+        const skip = ig.map(g => S(g.apptId)).concat([S(appt.apptId)]);
+        if (dayRows().some(r => skip.indexOf(S(r.apptId)) < 0 && hasId(r.techs.map(t => t.id), id) && overlap(r, appt))) out.push({ id, why: 'is already booked on another job then' });
+      }
+      if (plain.length) (await st.techsBooked(plain, appt.start, appt.end, appt.apptId)).forEach(b => { if (b.booked) out.push({ id: b.id, why: b.why }); });
+      return out;
+    };
+    const bookedText = list => list.map(b => techName(b.id) + ' ' + b.why).join('; ');
 
     // The appointments a run works on, with the choices for each.
     const targets = m => {
@@ -3840,6 +3921,8 @@
     const GO = { move: 'Move', add: 'Add to', unassign: 'Unassign', swapJobs: 'Swap', swapDays: 'Swap', putback: 'Put back' };
 
     // ---------- Review (reads only) ----------
+    // A review is only good for a few minutes: after that, Go asks for a new one.
+    const REVIEW_MAX_MS = 5 * 60 * 1000;
     const review = async m => {
       if (busy) return;
       if (lock) return say('Wait for ' + lock + ' to finish first.');
@@ -3862,30 +3945,44 @@
       }
       if (!list.length && !missing.length) return say(m === 'swapDays' ? 'Neither tech has jobs on ' + dayText(day) + '.' : 'Nothing to do.');
       if (list.length > MAX_PER_RUN) return say('⚠️ ' + MAX_PER_RUN + ' jobs per run at most.');
-      busy = true; clearReview(); picker.setPicking(false); updateButtons();
+      busy = reviewing = true; reviewStop = false; clearReview(); picker.setPicking(false); updateButtons();
       say('Checking ' + plural(list.length, 'job') + '...');
       try {
-        await loadTechs();
+        // A fresh tech list every review: skills, managed techs and who's active can change.
+        await loadTechs(true);
+        pickers3.forEach(p => p.fill());
+        if (reviewStop) { say('Stopped checking. Nothing changed.'); return; }
+        const rows = new Map(dayRows().map(r => [S(r.apptId), r]));
+        // Swaps: the appointments each tech is leaving. Those don't count as "booked" for the job
+        // they're getting; anything else at that time (another job, time off, a meeting) does.
+        const leaving = new Map();   // tech id -> [{ apptId, start, end }]
+        const leave = (id, g) => { const k = S(id); if (!leaving.has(k)) leaving.set(k, []); leaving.get(k).push(g); };
         if (m === 'swapJobs') {
           // Each job gets the other's techs, as they are right now.
           const [x, y] = list;
           const [ax, ay] = await Promise.all([st.appointment(x.r.apptId), st.appointment(y.r.apptId)]);
           const tx = ax.appointment.techIds, ty = ay.appointment.techIds;
-          if (tx.length === ty.length && tx.every(id => hasId(ty, id))) {
+          if (sameSet(tx, ty)) {
             say('Both jobs are on ' + (tx.length ? names(tx) : 'no tech') + ', so there\'s nothing to swap. Pick a job from a different tech.');
             return;
           }
           x.p = { want: ty.slice() }; y.p = { want: tx.slice() };
+          tx.filter(id => !hasId(ty, id)).forEach(id => leave(id, { apptId: x.r.apptId, start: ax.appointment.start, end: ax.appointment.end }));
+          ty.filter(id => !hasId(tx, id)).forEach(id => leave(id, { apptId: y.r.apptId, start: ay.appointment.start, end: ay.appointment.end }));
         }
+        if (m === 'swapDays') list.forEach(it => { const ids = it.r.techs.map(t => t.id); [it.p.a, it.p.b].forEach(id => { if (hasId(ids, id)) leave(id, { apptId: it.r.apptId, start: it.r.start, end: it.r.end }); }); });
         const skillCache = new Map();
-        const swaps = m === 'swapJobs' || m === 'swapDays';
         const results = await st.pool(list, 4, async (it, i, alive) => {
           const now = await st.appointment(it.r.apptId);
           if (!alive()) return null;
           const a = now.appointment, cur = a.techIds;
-          const out = { it, cur, total: now.jobTotal, bu: now.businessUnitId, jobId: S(now.jobId), start: a.start, end: a.end, warn: {} };
-          if (m === 'putback' && (cur.length !== it.p.expect.length || cur.some(x => !hasId(it.p.expect, x)))) return Object.assign(out, { skip: 'changed since the move (now ' + (cur.length ? names(cur) : 'unassigned') + '), left alone', kind: 'skipped' });
-          if (isOver(a.status)) return Object.assign(out, { skip: 'appointment is ' + a.status + ', left alone', kind: 'skipped' });
+          const status = statusName(a.status, rows.get(S(it.r.apptId)));
+          const out = { it, cur, total: now.jobTotal, bu: now.businessUnitId, jobId: S(now.jobId), start: a.start, end: a.end, status, warn: {} };
+          if (m === 'putback') {
+            if (!it.p.expect) return Object.assign(out, { skip: 'the earlier run couldn\'t confirm what it did to this job, so it\'s left for you to check (it started as ' + (it.p.want.length ? names(it.p.want) : 'unassigned') + ', now ' + (cur.length ? names(cur) : 'unassigned') + ')', kind: 'skipped' });
+            if (!sameSet(cur, it.p.expect)) return Object.assign(out, { skip: 'changed since the move (now ' + (cur.length ? names(cur) : 'unassigned') + '), left alone', kind: 'skipped' });
+          }
+          if (isOver(status)) return Object.assign(out, { skip: 'appointment is ' + status + ', left alone', kind: 'skipped' });
           if (m === 'swapDays') {
             const hA = hasId(cur, it.p.a), hB = hasId(cur, it.p.b);
             if (hA === hB) return Object.assign(out, { skip: hA ? 'has both ' + techName(it.p.a) + ' and ' + techName(it.p.b) : 'has neither tech now', kind: 'skipped' });
@@ -3897,6 +3994,7 @@
           const mp = managedProblem(out.total, fin);
           if (mp) return Object.assign(out, { skip: mp, kind: 'skipped' });
           out.d = d;   // only now is it a job to do
+          if (m !== 'putback' && !isScheduled(status)) out.warn.status = 'it\'s ' + status + ', not Scheduled';
           if (!fin.length && m !== 'putback' && otherBranch(out.bu)) out.warn.branch = 'goes to ' + buName(out.bu) + '\'s Unassigned list, not yours';
           if (d.add.length && m !== 'putback') {
             // Skills, as the job panel checks them before assigning.
@@ -3910,43 +4008,52 @@
                 if (gaps.length) out.warn.skills = gaps.join('; ');
               }
             }
-            // Already booked at that time? (Skipped for swaps: each tech is leaving the other job.)
-            if (!swaps && a.start && a.end) {
-              const b = await st.techsBooked(d.add, a.start, a.end, now.jobId);
-              const booked = b.filter(x => x.booked).map(x => x.id);
-              if (booked.length) out.warn.booked = names(booked) + (booked.length === 1 ? ' is' : ' are') + ' already booked at that time';
-            }
+            // Already booked at that time? For swaps, not counting the job each tech is leaving.
+            const booked = await bookedAt(d.add, { apptId: it.r.apptId, start: a.start, end: a.end }, id => leaving.get(S(id)) || []);
+            if (booked.length) out.warn.booked = bookedText(booked);
           }
           return out;
-        }, (d, t) => say('Checking jobs... ' + d + ' of ' + t), {});
+        }, (d, t) => say('Checking jobs... ' + d + ' of ' + t), { stop: () => reviewStop });
+        if (results.stopped) { say('Stopped checking. Nothing changed.'); return; }
         if (results.halted === 'signedOut') throw results.haltError;
         const items = [];
         list.forEach((it, i) => {
           const x = results[i];
           if (x === st.NOT_RUN || !x) items.push({ it, skip: 'not checked: ServiceTitan is slow or not answering. Try again in a bit', kind: 'problem' });
-          else if (x.error) items.push({ it, skip: st.isNoPermission(x.error) ? 'your ServiceTitan login doesn\'t have permission to see this job in the job panel' : 'couldn\'t check (' + errText(x.error) + ')', kind: 'problem' });
+          else if (x.error) { noteBad(x.error); items.push({ it, skip: st.isNoPermission(x.error) ? 'your ServiceTitan login doesn\'t have permission to see this job in the job panel' : 'couldn\'t check (' + errText(x.error) + ')', kind: 'problem' }); }
           else items.push(x);
         });
         missing.forEach(j => items.push({ it: { r: { jobId: S(j), customer: picker.label(j) } }, skip: 'not on the board for ' + dayText(day) + ' (open its day first)', kind: 'skipped' }));
-        planned = { mode: m, items, at: Date.now(), day, params: m === 'move' || m === 'add' ? { to: toPick.value(), from: fromPick.value() } : m === 'unassign' ? { from: fromPick.value() } : m === 'swapDays' ? { a: aPick.value(), b: bPick.value() } : {} };
+        planned = { mode: m, items, at: Date.now(), day, leaving, params: m === 'move' || m === 'add' ? { to: toPick.value(), from: fromPick.value() } : m === 'unassign' ? { from: fromPick.value() } : m === 'swapDays' ? { a: aPick.value(), b: bPick.value() } : {} };
         showReview();
       } catch (e) {
+        noteBad(e);
         say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t check the jobs: ' + errText(e)));
-      } finally { busy = false; updateButtons(); }
+      } finally { busy = reviewing = false; updateButtons(); }
     };
 
     const WARNS = [
+      ['status', '⚠️ Not Scheduled (on the way, working or on hold)', 'Also do the jobs that aren\'t Scheduled'],
       ['skills', '⚠️ Skill warning', 'Also do the jobs with a skill warning'],
       ['booked', '⚠️ Already booked at that time', 'Also do the jobs where the tech is already booked'],
       ['branch', '⚠️ Would drop off your board (another branch)', 'Also unassign the jobs from another branch']
     ];
     const ticks = {};
-    const included = () => !planned ? [] : planned.items.filter(x => x.d && !x.skip && Object.keys(x.warn).every(k => ticks[k] && ticks[k].checked));
+    const allTicked = x => Object.keys(x.warn).every(k => ticks[k] && ticks[k].checked);
+    // The jobs Go will do. A two-job swap is both jobs or neither: if one side is left alone or has
+    // a warning that isn't ticked, nothing is swapped.
+    const included = () => {
+      if (!planned) return [];
+      const ok = planned.items.filter(x => x.d && !x.skip && allTicked(x));
+      if (planned.mode === 'swapJobs') return ok.length === 2 ? ok : [];
+      return ok;
+    };
     const showReview = () => {
       const p = planned, ready = p.items.filter(x => x.d && !x.skip), skipped = p.items.filter(x => !x.d || x.skip);
       const head = TITLE[p.mode] + (p.mode === 'move' || p.mode === 'add' ? ' ' + techName(p.params.to) + (p.params.from ? ' (from ' + techName(p.params.from) + ')' : '') :
         p.mode === 'unassign' ? (p.params.from ? ' ' + techName(p.params.from) : ' everyone') : p.mode === 'swapDays' ? ': ' + techName(p.params.a) + ' ⇄ ' + techName(p.params.b) : '');
       const lines = [head + '   ·   ' + dayText(p.day), ''];
+      if (p.mode === 'swapJobs' && ready.length !== 2) lines.push('⚠️ A swap needs both jobs, and one is left alone (below), so nothing will be swapped.', '');
       const clean = ready.filter(x => !Object.keys(x.warn).length);
       lines.push('✅ Ready: ' + plural(clean.length, 'job'));
       clean.slice(0, 60).forEach(x => lines.push('• ' + label(x.it.r) + ': ' + changeText(x.cur, x.d)));
@@ -3963,7 +4070,13 @@
         skipped.slice(0, 40).forEach(x => lines.push('• ' + label(x.it.r) + ': ' + x.skip));
         if (skipped.length > 40) lines.push('…and ' + (skipped.length - 40) + ' more');
       }
-      if (p.mode === 'swapJobs' || p.mode === 'swapDays') lines.push('', 'Swaps skip the already-booked check: each tech is leaving the other job.');
+      // Stacking: jobs in this run that overlap each other end up at the same time on one tech.
+      if ((p.mode === 'move' || p.mode === 'add') && ready.length > 1) {
+        const n = ready.filter(x => ready.some(y => y !== x && overlap(x, y))).length;
+        if (n) lines.push('', 'ℹ️ ' + n + ' of these overlap each other, so ' + techName(p.params.to) + ' will have them at the same time (stacked).');
+      }
+      if (p.mode === 'swapDays' && (skipped.length || ready.some(x => Object.keys(x.warn).length))) lines.push('', 'ℹ️ Jobs left alone (or with a warning you don\'t tick) stay where they are, so it won\'t be a full swap.');
+      if (p.mode === 'swapJobs' || p.mode === 'swapDays') lines.push('', 'Swaps don\'t count the job each tech is leaving as "booked". Anything else at that time does.');
       reviewText.textContent = lines.join('\n');
       reviewOpts.textContent = '';
       WARNS.forEach(([k, , text]) => {
@@ -3984,7 +4097,10 @@
     };
     const setGo = () => {
       const n = included().length;
-      goBtn.textContent = planned && planned.mode === 'swapJobs' ? (n ? 'Swap them' : 'Nothing to swap') : GO[planned ? planned.mode : 'move'] + ' ' + plural(n, 'job');
+      if (planned && planned.mode === 'swapJobs') {
+        const ready = planned.items.filter(x => x.d && !x.skip).length;
+        goBtn.textContent = n ? 'Swap them' : ready === 2 ? 'Tick the warning to swap' : 'Can\'t swap';
+      } else goBtn.textContent = GO[planned ? planned.mode : 'move'] + ' ' + plural(n, 'job');
       goBtn.disabled = !n; goBtn.style.opacity = n ? '1' : '.5';
     };
 
@@ -3993,10 +4109,11 @@
     const boardBehind = runList => {
       const rows = dayRows();
       return runList.filter(z => {
+        if (!z.after) return false;
         const row = rows.find(rr => S(rr.apptId) === S(z.apptId));
         if (!row) return false;
         const ids = row.techs.map(t => t.id);
-        return ids.length !== z.after.length || ids.some(id => !hasId(z.after, id));
+        return !sameSet(ids, z.after);
       });
     };
     // Reloads the board's data with the board's own refresh (seen Oct 2026: refreshData, the
@@ -4015,70 +4132,101 @@
     };
 
     // ---------- Doing it ----------
-    // Waits (a few seconds) until ServiceTitan's data for the appointment passes ok(techIds).
-    const confirmTechs = async (apptId, ok) => {
-      for (let w = 0; w < 6000; w += 400) {
-        await wait(w ? 400 : 150);
-        try { const a = (await st.appointment(apptId)).appointment; if (ok(a.techIds)) return a.techIds; }
-        catch (e) { if (st.isSignedOut(e)) throw e; }
-      }
-      return null;
+    // Each appointment the run touches remembers:
+    //   x.origin:   its techs at the run's first fresh look, before anything was sent. Kept across
+    //               the retry, so Put back always returns it to where it really started.
+    //   x.lastSeen: its techs at the latest reading. null right after a change is sent, until a
+    //               reading comes back, so an unconfirmed change is never mistaken for "nothing".
+    // Put back is worked out from those two, not from what the requests answered: a request can
+    // fail to answer after ServiceTitan has already made the change.
+    const readTechs = async (apptId, x, ms) => {
+      const a = (await st.appointment(apptId, ms)).appointment;
+      if (x) x.lastSeen = a.techIds.slice();
+      return a.techIds;
     };
-    // One appointment: a fresh look, the change worked out again from who's on it now (in case
-    // the board changed since the review), the checks again, then add first and remove second.
-    // ctx.given: what this run has already put on whom, and when ([{ ids, start, end }]), so a
-    // tech who looks booked only because of this run's own jobs (stacking jobs on one tech) isn't
-    // mistaken for someone booking them since the review.
-    const overlapsRun = (ctx, id, start, end) => ctx.given.some(g => hasId(g.ids, id) && new Date(g.start) < new Date(end) && new Date(start) < new Date(g.end));
+    // Reads until ServiceTitan's data passes ok(techIds), for up to `ms` of clock time.
+    const confirmTechs = async (apptId, ok, x, ms) => {
+      const end = Date.now() + (ms || 6000);
+      await wait(150);
+      for (;;) {
+        try { const ids = await readTechs(apptId, x, Math.max(2000, end - Date.now())); if (ok(ids)) return ids; }
+        catch (e) { if (st.isSignedOut(e)) throw e; }
+        if (Date.now() >= end) return null;
+        await wait(400);
+      }
+    };
+    const nowText = ids => ids ? (ids.length ? names(ids) : 'unassigned') : 'unknown';
+    // One appointment: a fresh look, the change worked out again from who's on it now (in case the
+    // board changed since the review), the checks again, then add first and remove second.
+    // ctx.given: what this run has already put on whom ([{ apptId, ids, start, end }]), and
+    // ctx.leaving: the jobs a swap takes each tech off. Neither counts as "booked"; anything else does.
     const doItem = async (x, m, okWarn, ctx) => {
       const r = x.it.r;
       let now;
       try { now = await st.appointment(r.apptId); }
-      catch (e) { if (st.isSignedOut(e)) throw e; return res('couldn\'t read the job (' + errText(e) + '). Nothing changed', 'problem'); }
+      catch (e) { if (st.isSignedOut(e)) throw e; noteBad(e); return res('couldn\'t read the job (' + errText(e) + '). Nothing changed', 'problem'); }
       const cur = now.appointment.techIds;
-      if (isOver(now.appointment.status)) return res('appointment is ' + now.appointment.status + ', left alone', 'skipped');
+      x.lastSeen = cur.slice();
+      if (!x.origin) x.origin = cur.slice();
+      const status = statusName(now.appointment.status, rowFor(r.apptId));
+      if (isOver(status)) return res('appointment is ' + status + ', left alone', 'skipped');
       const d = decide(kindOf(m), cur, x.it.p);
       if (d.skip) return res(d.skip, d.kind);
       // Only what the review showed: a tech to add, or one to take off, that wasn't in it means
       // someone changed the job since. Leave it for you to look at.
-      if (d.add.some(id => !hasId(x.d.add, id)) || d.remove.some(id => !hasId(x.d.remove, id))) return res('changed since the review (now ' + (cur.length ? names(cur) : 'unassigned') + '). Review again', 'problem', { noRetry: true });
+      if (d.add.some(id => !hasId(x.d.add, id)) || d.remove.some(id => !hasId(x.d.remove, id))) return res('changed since the review (now ' + nowText(cur) + '). Review again', 'problem', { noRetry: true });
       const fin = after(cur, d);
       const mp = managedProblem(now.jobTotal, fin);
       if (mp) return res(mp, 'skipped');
+      if (m !== 'putback' && !isScheduled(status) && !okWarn.status) return res('is ' + status + ' now, not Scheduled (not ticked), left alone', 'skipped');
       if (!fin.length && otherBranch(now.businessUnitId) && !okWarn.branch && m !== 'putback') return res('would go to ' + buName(now.businessUnitId) + '\'s Unassigned list (not ticked)', 'skipped');
-      // Booked again right before (someone may have booked the tech since the review). Jobs this
-      // same run put on the tech don't count: stacking jobs on one tech is the point.
-      if (d.add.length && (m === 'move' || m === 'add') && !okWarn.booked && now.appointment.start && now.appointment.end) {
+      // Booked, checked again right before (someone may have booked the tech since the review).
+      // Jobs this run put on the tech, and the job a swap takes them off, don't count.
+      if (d.add.length && m !== 'putback' && !okWarn.booked) {
         try {
-          const b = await st.techsBooked(d.add, now.appointment.start, now.appointment.end, now.jobId);
-          const since = b.filter(y => y.booked && !overlapsRun(ctx, y.id, now.appointment.start, now.appointment.end)).map(y => y.id);
-          if (since.length) return res(names(since) + ' got booked at that time since the review, left alone. Review again to see it', 'skipped');
-        } catch (e) { if (st.isSignedOut(e)) throw e; return res('couldn\'t check if the tech is booked (' + errText(e) + '). Nothing changed', 'problem'); }
+          const appt = { apptId: r.apptId, start: now.appointment.start, end: now.appointment.end };
+          const since = await bookedAt(d.add, appt, id => (ctx.leaving.get(S(id)) || []).concat(ctx.given.filter(g => hasId(g.ids, id))));
+          if (since.length) return res(bookedText(since) + ' (since the review), left alone. Review again to see it', 'skipped');
+        } catch (e) { if (st.isSignedOut(e)) throw e; noteBad(e); return res('couldn\'t check if the tech is booked (' + errText(e) + '). Nothing changed', 'problem'); }
       }
+      let lost = '';
       // 1) Add the new tech(s) first, so the job is never left without a tech halfway.
       if (d.add.length) {
+        let sent = null;
+        x.lastSeen = null;
         try { await st.assignTechs(r.apptId, d.add); }
-        catch (e) { if (st.isSignedOut(e)) throw e; return res('couldn\'t add ' + names(d.add) + ' (' + errText(e) + '). Nothing changed', 'problem'); }
-        if (!await confirmTechs(r.apptId, ids => d.add.every(id => hasId(ids, id)))) return res('ServiceTitan didn\'t add ' + names(d.add) + '. Nothing else changed', 'problem');
-        if (now.appointment.start && now.appointment.end) ctx.given.push({ ids: d.add.slice(), start: now.appointment.start, end: now.appointment.end });
+        catch (e) { if (st.isSignedOut(e)) throw e; sent = e; }
+        // If the request failed, ServiceTitan may still have made the change: look before saying anything.
+        const got = await confirmTechs(r.apptId, ids => d.add.every(id => hasId(ids, id)), x, sent ? 2000 : 6000);
+        if (!got) {
+          const why = sent ? 'couldn\'t add ' + names(d.add) + ' (' + errText(sent) + ')' : 'ServiceTitan didn\'t add ' + names(d.add);
+          if (x.lastSeen && sameSet(x.lastSeen, cur)) return res(why + '. Nothing changed', 'problem');
+          return res(why + ', and couldn\'t confirm what it did (now ' + nowText(x.lastSeen) + '). Review again', 'problem');
+        }
+        if (sent) lost = 'ServiceTitan\'s answer got lost, but the change went through. ';
+        ctx.given.push({ apptId: r.apptId, ids: d.add.slice(), start: now.appointment.start, end: now.appointment.end });
       }
       // 2) Then take the old one(s) off.
       if (d.remove.length) {
-        const partial = d.add.length ? { changed: true, before: cur, after: cur.concat(d.add.filter(id => !hasId(cur, id))) } : {};
+        let sent = null;
+        x.lastSeen = null;
         try { await st.unassignTechs(r.apptId, d.remove); }
-        catch (e) {
-          if (st.isSignedOut(e)) throw e;
-          return res((d.add.length ? 'added ' + names(d.add) + ' but couldn\'t take off ' : 'couldn\'t take off ') + names(d.remove) + ' (' + errText(e) + ')', 'problem', partial);
+        catch (e) { if (st.isSignedOut(e)) throw e; sent = e; }
+        const got = await confirmTechs(r.apptId, ids => d.remove.every(id => !hasId(ids, id)), x, sent ? 2000 : 6000);
+        if (!got) {
+          const why = sent ? 'couldn\'t take off ' + names(d.remove) + ' (' + errText(sent) + ')' : 'ServiceTitan didn\'t take off ' + names(d.remove);
+          return res(lost + (d.add.length ? 'added ' + names(d.add) + ' but ' : '') + why + ' (now ' + nowText(x.lastSeen) + ')', 'problem');
         }
-        if (!await confirmTechs(r.apptId, ids => d.remove.every(id => !hasId(ids, id)))) return res((d.add.length ? 'added ' + names(d.add) + ', but ' : '') + 'ServiceTitan didn\'t take off ' + names(d.remove), 'problem', partial);
+        if (sent) lost = 'ServiceTitan\'s answer got lost, but the change went through. ';
       }
-      return res(changeText(cur, d), 'done', { changed: true, before: cur, after: fin });
+      return res(lost + changeText(cur, d), 'done');
     };
 
     const go = async () => {
       if (!planned || busy) return;
       if (lock) return say('Wait for ' + lock + ' to finish first.');
       const p = planned, m = p.mode;
+      if (Date.now() - p.at > REVIEW_MAX_MS) { clearReview(); return say('⚠️ That review is more than ' + (REVIEW_MAX_MS / 60000) + ' minutes old. Press Review again so the checks are fresh.'); }
       const todo = included();
       if (!todo.length) return;
       const okWarn = {}; Object.keys(ticks).forEach(k => { okWarn[k] = !!(ticks[k] && ticks[k].checked); });
@@ -4089,40 +4237,70 @@
       copyBtn.textContent = 'Copy results';
       updateButtons();
       fit(); progress.scrollIntoView({ block: 'nearest' });
+      todo.forEach(x => { x.origin = null; x.lastSeen = null; });
       const results = new Map();   // apptId -> result
-      const ctx = { given: [] };
+      const ctx = { given: [], leaving: p.leaving || new Map() };
       const record = (x, rr, retry) => { results.set(S(x.it.r.apptId), { x, rr }); add(label(x.it.r) + ': ' + (retry ? 'retry: ' : '') + rr.text); };
       const verb = m === 'putback' ? 'Putting back' : m === 'unassign' ? 'Unassigning' : m === 'add' ? 'Adding' : m === 'move' ? 'Moving' : 'Swapping';
-      const lastRun = [];
+      const needsRetry = rr => rr.kind === 'problem' && !rr.noRetry;
+      // What the run changed, worked out from each job's first and latest reading.
+      const changes = () => todo.filter(x => x.origin && (x.lastSeen === null || !sameSet(x.origin, x.lastSeen)))
+        .map(x => ({ apptId: x.it.r.apptId, jobId: x.it.r.jobId, number: x.it.r.number, customer: x.it.r.customer, before: x.origin.slice(), after: x.lastSeen ? x.lastSeen.slice() : null }));
+      let finished = false, lastRun = [];
       try {
         add(TITLE[m] + (m === 'move' || m === 'add' ? ' ' + techName(p.params.to) : '') + ' · ' + dayText(p.day) + ' (' + plural(todo.length, 'job') + ')');
-        for (let n = 0; n < todo.length; n++) {
-          if (stop) { add('Stopped. ' + plural(todo.length - n, 'job') + ' not done.'); break; }
-          say(verb + ' ' + (n + 1) + ' of ' + todo.length + ' (job ' + todo[n].it.r.jobId + ')');
-          record(todo[n], await doItem(todo[n], m, okWarn, ctx));
-        }
-        // One more try for jobs that had a problem (a fresh look decides what's still left to do).
-        const failed = todo.filter(x => { const y = results.get(S(x.it.r.apptId)); return y && y.rr.kind === 'problem' && !y.rr.noRetry; });
-        if (failed.length && !stop) {
-          add(''); add('Retrying ' + plural(failed.length, 'job') + ' that had a problem...');
-          await wait(1500);
-          for (let n = 0; n < failed.length; n++) {
-            if (stop) { add('Stopped. ' + (failed.length - n) + ' retry(s) not done.'); break; }
-            say('Retrying ' + (n + 1) + ' of ' + failed.length + ' (job ' + failed[n].it.r.jobId + ')');
-            const first = results.get(S(failed[n].it.r.apptId)).rr;
-            const rr = await doItem(failed[n], m, okWarn, ctx);
-            // Keep where the job started from, if the first try had already changed it.
-            if (first.changed && rr.changed) { rr.before = first.before; rr.text = 'finished the change, now ' + (rr.after.length ? names(rr.after) : 'unassigned'); }
-            // The first try changed it and the retry didn't: Put back still needs to know.
-            else if (first.changed && !rr.changed) Object.assign(rr, { changed: true, before: first.before, after: first.after });
-            record(failed[n], rr, true);
+        if (m === 'swapJobs') {
+          // Both jobs are read again first: nothing is done unless both are as the review saw them.
+          let ok = true;
+          for (const x of todo) {
+            let ids;
+            try { ids = await readTechs(x.it.r.apptId, null); }
+            catch (e) { if (st.isSignedOut(e)) throw e; add('Nothing swapped: couldn\'t read ' + label(x.it.r) + ' (' + errText(e) + '). Try again.'); ok = false; break; }
+            if (!sameSet(ids, x.cur)) { add('Nothing swapped: ' + label(x.it.r) + ' changed since the review (now ' + nowText(ids) + '). Review again.'); ok = false; break; }
+          }
+          // Then one job at a time, each with one more try right away. If the first doesn't go
+          // through, the second isn't started.
+          for (let n = 0; ok && n < 2; n++) {
+            if (stop) { add('Stopped. ' + (n ? 'Only the first job was swapped.' : 'Nothing swapped.')); break; }
+            say('Swapping ' + (n + 1) + ' of 2 (job ' + todo[n].it.r.jobId + ')');
+            let rr = await doItem(todo[n], m, okWarn, ctx);
+            record(todo[n], rr);
+            if (needsRetry(rr) && !stop) { await wait(1500); rr = await doItem(todo[n], m, okWarn, ctx); record(todo[n], rr, true); }
+            if (rr.kind !== 'done' && rr.kind !== 'already') {
+              if (n === 0) add('Stopped: the first job didn\'t change' + (todo[0].origin && todo[0].lastSeen && sameSet(todo[0].origin, todo[0].lastSeen) ? ', so nothing was swapped.' : ' as it should. Check it.'));
+              else add('⚠️ Half swapped: ' + label(todo[0].it.r) + ' has the other job\'s tech(s) now, but ' + label(todo[1].it.r) + ' didn\'t change. Fix it by hand, or ↩ Put back.');
+              break;
+            }
+          }
+        } else {
+          for (let n = 0; n < todo.length; n++) {
+            if (stop) { add('Stopped. ' + plural(todo.length - n, 'job') + ' not done.'); break; }
+            say(verb + ' ' + (n + 1) + ' of ' + todo.length + ' (job ' + todo[n].it.r.jobId + ')');
+            record(todo[n], await doItem(todo[n], m, okWarn, ctx));
+          }
+          // One more try for jobs that had a problem (a fresh look decides what's still left to do).
+          const failed = todo.filter(x => { const y = results.get(S(x.it.r.apptId)); return y && needsRetry(y.rr); });
+          if (failed.length && !stop) {
+            add(''); add('Retrying ' + plural(failed.length, 'job') + ' that had a problem...');
+            await wait(1500);
+            for (let n = 0; n < failed.length; n++) {
+              if (stop) { add('Stopped. ' + (failed.length - n) + ' retry(s) not done.'); break; }
+              say('Retrying ' + (n + 1) + ' of ' + failed.length + ' (job ' + failed[n].it.r.jobId + ')');
+              const mid = failed[n].lastSeen;   // after the first try (null: it couldn't be read back)
+              const rr = await doItem(failed[n], m, okWarn, ctx);
+              const o = failed[n].origin, touched = o && (mid === null || !sameSet(mid, o));
+              // The first try had already changed part of it: the retry finished the rest.
+              if (rr.kind === 'done' && touched) rr.text = 'finished the change, now ' + nowText(failed[n].lastSeen);
+              // "Already done" can mean the first try's change went through after all.
+              else if (rr.kind === 'already' && o && failed[n].lastSeen && !sameSet(o, failed[n].lastSeen)) rr.text = 'the first try went through after all, now ' + nowText(failed[n].lastSeen);
+              record(failed[n], rr, true);
+            }
           }
         }
-        results.forEach(({ x, rr }) => { if (rr.changed) lastRun.push({ apptId: x.it.r.apptId, jobId: x.it.r.jobId, number: x.it.r.number, customer: x.it.r.customer, before: rr.before, after: rr.after }); });
-        if (m === 'putback') {
-          undo = undo.filter(z => { const y = results.get(S(z.apptId)); return !(y && (y.rr.kind === 'done' || y.rr.kind === 'already')); });
-        } else {
-          undo = lastRun.filter(z => z.before && z.after);
+        lastRun = changes();
+        if (m === 'putback') undo = undo.filter(z => { const y = results.get(S(z.apptId)); return !(y && (y.rr.kind === 'done' || y.rr.kind === 'already')); });
+        else {
+          undo = lastRun;
           undoDay = p.day || null;
           movedJobs = Array.from(new Set(lastRun.map(z => z.jobId)));
           // Done jobs come off the picked list; anything with a problem stays so you can try again.
@@ -4132,11 +4310,14 @@
             results.forEach(({ x, rr }) => { if ((rr.kind === 'done' || rr.kind === 'already') && !problemJobs.has(x.it.r.jobId)) picker.remove(x.it.r.jobId); });
           }
         }
+        finished = true;
         const tally = {};
         results.forEach(({ rr }) => { tally[rr.kind] = (tally[rr.kind] || 0) + 1; });
         const summary = Object.keys(tally).map(k => tally[k] + ' ' + k).join(', ') || 'nothing done';
         const left = []; results.forEach(({ x, rr }) => { if (rr.kind === 'problem') left.push('#' + x.it.r.jobId); });
         if (left.length) add('Needs a look: ' + left.join(', '));
+        const unsure = lastRun.filter(z => !z.after);
+        if (unsure.length) add('⚠️ Couldn\'t confirm what ServiceTitan did on ' + unsure.map(z => '#' + z.jobId).join(', ') + '. Check ' + (unsure.length === 1 ? 'it' : 'them') + ' on the board.');
         if (undo.length && m !== 'putback') add('↩ Put back can undo ' + plural(undo.length, 'job') + '.');
         if (lastRun.length) {
           // The board usually updates by itself. If it hasn't caught up, reload the board's data
@@ -4153,14 +4334,16 @@
         if (lastRun.length) health.clear(TOOL);
         say('Done: ' + summary + '.');
       } catch (e) {
+        noteBad(e);
         if (st.isSignedOut(e)) { add('⚠️ ' + e.message); say('⚠️ ' + e.message); }
         else say('⚠️ Stopped by an error: ' + errText(e));
-        // Whatever this run had already changed can still be put back.
-        const changed = [];
-        results.forEach(({ x, rr }) => { if (rr.changed && rr.before && rr.after) changed.push({ apptId: x.it.r.apptId, jobId: x.it.r.jobId, number: x.it.r.number, customer: x.it.r.customer, before: rr.before, after: rr.after }); });
-        if (m === 'putback') undo = undo.filter(z => { const y = results.get(S(z.apptId)); return !(y && (y.rr.kind === 'done' || y.rr.kind === 'already')); });
-        else if (changed.length) { undo = changed; undoDay = p.day || null; }
       } finally {
+        // An error mid-run: whatever this run had already changed (or may have) can still be put back.
+        if (!finished) {
+          if (m === 'putback') undo = undo.filter(z => { const y = results.get(S(z.apptId)); return !(y && (y.rr.kind === 'done' || y.rr.kind === 'already')); });
+          else { const ch = changes(); if (ch.length) { undo = ch; undoDay = p.day || null; movedJobs = Array.from(new Set(ch.map(z => z.jobId))); } }
+          if (undo.length && m !== 'putback') add('↩ Put back can undo ' + plural(undo.length, 'job') + '.');
+        }
         saveUndo();
         busy = running = false; lock = null;
         stopBtn.style.display = 'none';
@@ -4256,7 +4439,13 @@
         closeBtns.textContent = '';
         closeText.textContent = 'Stopping, then closing...';
         runner.stop();
-        await until(() => !runners.some(r => r[0].isRunning()), 60000, 250);
+        // Close only once the run has really stopped: its controls stay until then. A run finishes
+        // the job it's on, which can take a while if ServiceTitan is slow.
+        const started = Date.now();
+        while (runners.some(r => r[0].isRunning())) {
+          if (Date.now() - started > 20000) closeText.textContent = 'Stopping, then closing... (still finishing the job it was on; ServiceTitan is slow)';
+          await wait(250);
+        }
         finishClose();
       }, DANGER),
       smallBtn('Keep running', () => { closeBar.style.display = 'none'; })

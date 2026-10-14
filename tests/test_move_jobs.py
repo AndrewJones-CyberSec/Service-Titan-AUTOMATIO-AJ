@@ -126,7 +126,7 @@ with sync_playwright() as p:
     check('Already booked at that time' in t and 'Dana K is already booked' in t, 'booked warning shown')
     check(not go_enabled(page), 'booked job not done unless ticked')
     lb = ev(page, "() => window.lastBooked")
-    check(lb['technicianIds'] == [104] and lb['originalAppointmentId'] == 7001, 'booked check asked the same way the job panel does: %s' % lb)
+    check(lb['technicianIds'] == [104] and lb['originalAppointmentId'] == 9001, 'booked check leaves out the appointment by its appointment id (as ServiceTitan does): %s' % lb)
     B(page, 'Cancel').click()
     ev(page, "() => { BOOKED = {}; }")
 
@@ -213,7 +213,7 @@ with sync_playwright() as p:
     mode(page, "Swap two jobs")
     clear_jobs(page); type_jobs(page, '7001 7005')
     t = review(page)
-    check('Jack W → Blake W' in t and 'Blake W → Jack W' in t and 'skip the already-booked check' in t, 'swap shows both sides')
+    check('Jack W → Blake W' in t and 'Blake W → Jack W' in t and 'job each tech is leaving' in t, 'swap shows both sides')
     check(go_text(page) == 'Swap them', 'swap button')
     check(go(page), 'swap finishes')
     check(techs(page, 9001) == [102] and techs(page, 9005) == [101], 'techs traded')
@@ -406,7 +406,7 @@ with sync_playwright() as p:
     ev(page, "() => { BOOKED[104] = true; window.calls = []; }")
     go(page)
     lg = log(page); print(lg)
-    check('Dana K got booked at that time since the review, left alone' in lg and calls(page) == [], 'a real booking since the review still stops it')
+    check('Dana K is already booked on another job then (since the review), left alone' in lg and calls(page) == [], 'a real booking since the review still stops it')
     ev(page, "() => { BOOKED = {}; }")
     for a in (9101, 9102, 9103): reset(page, a, [])
 
