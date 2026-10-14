@@ -14,7 +14,7 @@ python3 tests/run_all.py
 |---|---|
 | `test_notes.py` | 📝 Notes: note first or job first, a job panel still loading, a merged customer ("Page Could Not Be Found") |
 | `test_business_unit.py` | 🏢 Business Unit: picking, check, change, put back, locked jobs, errors, pop-ups, Stop |
-| `test_job_notifications.py` | 🔕 Job Notifications: a tech's jobs, picked jobs, the job list, scrolling, highlights |
+| `test_job_notifications.py` | 🔕 Job Notifications: a tech's jobs, picked jobs, turning off and on, a switch that won't stay on, no job-record access, the job list, scrolling, highlights |
 | `test_tech_messages.py` | 💬 Tech Messages: picking techs on the board, 🛡️ rules, highlights |
 | `test_customer_texts.py` | 📱 Customer Texts: holds, filters, numbers, repeat rules, STOP, Type only, Auto-send |
 | `test_no_permission.py` | 📱 Customer Texts for a login that can't open job records: numbers from the customer, never a false "signed out" |

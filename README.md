@@ -19,10 +19,13 @@ On the Dispatch board, choose which jobs:
 - **👷 A tech's jobs**: pick a tech from the list (it only shows techs with jobs on the day shown).
 - **🖱️ Jobs I pick**: click jobs on the board or in the Unassigned / Hold list at the bottom (they get an orange outline), add every job in the list tab that's open with **+ All in the list**, or type job numbers.
 
-Then either:
+Then:
 
 - **Check jobs**: shows whether each of their jobs has notifications on. Changes nothing. It reads ServiceTitan's job data directly, so it takes seconds, not minutes.
 - **Turn off notifications**: switches them off on each job, after you confirm. Jobs that are already off are skipped without opening them.
+- **Turn on notifications**: switches them back on on each job, after you confirm. Jobs that are already on are skipped without opening them. Those customers will get ServiceTitan's automatic job notifications again.
+
+Your ServiceTitan login needs permission to open job records. Without it, the tool says so and changes nothing.
 
 Any job that has a problem gets one more try after the rest of the run is done. Shows progress as it goes, with a Stop button and a copyable list of results.
 

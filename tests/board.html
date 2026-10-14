@@ -54,8 +54,12 @@
   window.fetch = async (url, opts) => {
     const u = String(url);
     const json = (o, st) => new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    // Every signed-in user can read this (asked after a 401 to tell "signed out" from "not allowed").
+    if (u.indexOf('/api/cp/settings/special/permission-settings') === 0) return window.API_401 ? new Response('', { status: 401 }) : json({ Settings: [] });
     let m = /^\/Job\/Edit\/(\d+)/.exec(u) || /^\/Job\/Index\/\?id=(\d+)/.exec(u);
     if (!m) return realFetch(url, opts);
+    // JOB_NO_PERMISSION = true: this login can't open job records (401 while still signed in).
+    if (window.JOB_NO_PERMISSION) return new Response('', { status: 401 });
     window.apiCalls++; window.apiActive++; window.apiMax = Math.max(window.apiMax, window.apiActive);
     try { await pause(window.API_DELAY || 40, opts && opts.signal); } finally { window.apiActive--; }
     if (window.API_401) return new Response('', { status: 401 });
@@ -133,7 +137,11 @@
       setTimeout(() => {
         if (location.hash.split('?')[0] !== h) return;
         root.innerHTML = '<h2>Job #' + j + '</h2><div class="qa-job-notification-toggle"><input id="nt" type="checkbox" class="ToggleSwitch__input"' + (window.NOTIF[j] ? ' checked' : '') + '><label for="nt" class="ToggleSwitch__html-label">Job Notifications</label></div>';
-        root.querySelector('#nt').addEventListener('change', e => { window.NOTIF[j] = e.target.checked; });
+        // NOTIF_STUCK[job] = true: the switch moves but ServiceTitan doesn't save it, and it snaps back.
+        root.querySelector('#nt').addEventListener('change', e => {
+          if (window.NOTIF_STUCK && window.NOTIF_STUCK[j]) { const was = !e.target.checked; setTimeout(() => { e.target.checked = was; }, 200); return; }
+          window.NOTIF[j] = e.target.checked;
+        });
       }, 300);
     }
   }

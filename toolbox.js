@@ -3,7 +3,7 @@
   ====================
   One panel with five tools for the ServiceTitan Dispatch board:
     - Notes: adds a ready-made note (sorted into folders) to a job's customer in one click.
-    - Job Notifications: checks or turns off job notifications for one tech's jobs, or jobs you pick.
+    - Job Notifications: checks, turns off or turns on job notifications for one tech's jobs, or jobs you pick.
     - Tech Messages: sends a saved message (Good Morning, ETA, ...) to the techs you pick (by team or on the board).
     - Business Unit: switches the jobs you pick to a branch (Mendenhall Branch by default).
     - Customer Texts: texts customers a saved message (holds, tech updates, reschedules, ...).
@@ -20,7 +20,7 @@
 (() => {
   const VERSION = '1.5.4';
   const WHATS_NEW = {
-    '1.5.4': 'Fix: 📱 Customer Texts no longer says "ServiceTitan has signed you out" when you\'re signed in but your login can\'t open job records. It now reads phone numbers from the customer (like the Contact Methods panel), so it works without that permission.',
+    '1.5.4': 'New: 🔕 Job Notifications can turn notifications back ON (Turn on notifications…), not just off. Fix: 📱 Customer Texts works again for logins that can\'t open job records (it wrongly stopped as if you weren\'t signed in). It now reads phone numbers from the customer instead.',
     '1.5.3': 'Fix: 📝 Notes no longer opens a "This Page Could Not Be Found" page. When you click a job, ServiceTitan shows a blank customer link for about a second while the job loads; Notes now waits for the real customer instead of following the blank one.',
     '1.5.2': 'Steadier runs: Stop works right away, even while jobs are still being read. If ServiceTitan signs you out, a run stops and says so. If ServiceTitan is slow, the Toolbox eases off. Customer Texts skips a hold that has been booked since you loaded the list.',
     '1.5.1': 'Faster and smarter: Check jobs in Job Notifications and Business Unit now takes seconds instead of minutes, and Customer Texts checks everyone before it starts, so you see exactly who will be texted (and who is skipped, and why). Every job-picking tool also has + All in the list.',
@@ -1173,8 +1173,8 @@
 
   // ===================================================================
   // Tool 2: Job Notifications
-  // Pick a tech from the list (only techs with jobs on the day shown), then check
-  // their jobs' notification switches or turn them off, with live progress.
+  // Pick a tech from the list (only techs with jobs on the day shown), or pick jobs, then check
+  // their jobs' notification switches or turn them off or on, with live progress.
   // ===================================================================
   const notify = (() => {
     const IN = ['.qa-job-notification-toggle input.ToggleSwitch__input', '.qa-job-notification-toggle input[type=checkbox]'];
@@ -1231,12 +1231,16 @@
     refreshBtn.title = 'Reload the list of techs';
     pickRow.append(pick, refreshBtn);
     const actions = el('div', 'display:flex;flex-wrap:wrap;gap:6px');
-    const checkBtn = smallBtn('Check jobs (changes nothing)', () => start(false), PRIMARY);
-    const offBtn = smallBtn('Turn off notifications…', () => askConfirm(), 'color:#c62828;border-color:#e0a0a8');
-    actions.append(checkBtn, offBtn);
+    // A run is 'check' (changes nothing), 'off' or 'on'.
+    const checkBtn = smallBtn('Check jobs (changes nothing)', () => start('check'), PRIMARY);
+    const offBtn = smallBtn('Turn off notifications…', () => askConfirm('off'), 'color:#c62828;border-color:#e0a0a8');
+    const onBtn = smallBtn('Turn on notifications…', () => askConfirm('on'), 'color:#2e7d32;border-color:#9ccc9f');
+    actions.append(checkBtn, offBtn, onBtn);
     const confirmBox = el('div', 'display:none;padding:8px;border:1px solid #e0a0a8;background:#fdecec;border-radius:6px;font-size:12px;gap:6px;flex-wrap:wrap;align-items:center');
-    const confirmText = el('span', 'flex-basis:100%');
-    confirmBox.append(confirmText, smallBtn('Yes, turn them off', () => { confirmBox.style.display = 'none'; start(true); }, DANGER), smallBtn('Cancel', () => { confirmBox.style.display = 'none'; }));
+    const confirmText = el('span', 'flex-basis:100%;white-space:pre-line');
+    let confirmMode = 'off';
+    const confirmYes = smallBtn('Yes, turn them off', () => { confirmBox.style.display = 'none'; start(confirmMode); }, DANGER);
+    confirmBox.append(confirmText, confirmYes, smallBtn('Cancel', () => { confirmBox.style.display = 'none'; }));
     const progress = el('div', 'display:none;gap:6px');
     const log = el('pre', 'max-height:200px;overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
     const progRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
@@ -1276,7 +1280,7 @@
     pickedBox.appendChild(picker.box);
 
     const setEnabled = on => {
-      [pick, refreshBtn, checkBtn, offBtn].forEach(x => { x.disabled = !on; x.style.opacity = on ? '1' : '.5'; });
+      [pick, refreshBtn, checkBtn, offBtn, onBtn].forEach(x => { x.disabled = !on; x.style.opacity = on ? '1' : '.5'; });
       picker.setEnabled(on);
       // Switching between "a tech's jobs" and "jobs I pick" only locks during a run.
       [srcTech.r, srcPicked.r].forEach(x => { x.disabled = running; });
@@ -1287,8 +1291,8 @@
       pickedBox.style.display = src === 'picked' ? 'block' : 'none';
       setEnabled(true);   // also redraws the picked list and its highlights
       if (src === 'picked') {
-        if (!picker.size()) [checkBtn, offBtn].forEach(x => { x.disabled = true; x.style.opacity = '.5'; });
-        if (!keepMsg && !msg.textContent) say(onBoard() ? 'Pick jobs, then check them or turn their notifications off.' : 'Open the Dispatch board to pick jobs there, or type job numbers.');
+        if (!picker.size()) [checkBtn, offBtn, onBtn].forEach(x => { x.disabled = true; x.style.opacity = '.5'; });
+        if (!keepMsg && !msg.textContent) say(onBoard() ? 'Pick jobs, then check them or turn their notifications off or on.' : 'Open the Dispatch board to pick jobs there, or type job numbers.');
         return;
       }
       if (!onBoard()) {
@@ -1318,17 +1322,25 @@
       setEnabled(true);
       if (!keepMsg || !msg.textContent) say(boardDate() + ': ' + rows.length + ' tech' + (rows.length === 1 ? '' : 's') + ' with jobs.');
     };
-    const askConfirm = () => {
+    const askConfirm = mode => {
+      let what;
       if (src === 'picked') {
         if (!picker.size()) return;
-        confirmText.textContent = 'Turn OFF notifications on ' + plural(picker.size(), 'picked job') + '?';
-        confirmBox.style.display = 'flex';
-        return;
+        what = plural(picker.size(), 'picked job');
+      } else {
+        if (!pick.value) return;
+        const n = jobsFor(pick.value).length;
+        what = n + ' job' + (n === 1 ? '' : 's') + ' for ' + (techsOnBoard().get(pick.value) || 'this tech') + ' on ' + boardDate();
       }
-      if (!pick.value) return;
-      const n = jobsFor(pick.value).length;
-      const name = techsOnBoard().get(pick.value) || 'this tech';
-      confirmText.textContent = 'Turn OFF notifications on ' + n + ' job' + (n === 1 ? '' : 's') + ' for ' + name + ' on ' + boardDate() + '?';
+      const on = mode === 'on';
+      confirmMode = on ? 'on' : 'off';
+      confirmText.textContent = 'Turn ' + (on ? 'ON' : 'OFF') + ' notifications on ' + what + '?' +
+        (on ? '\nThose customers will get ServiceTitan\'s automatic job notifications again.' : '');
+      confirmYes.textContent = on ? 'Yes, turn them on' : 'Yes, turn them off';
+      const c = on ? '#2e7d32' : '#c62828';
+      confirmYes.style.background = c; confirmYes.style.borderColor = c;
+      confirmBox.style.borderColor = on ? '#9ccc9f' : '#e0a0a8';
+      confirmBox.style.background = on ? '#e8f5e9' : '#fdecec';
       confirmBox.style.display = 'flex';
     };
     const collectJobs = async techId => {
@@ -1343,7 +1355,11 @@
       }
       return ids;
     };
-    const start = async real => {
+    const start = async mode => {
+      // real: something gets changed. want: the setting each job should end up with.
+      const real = mode === 'off' || mode === 'on';
+      const want = mode === 'on';
+      const OFF_ON = want ? 'on' : 'off';
       const usePicked = src === 'picked';
       if (running || (usePicked ? !picker.size() : !pick.value)) return;
       if (lock) return say('Wait for ' + lock + ' to finish first.');
@@ -1363,7 +1379,7 @@
       const NO_SWITCH = 'COULD NOT FIND SWITCH';
       const results = new Map();   // job -> { text, kind }; a retry replaces the first result
       const record = (j, r, retry) => { results.set(j, r); add(j + ': ' + (retry ? 'retry: ' : '') + r.text); };
-      // Opens one job and checks (or turns off) its switch. Returns { text, kind }.
+      // Opens one job and checks (or turns off / on) its switch. Returns { text, kind }.
       const doJob = async j => {
         const res = (text, kind) => ({ text, kind });
         try {
@@ -1378,56 +1394,68 @@
           }
           const inp = first(IN);
           if (!inp) return res(NO_SWITCH, 'problem');
-          if (!inp.checked) return res('already off', 'already off');
-          if (!real) return res('ON (left alone)', 'on');
+          if (!real) return inp.checked ? res('ON (left alone)', 'on') : res('already off', 'already off');
+          if (inp.checked === want) return res('already ' + OFF_ON, 'already ' + OFF_ON);
           (first(LB) || inp).click();
-          const off = await until(() => { const x = first(IN); return x && !x.checked; }, 4000, 250);
-          if (!off) return res('FAILED, still on', 'problem');
+          const moved = await until(() => { const x = first(IN); return x && x.checked === want; }, 4000, 250);
+          if (!moved) return res('FAILED, still ' + (want ? 'off' : 'on'), 'problem');
           // Saved? The job data says so as soon as ServiceTitan has it. Until then, keep an eye on
           // the switch for a moment in case it flips back.
           const t0 = Date.now();
           while (Date.now() - t0 < 1500) {
             await wait(300);
-            if (await apiState(j) === false) { const y = first(IN); if (!y || !y.checked) return res('turned off', 'turned off'); }
+            if (await apiState(j) === want) { const y = first(IN); if (!y || y.checked === want) return res('turned ' + OFF_ON, 'turned ' + OFF_ON); }
           }
           const x = first(IN);
-          if (x && x.checked) return res('FLIPPED BACK ON (save may have failed)', 'problem');
-          return res('turned off', 'turned off');
+          if (x && x.checked !== want) return res('FLIPPED BACK ' + (want ? 'OFF' : 'ON') + ' (save may have failed)', 'problem');
+          return res('turned ' + OFF_ON, 'turned ' + OFF_ON);
         } catch (e) {
           return res('ERROR: ' + errText(e), 'problem');
         }
       };
       try {
         let list;
+        const what = real ? ' (turning notifications ' + OFF_ON.toUpperCase() + ')' : ' (checking only, nothing changed)';
         if (usePicked) {
           list = picker.ids();
-          add(techName + ' (' + list.length + ')' + (real ? '' : ' (checking only, nothing changed)'));
+          add(techName + ' (' + list.length + ')' + what);
         } else {
           say('Finding ' + techName + '\'s jobs...');
           list = await collectJobs(techId);
           if (!list.length) { say('No jobs found for ' + techName + ' on ' + date + '.'); return; }
-          add(date + ' - ' + techName + (real ? '' : ' (checking only, nothing changed)'));
+          add(date + ' - ' + techName + what);
         }
-        // Read every job's setting first, a few at a time. Jobs that are already off (and, when
-        // only checking, every job) need no page at all. The rest are opened one at a time.
-        // A job whose setting couldn't be read is opened and checked on its page instead.
+        // Read every job's setting first, a few at a time. Jobs that are already the way you want
+        // them (and, when only checking, every job) need no page at all. The rest are opened one at
+        // a time. A job whose setting couldn't be read is opened and checked on its page instead.
         say('Reading ' + plural(list.length, 'job') + '...');
         const readState = async j => { const d = await st.job(j); return typeof d.NotificationsEnabled === 'boolean' ? d.NotificationsEnabled : null; };
         const preAt = Date.now();
         const pre = await st.pool(list, 4, readState, (d, t) => say('Reading jobs... ' + d + ' of ' + t), { stop: () => stop });
         if (pre.halted === 'signedOut') throw pre.haltError;
+        // This login can't open job records at all: the job pages won't open either, so say so
+        // instead of opening every one and blaming a ServiceTitan change.
+        if (list.length && pre.filter(x => x && x.error && st.isNoPermission(x.error)).length === list.length) {
+          const why = 'Your ServiceTitan login doesn\'t have permission to open job records, so it can\'t ' + (real ? 'change' : 'check') + ' job notifications. Nothing was changed.';
+          add('⚠️ ' + why); say('⚠️ ' + why);
+          return;
+        }
         if (pre.halted) add('⚠️ ' + st.haltNote(pre) + ' Opening the rest one at a time instead.');
         for (let n = 0; n < list.length; n++) {
           if (stop) { add('Stopped. ' + (list.length - n) + ' job(s) not checked.'); break; }
           const j = list[n];
           let on = pre[n] === true || pre[n] === false ? pre[n] : null;
-          // About to leave it alone as "already off"? Only on a fresh reading.
-          if (on === false && real && Date.now() - preAt > FRESH_MS) {
-            try { on = await readState(j); } catch (e) { if (st.isSignedOut(e)) throw e; on = null; }
+          if (!real) {
+            if (on === false) { record(j, { text: 'already off', kind: 'already off' }); continue; }
+            if (on === true) { record(j, { text: 'ON (left alone)', kind: 'on' }); continue; }
+          } else {
+            // About to leave it alone as "already off" (or "already on")? Only on a fresh reading.
+            if (on === want && Date.now() - preAt > FRESH_MS) {
+              try { on = await readState(j); } catch (e) { if (st.isSignedOut(e)) throw e; on = null; }
+            }
+            if (on === want) { record(j, { text: 'already ' + OFF_ON, kind: 'already ' + OFF_ON }); continue; }
           }
-          if (on === false) { record(j, { text: 'already off', kind: 'already off' }); continue; }
-          if (on === true && !real) { record(j, { text: 'ON (left alone)', kind: 'on' }); continue; }
-          say((real ? 'Turning off ' : 'Checking ') + (n + 1) + ' of ' + list.length + ' (job ' + j + ')');
+          say((real ? 'Turning ' + OFF_ON + ' ' : 'Checking ') + (n + 1) + ' of ' + list.length + ' (job ' + j + ')');
           record(j, await doJob(j));
         }
         // Second chance: once the run is done, try each job that had a problem one more time.
@@ -1448,8 +1476,8 @@
           const still = failed.filter(j => results.get(j).kind === 'problem');
           add(still.length ? 'Still a problem after retry: ' + still.join(', ') : 'All retried jobs worked.');
         }
-        // Picked jobs that are now off come off the list; anything with a problem stays.
-        if (usePicked && real) results.forEach((r, j) => { if (r.kind === 'turned off' || r.kind === 'already off') picker.remove(j); });
+        // Picked jobs that are now the way you wanted come off the list; anything with a problem stays.
+        if (usePicked && real) results.forEach((r, j) => { if (r.kind === 'turned ' + OFF_ON || r.kind === 'already ' + OFF_ON) picker.remove(j); });
         const tally = {};
         let noSwitch = 0;
         results.forEach(r => { tally[r.kind] = (tally[r.kind] || 0) + 1; if (r.text === NO_SWITCH) noSwitch++; });

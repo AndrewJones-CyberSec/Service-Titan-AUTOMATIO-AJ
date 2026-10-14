@@ -2,6 +2,12 @@
 
 ## 1.5.4
 
+- **New: 🔕 Job Notifications can turn notifications back ON.** Next to *Turn off notifications…* there's now **Turn on notifications…**, for a tech's jobs or jobs you pick. It works exactly like turning off, in reverse:
+  - It asks first, and the confirm says those customers will get ServiceTitan's automatic job notifications again.
+  - Jobs that are already on are skipped without opening them (on a fresh reading, in case someone changed one meanwhile).
+  - Each change is confirmed from the job data. A switch that snaps back off is reported, tried once more, and stays on your picked list.
+  - Picked jobs that end up on come off the list, the same as turning off.
+- **Job Notifications without job-record access:** if your login can't open job records, it now stops right away and says so, instead of opening every job and blaming a ServiceTitan change.
 - **Fix: 📱 Customer Texts said "ServiceTitan has signed you out" while you were signed in**, and sent nothing. Since October 2026 many dispatcher logins can't open the job record, and ServiceTitan refuses that the same way it refuses a signed-out session. Customer Texts read phone numbers from the job record, so it stopped every run.
   - Phone numbers now come from the **customer** (the same list as the customer page's Contact Methods panel), which those logins can still see. Who gets texted, landline-to-mobile, STOP, unread replies and the repeat rules all work as before.
   - When ServiceTitan refuses something, the Toolbox now checks whether you're still signed in. It only says "signed out" if you really are; otherwise it says your login doesn't have permission to see that. This applies to every tool.
