@@ -61,7 +61,7 @@ START = None
 def restore(page):
     page.evaluate("(start) => { Object.keys(start).forEach(k => { Object.assign(APPTS[k], start[k], { s: new Date(start[k].s), e: new Date(start[k].e), techs: start[k].techs.slice() }); delete APPTS[k].boardStatus; delete APPTS[k].statusNum; }); "
              "BOOKED = {}; NONJOB = {}; ASSIGN_FAIL = {}; UNASSIGN_FAIL = {}; ASSIGN_IGNORE = {}; ASSIGN_LOST = {}; UNASSIGN_LOST = {}; "
-             "BOOKED_BY_SCHEDULE = false; BOOKED_DRIFT = false; API_401 = false; APPT_401 = false; PERM_HANG = false; SIGNOUT_AFTER_ASSIGN = false; API_DELAY = 0; "
+             "BOOKED_BY_SCHEDULE = false; BOOKED_DRIFT = false; API_401 = false; APPT_401 = false; PERM_HANG = false; SIGNOUT_AFTER_ASSIGN = false; API_DELAY = 0; FULLDAY_FAIL = false; delete APPTS[9200]; "
              "window.calls = []; localStorage.removeItem('stMoveUndo'); render(); }", START)
 def open_moves(page):
     if ev(page, "() => !!window.__stToolbox"): page.evaluate("() => window.__stToolbox.close()")
@@ -381,25 +381,51 @@ with sync_playwright() as p:
     restore(page)
     mode(page, 'Move to a tech')
 
-    # ================= Known limit: a job the board doesn't show, booked mid-run, in a 3-job stack =================
+    # ================= A job the board's filters hide, booked mid-run, in a 3-job stack =================
+    # ServiceTitan's check can only leave out one of the run's own overlapping jobs, so for the 3rd job
+    # the Toolbox reads the day's full schedule (every branch and team) instead of trusting the board.
     pick_to(page, 104)
-    three = "() => { APPTS[9103].s = new Date(APPTS[9101].s); APPTS[9103].s.setHours(10); APPTS[9103].e = new Date(APPTS[9101].s); APPTS[9103].e.setHours(13); BOOKED_BY_SCHEDULE = true; render(); window.calls = []; }"
-    # Hidden from the board but already there at the review: ServiceTitan's check catches it (exact at review).
-    ev(page, three); ev(page, "() => { BOOKED[104] = true; }")
+    three = "() => { APPTS[9103].s = new Date(APPTS[9101].s); APPTS[9103].s.setHours(10); APPTS[9103].e = new Date(APPTS[9101].s); APPTS[9103].e.setHours(13); BOOKED_BY_SCHEDULE = true; render(); window.calls = []; window.fullDayCalls = 0; }"
+    # A hidden job that hits only the 10-1 job (12:30-1), added after the review, after the 2nd job.
+    hide_after_2nd = """() => { const f = window.fetch; let n = 0; window.fetch = async (url, opts) => { const r = await f(url, opts); if (/\\/AssignTechnicians/.test(String(url)) && ++n === 2) {
+        const d = new Date(APPTS[9101].s); APPTS[9200] = { job: 7200, n: 1, cust: 'Other Branch', s: new Date(d.setHours(12, 30)), e: new Date(d.setHours(13, 0)), techs: [104], bu: 2, total: 0, status: 'Scheduled', skills: [], hidden: true };
+        window.fetch = f; } return r; }; }"""
+    # Hidden and already there at the review: ServiceTitan's own check catches it (exact at review).
+    ev(page, three); ev(page, "() => { const d = new Date(APPTS[9101].s); APPTS[9200] = { job: 7200, n: 1, cust: 'Other Branch', s: new Date(d.setHours(12, 30)), e: new Date(d.setHours(13, 0)), techs: [104], bu: 2, total: 0, status: 'Scheduled', skills: [], hidden: true }; render(); }")
+    check(ev(page, "() => !document.querySelector('a.appointment[data-job-id=\"7200\"]')"), 'hidden: the other branch\'s job isn\'t on the board')
     clear_jobs(page); type_jobs(page, '7101 7102 7103')
     t = review(page)
-    check('Already booked at that time (3)' in t and not go_enabled(page), 'limit: a booking the board doesn\'t show is still caught at the review')
+    check('Already booked at that time (1)' in t and 'Kim Wu' in t.split('Already booked at that time')[1], 'hidden: a job the board doesn\'t show is caught at the review')
     B(page, 'Cancel').click()
+    ev(page, "() => { delete APPTS[9200]; }")
     restore(page)
-    # Added mid-run (after the 2nd job): for the 3rd job ServiceTitan can only leave out one of the run's
-    # two overlapping jobs, and the board doesn't show the new one, so it can't be told apart. The 3rd
-    # job goes through. Documented limit (treating it as booked would stop every 3-job stack).
+    # Booked mid-run, hidden by the board's filters: caught now (it used to slip through).
     ev(page, three)
     clear_jobs(page); type_jobs(page, '7101 7102 7103')
     review(page)
-    page.evaluate("""() => { const f = window.fetch; let n = 0; window.fetch = async (url, opts) => { const r = await f(url, opts); if (/\\/AssignTechnicians/.test(String(url)) && ++n === 2) { BOOKED[104] = true; window.fetch = f; } return r; }; }""")
+    page.evaluate(hide_after_2nd)
     go(page)
-    check(all(techs(page, a) == [104] for a in (9101, 9102, 9103)), 'limit (documented): a hidden job booked mid-run can\'t be told apart in a 3-job stack; the 3rd job goes on')
+    lg = log(page); print(lg)
+    check(techs(page, 9101) == [104] and techs(page, 9102) == [104] and techs(page, 9103) == [], 'hidden: a job the board doesn\'t show, booked mid-run, stops the 3rd job of a stack')
+    check('Kim Wu: Dana K is already booked on another job then (since the review)' in lg, 'hidden: and says why')
+    check(ev(page, "() => window.fullDayCalls") >= 1, 'hidden: the day\'s full schedule was read for it')
+    ev(page, "() => { delete APPTS[9200]; }")
+    restore(page)
+    # No other booking: a 3-job stack still goes on, reading the full schedule (no false alarm).
+    ev(page, three)
+    clear_jobs(page); type_jobs(page, '7101 7102 7103')
+    review(page); go(page)
+    check(all(techs(page, a) == [104] for a in (9101, 9102, 9103)) and ev(page, "() => window.fullDayCalls") >= 1, 'hidden: with nothing else booked, the 3-job stack still goes on')
+    restore(page)
+    # The full schedule can't be read: the 3rd job is left alone (safe side), and it says why.
+    ev(page, three)
+    clear_jobs(page); type_jobs(page, '7101 7102 7103')
+    review(page)
+    ev(page, "() => { FULLDAY_FAIL = true; }")
+    go(page)
+    lg = log(page)
+    check(techs(page, 9103) == [] and "couldn't read the day's full schedule" in lg and techs(page, 9101) == [104] and techs(page, 9102) == [104], 'hidden: if the full schedule can\'t be read, that job is left alone and says why')
+    ev(page, "() => { FULLDAY_FAIL = false; }")
     restore(page)
     # Time off added mid-run is still caught in the same case (non-job events always count).
     ev(page, three)
@@ -408,7 +434,7 @@ with sync_playwright() as p:
     page.evaluate("""() => { const f = window.fetch; let n = 0; window.fetch = async (url, opts) => { const r = await f(url, opts); if (/\\/AssignTechnicians/.test(String(url)) && ++n === 2) { NONJOB[104] = true; window.fetch = f; } return r; }; }""")
     go(page)
     lg = log(page)
-    check(techs(page, 9103) == [] and 'Kim Wu: Dana K has a non-job event then' in lg and '(since the review)' in lg, 'limit: time off added mid-run is still caught in a 3-job stack')
+    check(techs(page, 9103) == [] and 'Kim Wu: Dana K has a non-job event then' in lg and '(since the review)' in lg, 'hidden: time off added mid-run is still caught in a 3-job stack')
     restore(page)
 
     # ================= Put back checks bookings, status, and an exact match =================

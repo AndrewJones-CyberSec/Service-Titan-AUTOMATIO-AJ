@@ -127,6 +127,13 @@
       if (lost) { if (lost !== 'always') (m[1] === 'Assign' ? ASSIGN_LOST : UNASSIGN_LOST)[body.appointmentId] = 0; throw new TypeError('Failed to fetch'); }
       return new Response('', { status: 200 });
     }
+    if (u.indexOf('/Dispatch/Data') === 0) {
+      // Like ServiceTitan's board data with no filters: every job, hidden ones too. FULLDAY_FAIL: it fails.
+      window.fullDayCalls = (window.fullDayCalls || 0) + 1;
+      if (window.FULLDAY_FAIL) return json({ error: 'boom' }, 500);
+      return json({ Technicians: TECHS.map(t => ({ Id: t.id, Name: t.name, Appointments: [], Assignments: Object.keys(APPTS).filter(k => APPTS[k].techs.indexOf(t.id) > -1)
+        .map(k => ({ Id: Number(k), Start: APPTS[k].s.toISOString(), End: APPTS[k].e.toISOString(), AppointmentStatus: APPTS[k].status, Technicians: APPTS[k].techs.map(id => ({ Id: id, Name: tname(id) })) })) })) });
+    }
     if (u.indexOf('/Dispatch/GetJobs') === 0) {
       window.lastGetJobs = body;
       if (body.JobType !== 'Unassigned') return json({ Jobs: [], Count: 0 });
@@ -149,7 +156,7 @@
     if (/^#\/DispatchBoard/.test(h)) {
       // Timeline: one row per tech, a bubble per appointment of theirs (a job with two techs shows twice).
       root.innerHTML = '<div class="team-container"><div class="team-name">Install HVAC</div>' + TECHS.filter(t => t.active).map(t => '<div class="technician" data-technician-id="' + t.id + '"><span class="name">' + t.name + '</span></div>').join('') + '</div>' +
-        TECHS.filter(t => t.active).map(t => '<div class="row" id="team-timeline-row-' + t.id + '">' + Object.keys(APPTS).filter(k => APPTS[k].techs.indexOf(t.id) > -1).map(k =>
+        TECHS.filter(t => t.active).map(t => '<div class="row" id="team-timeline-row-' + t.id + '">' + Object.keys(APPTS).filter(k => !APPTS[k].hidden && APPTS[k].techs.indexOf(t.id) > -1).map(k =>
           '<a class="appointment" data-job-id="' + APPTS[k].job + '" data-id="' + k + '" data-technician-id="' + t.id + '">' + APPTS[k].cust + '</a>').join('') + '</div>').join('') +
         '<div class="job-list"><div class="toolbar">Unassigned</div><div><table class="k-grid-table"><tbody>' +
         Object.keys(APPTS).filter(k => !APPTS[k].techs.length).map(k => '<tr class="row__BK7JR qa-job-' + APPTS[k].job + '"><td>Quote</td><td>' + APPTS[k].cust + '</td></tr>').join('') + '</tbody></table></div></div>';
@@ -159,7 +166,8 @@
         Date: ko.observable(today),
         BusinessUnitFilter: { getIds: () => [1] },
         // The board's own data: today's appointments and one from tomorrow (it keeps days you've looked at).
-        Assignments: ko.observable(Object.keys(APPTS).filter(k => APPTS[k].techs.length).map(rowFor)),
+        // hidden: a job the board's branch/team filter hides (it's still in ServiceTitan's full schedule).
+        Assignments: ko.observable(Object.keys(APPTS).filter(k => !APPTS[k].hidden && APPTS[k].techs.length).map(rowFor)),
         // The board's own reload (seen Oct 2026: refreshData). NO_REFRESH: the board doesn't have it.
         IsRefreshing: ko.observable(false), LoadingData: ko.observable(false)
       };

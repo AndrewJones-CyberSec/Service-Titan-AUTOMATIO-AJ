@@ -315,10 +315,28 @@
         return r;
       });
     };
+    // Every job on a day, for every branch and team: the same data the Dispatch board loads
+    // (/Dispatch/Data), without the board's filters. Seen Oct 2026: { Technicians: [{ Id,
+    // Assignments: [{ Id (appointment id), Start, End, AppointmentStatus }] }] }, about 2 MB and under
+    // a second. Returns [{ techId, apptId, start, end, status }].
+    const daySchedule = async dayIso => {
+      const d = await getJSON('/Dispatch/Data', 30000, { date: dayIso, filter: { businessUnitIds: [], teamIds: [], skillIds: [] } });
+      const bad = () => fail('bad', 'the day\'s full schedule came back in a shape the Toolbox doesn\'t know');
+      if (!d || !Array.isArray(d.Technicians)) throw bad();
+      const out = [];
+      d.Technicians.forEach(t => {
+        if (!t || t.Id == null || !Array.isArray(t.Assignments)) throw bad();
+        t.Assignments.forEach(a => {
+          if (!a || a.Id == null || !a.Start || !a.End || isNaN(new Date(a.Start)) || isNaN(new Date(a.End))) throw bad();
+          out.push({ techId: t.Id, apptId: a.Id, start: a.Start, end: a.End, status: norm(a.AppointmentStatus) });
+        });
+      });
+      return out;
+    };
     const assignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/AssignTechnicians', 20000, { appointmentId: apptId, technicianIds: techIds });
     const unassignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/UnassignTechnicians', 20000, { appointmentId: apptId, technicianIds: techIds });
     return { getJSON, pool, NOT_RUN, haltNote, SIGNED_OUT, isSignedOut, isNoPermission, job, jobEdit, chatThread, chatMessages, customerPhones, code,
-      appointment, jobSkills, technicians, techsBooked, assignTechs, unassignTechs };
+      appointment, jobSkills, technicians, techsBooked, daySchedule, assignTechs, unassignTechs };
   })();
 
   // The editable list used by ✏️ Edit notes and ✏️ Edit messages: a name and a text per item,
@@ -3884,16 +3902,26 @@
     // A read that came back in a shape the Toolbox doesn't know also shows the yellow warning bar.
     const noteBad = e => { if (e && e.kind === 'bad') health.flag(TOOL, errText(e)); };
 
+    // The day's full schedule (every branch and team). Within one review or run it's reused for up
+    // to 5 seconds (a big stack can need it for every job); every review and run starts fresh.
+    // A booking can land between any check and the change itself, as it can for the job panel; the
+    // 5 seconds only add to that window, and only in this rare case.
+    let sched = { day: '', at: 0, list: null };
+    const freshSchedule = () => { sched = { day: '', at: 0, list: null }; };
+    const fullDay = async when => {
+      const d = new Date(when), key = dayISO(d);
+      if (sched.list && sched.day === key && Date.now() - sched.at < 5000) return sched.list;
+      const list = await st.daySchedule(key);
+      sched = { day: key, at: Date.now(), list };
+      return list;
+    };
     // Which techs are booked at an appointment's time, not counting the appointments in ignore(id):
     // jobs a swap takes them off, and jobs this run already put on them. ServiceTitan's check can
-    // leave out one appointment itself. With two or more to leave out, a job booking only counts
-    // if the board shows another job of theirs at that time. Non-job and recurring events always
-    // count. Returns [{ id, why }] for the booked techs.
-    // Known limit (kept on purpose): in that two-or-more case, a job the board doesn't show (hidden
-    // by the board's branch or team filter) can't be seen. It only comes up during a run (stacking
-    // three or more overlapping jobs, after the review's exact check), or in a whole-day swap where
-    // a tech already has overlapping jobs. Treating it as booked instead would stop every third
-    // overlapping job in a stack, with no box to tick at the review to allow it.
+    // leave out one appointment itself. With two or more to leave out (stacking three or more
+    // overlapping jobs, or a whole-day swap where a tech already has overlapping jobs), a job
+    // booking is looked up in the day's full schedule, every branch and team, so a job your board's
+    // filters hide still counts. If that can't be read, the tech counts as booked (safe side).
+    // Non-job and recurring events always count. Returns [{ id, why }] for the booked techs.
     const bookedAt = async (techIds, appt, ignore) => {
       const out = [], plain = [];
       for (const id of techIds) {
@@ -3903,7 +3931,10 @@
         if (!b || !b.booked) continue;
         if (b.nonJob || b.recurring || ig.length === 1) { out.push({ id, why: b.why }); continue; }
         const skip = ig.map(g => S(g.apptId)).concat([S(appt.apptId)]);
-        if (dayRows().some(r => skip.indexOf(S(r.apptId)) < 0 && hasId(r.techs.map(t => t.id), id) && overlap(r, appt))) out.push({ id, why: 'is already booked on another job then' });
+        let list;
+        try { list = await fullDay(appt.start); }
+        catch (e) { if (st.isSignedOut(e)) throw e; noteBad(e); out.push({ id, why: 'might be booked (couldn\'t read the day\'s full schedule to check: ' + errText(e) + ')' }); continue; }
+        if (list.some(r => S(r.techId) === S(id) && skip.indexOf(S(r.apptId)) < 0 && !/^cancel/i.test(r.status) && overlap(r, appt))) out.push({ id, why: 'is already booked on another job then' });
       }
       if (plain.length) (await st.techsBooked(plain, appt.start, appt.end, appt.apptId)).forEach(b => { if (b.booked) out.push({ id: b.id, why: b.why }); });
       return out;
@@ -3961,6 +3992,7 @@
       if (!list.length && !missing.length) return say(m === 'swapDays' ? 'Neither tech has jobs on ' + dayText(day) + '.' : 'Nothing to do.');
       if (list.length > MAX_PER_RUN) return say('⚠️ ' + MAX_PER_RUN + ' jobs per run at most.');
       busy = reviewing = true; reviewStop = false; clearReview(); picker.setPicking(false); updateButtons();
+      freshSchedule();
       say('Checking ' + plural(list.length, 'job') + '...');
       try {
         // A fresh tech list every review: skills, managed techs and who's active can change.
@@ -4275,6 +4307,7 @@
       updateButtons();
       fit(); progress.scrollIntoView({ block: 'nearest' });
       todo.forEach(x => { x.origin = null; x.lastSeen = null; x.touched = false; });
+      freshSchedule();
       const results = new Map();   // apptId -> result
       const ctx = { given: [], leaving: p.leaving || new Map() };
       const record = (x, rr, retry) => { results.set(S(x.it.r.apptId), { x, rr }); add(label(x.it.r) + ': ' + (retry ? 'retry: ' : '') + rr.text); };
