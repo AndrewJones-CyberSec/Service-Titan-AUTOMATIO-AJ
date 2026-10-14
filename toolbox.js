@@ -426,8 +426,9 @@
   // With 🖱️ Pick on board on, clicking a job on the timeline, or a row in the job list at the
   // bottom, adds it (click again to take it off). Jobs can also be typed in, or a whole list
   // tab added at once. Picked jobs are highlighted only while their tool is open.
-  //   opts: { color, soft, max, shown() (tool open and using picked jobs), busy() (a run is
-  //           going), say(text), changed() (the list changed) }
+  //   opts: { color, soft, max (a number, or a function for a limit that changes),
+  //           fullText(max) (optional: what to say when the list is full), shown() (tool open
+  //           and using picked jobs), busy() (a run is going), say(text), changed() (the list changed) }
   // ===================================================================
   const jobPicker = opts => {
     const picked = new Map();   // job number -> label (usually the customer's name)
@@ -484,7 +485,8 @@
     const changed = () => { render(); if (opts.changed) opts.changed(); };
     const add = (j, lab) => {
       if (picked.has(j)) return false;
-      if (opts.max && picked.size >= opts.max) { say('⚠️ The list is full (' + opts.max + ' jobs per run).'); return false; }
+      const max = typeof opts.max === 'function' ? opts.max() : opts.max;
+      if (max && picked.size >= max) { say(opts.fullText ? opts.fullText(max) : '⚠️ The list is full (' + max + ' jobs per run).'); return false; }
       picked.set(j, lab || labelOf(j));
       return true;
     };
@@ -3577,7 +3579,12 @@
     const modeRadios = MODES.map(([val, text]) => {
       const l = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer');
       const r = el('input'); r.type = 'radio'; r.name = 'st-move-mode'; r.value = val; r.checked = mode === val;
-      r.onchange = () => { mode = val; set('stMoveMode', val); clearReview(); if (val === 'swapDays') picker.setPicking(false); layout(); };
+      r.onchange = () => {
+        mode = val; set('stMoveMode', val); clearReview();
+        if (val === 'swapDays') picker.setPicking(false);
+        layout();
+        if (val === 'swapJobs' && picker.size() > 2) say('⚠️ Swap uses two jobs, and ' + picker.size() + ' are picked. Take some off (✕) or Clear.');
+      };
       l.append(r, document.createTextNode(text));
       modeBox.appendChild(l);
       return r;
@@ -3612,6 +3619,14 @@
         setEnabled: on => { [find, sel].forEach(x => { x.disabled = !on; x.style.opacity = on ? '1' : '.5'; }); }
       };
     };
+    const HINTS = {
+      move: 'Pick the jobs and the tech they go to.',
+      add: 'Pick the jobs and the tech to add. Whoever is on them stays.',
+      unassign: 'Pick the jobs. Everyone (or the tech in From) comes off.',
+      swapJobs: 'Pick two jobs. Each one gets the other\'s tech(s).',
+      swapDays: 'Pick two techs. Every open job of one goes to the other, on the day the board shows.'
+    };
+    const hint = el('div', 'font-size:12px;color:#555;background:#f3edf8;border-radius:6px;padding:4px 7px');
     const toPick = techPicker('To', '', 'stMoveTo');
     const fromPick = techPicker('From', 'Anyone on the job', 'stMoveFrom');
     const aPick = techPicker('Tech A', '', 'stMoveA');
@@ -3621,7 +3636,10 @@
 
     // The jobs: picked on the board, from the Unassigned list, or typed (on the day the board shows).
     const picker = jobPicker({
-      color: '#6a1b9a', soft: 'rgba(106,27,154,.22)', max: MAX_PER_RUN,
+      color: '#6a1b9a', soft: 'rgba(106,27,154,.22)',
+      // Swap uses exactly two jobs, so a third can't be picked.
+      max: () => mode === 'swapJobs' ? 2 : MAX_PER_RUN,
+      fullText: max => max === 2 && mode === 'swapJobs' ? '⚠️ Swap uses two jobs. Take one off (✕) to pick a different one.' : '⚠️ The list is full (' + max + ' jobs per run).',
       shown: () => movesPane.style.display !== 'none' && mode !== 'swapDays',
       busy: () => busy,
       say: t => say(t),
@@ -3660,7 +3678,7 @@
     progress.append(log, progRow);
     const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
     navRow.append(smallBtn('← Menu', () => { if (!busy) showView('menu'); }));
-    wrap.append(msg, modeBox, toPick.box, fromPick.box, aPick.box, bPick.box, jobsBox, actions, reviewBox, progress, navRow);
+    wrap.append(msg, modeBox, hint, toPick.box, fromPick.box, aPick.box, bPick.box, jobsBox, actions, reviewBox, progress, navRow);
     movesPane.appendChild(wrap);
 
     // Move Jobs is taller than a laptop screen once a review shows, so its area scrolls inside the
@@ -3688,6 +3706,7 @@
       show(bPick.box, mode === 'swapDays');
       show(jobsBox, mode !== 'swapDays');
       uaRow.style.display = mode === 'move' || mode === 'add' ? 'flex' : 'none';
+      hint.textContent = HINTS[mode] || '';
       const allOpt = fromPick.sel.options[0];
       if (allOpt && allOpt.value === '') allOpt.textContent = mode === 'unassign' ? 'Everyone on the job' : 'Anyone on the job (replaces everyone)';
       picker.render();
@@ -3825,7 +3844,12 @@
           // Each job gets the other's techs, as they are right now.
           const [x, y] = list;
           const [ax, ay] = await Promise.all([st.appointment(x.r.apptId), st.appointment(y.r.apptId)]);
-          x.p = { want: ay.appointment.techIds.slice() }; y.p = { want: ax.appointment.techIds.slice() };
+          const tx = ax.appointment.techIds, ty = ay.appointment.techIds;
+          if (tx.length === ty.length && tx.every(id => hasId(ty, id))) {
+            say('Both jobs are on ' + (tx.length ? names(tx) : 'no tech') + ', so there\'s nothing to swap. Pick a job from a different tech.');
+            return;
+          }
+          x.p = { want: ty.slice() }; y.p = { want: tx.slice() };
         }
         const skillCache = new Map();
         const swaps = m === 'swapJobs' || m === 'swapDays';
