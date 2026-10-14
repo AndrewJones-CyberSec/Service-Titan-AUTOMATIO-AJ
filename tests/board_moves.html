@@ -44,10 +44,10 @@
     9006: { job: 7006, n: 1, cust: 'Fay Moss', s: at(15), e: at(16), techs: [101], bu: 1, total: 0, status: 'Done', skills: [] },
     9008: { job: 7008, n: 1, cust: 'Hal Fry', s: tomorrow(9), e: tomorrow(11), techs: [101], bu: 1, total: 0, status: 'Scheduled', skills: [] },
     9101: { job: 7101, n: 1, cust: 'Ivy Kim', s: at(9), e: at(11), techs: [], bu: 1, total: 0, status: 'Scheduled', skills: [1] },
-    9102: { job: 7102, n: 1, cust: 'Jon Poe', s: at(11), e: at(13), techs: [], bu: 1, total: 0, status: 'Scheduled', skills: [2] },
+    9102: { job: 7102, n: 1, cust: 'Jon Poe', s: at(10), e: at(12), techs: [], bu: 1, total: 0, status: 'Scheduled', skills: [2] },
     9103: { job: 7103, n: 1, cust: 'Kim Wu', s: at(14), e: at(16), techs: [], bu: 1, total: 0, status: 'Scheduled', skills: [] }
   };
-  // Test switches: BOOKED[tech] = true (already booked), ASSIGN_FAIL[appt] / UNASSIGN_FAIL[appt] = 'always' | number of times,
+  // Test switches: BOOKED[tech] = true (already booked), BOOKED_BY_SCHEDULE (booked when another of their jobs overlaps), ASSIGN_FAIL[appt] / UNASSIGN_FAIL[appt] = 'always' | number of times,
   // ASSIGN_IGNORE[appt] (says OK, changes nothing), BOARD_LAG (the board doesn't redraw after a change),
   // TECH_API_DOWN (no technician list), API_401 (signed out), API_DELAY (ms).
   window.BOOKED = {}; window.ASSIGN_FAIL = {}; window.UNASSIGN_FAIL = {}; window.ASSIGN_IGNORE = {};
@@ -85,7 +85,10 @@
     }
     if (u.indexOf('/Job/TechniciansAreBooked') === 0) {
       window.lastBooked = body;
-      return json(body.technicianIds.map(id => ({ TechnicianId: id, IsBookedForJob: !!BOOKED[id], IsBookedForNonJobEvent: false, IsBookedForRecurring: false })));
+      // BOOKED_BY_SCHEDULE: booked when another job of theirs overlaps that time, like ServiceTitan does.
+      const s = new Date(body.start), e = new Date(body.end);
+      const busy = id => window.BOOKED_BY_SCHEDULE && Object.keys(APPTS).some(k => APPTS[k].job !== body.originalAppointmentId && APPTS[k].techs.indexOf(id) > -1 && APPTS[k].s < e && s < APPTS[k].e);
+      return json(body.technicianIds.map(id => ({ TechnicianId: id, IsBookedForJob: !!BOOKED[id] || busy(id), IsBookedForNonJobEvent: false, IsBookedForRecurring: false })));
     }
     if ((m = /\/dispatch\/job-edit-flyout\/(Assign|Unassign)Technicians/.exec(u))) {
       const a = APPTS[body.appointmentId];

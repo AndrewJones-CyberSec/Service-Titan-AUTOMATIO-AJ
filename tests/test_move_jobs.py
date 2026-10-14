@@ -342,6 +342,32 @@ with sync_playwright() as p:
     check(1 <= done < 3 and 'Stopped.' in log(page), 'stop leaves the rest (%d of 3 done)' % done)
     ev(page, "() => { window.API_DELAY = 30; }")
 
+    # ---- Stacking overlapping jobs on one tech: the run's own jobs don't count as "booked" ----
+    for a in (9101, 9102, 9103): reset(page, a, [])
+    ev(page, "() => { BOOKED_BY_SCHEDULE = true; window.calls = []; }")
+    mode(page, 'Move to a tech'); pick_to(page, 104); pick_from(page, None)
+    clear_jobs(page)
+    B(page, 'All Unassigned').click()
+    page.wait_for_function("() => /Added \\d+ job/.test(document.getElementById('st-toolbox').innerText)", timeout=10000)
+    t = review(page)
+    check('Ready: 3 jobs' in t and 'Already booked' not in t, 'Dana K free when reviewed')
+    check(go(page), 'stacking run finishes')
+    lg = log(page); print(lg)
+    check(all(techs(page, a) == [104] for a in (9101, 9102, 9103)) and 'booked' not in lg, "overlapping jobs all stacked on Dana K: the run's own jobs don't block the rest")
+    # Someone else books her for real after the review: that job is still left alone
+    for a in (9101, 9102, 9103): reset(page, a, [])
+    ev(page, "() => { BOOKED_BY_SCHEDULE = false; }")
+    clear_jobs(page)
+    B(page, 'All Unassigned').click()
+    page.wait_for_function("() => /Added \\d+ job/.test(document.getElementById('st-toolbox').innerText)", timeout=10000)
+    review(page)
+    ev(page, "() => { BOOKED[104] = true; window.calls = []; }")
+    go(page)
+    lg = log(page); print(lg)
+    check('Dana K got booked at that time since the review, left alone' in lg and calls(page) == [], 'a real booking since the review still stops it')
+    ev(page, "() => { BOOKED = {}; }")
+    for a in (9101, 9102, 9103): reset(page, a, [])
+
     # ---- Signed out ----
     clear_jobs(page); type_jobs(page, '7001')
     ev(page, "() => { API_401 = true; window.calls = []; }")

@@ -3976,7 +3976,11 @@
     };
     // One appointment: a fresh look, the change worked out again from who's on it now (in case
     // the board changed since the review), the checks again, then add first and remove second.
-    const doItem = async (x, m, okWarn) => {
+    // ctx.given: what this run has already put on whom, and when ([{ ids, start, end }]), so a
+    // tech who looks booked only because of this run's own jobs (stacking jobs on one tech) isn't
+    // mistaken for someone booking them since the review.
+    const overlapsRun = (ctx, id, start, end) => ctx.given.some(g => hasId(g.ids, id) && new Date(g.start) < new Date(end) && new Date(start) < new Date(g.end));
+    const doItem = async (x, m, okWarn, ctx) => {
       const r = x.it.r;
       let now;
       try { now = await st.appointment(r.apptId); }
@@ -3992,11 +3996,13 @@
       const mp = managedProblem(now.jobTotal, fin);
       if (mp) return res(mp, 'skipped');
       if (!fin.length && otherBranch(now.businessUnitId) && !okWarn.branch && m !== 'putback') return res('would go to ' + buName(now.businessUnitId) + '\'s Unassigned list (not ticked)', 'skipped');
-      // Booked again right before (someone may have booked the tech since the review).
+      // Booked again right before (someone may have booked the tech since the review). Jobs this
+      // same run put on the tech don't count: stacking jobs on one tech is the point.
       if (d.add.length && (m === 'move' || m === 'add') && !okWarn.booked && now.appointment.start && now.appointment.end) {
         try {
           const b = await st.techsBooked(d.add, now.appointment.start, now.appointment.end, now.jobId);
-          if (b.some(y => y.booked)) return res('the tech is now booked at that time (not ticked), left alone', 'skipped');
+          const since = b.filter(y => y.booked && !overlapsRun(ctx, y.id, now.appointment.start, now.appointment.end)).map(y => y.id);
+          if (since.length) return res(names(since) + ' got booked at that time since the review, left alone. Review again to see it', 'skipped');
         } catch (e) { if (st.isSignedOut(e)) throw e; return res('couldn\'t check if the tech is booked (' + errText(e) + '). Nothing changed', 'problem'); }
       }
       // 1) Add the new tech(s) first, so the job is never left without a tech halfway.
@@ -4004,6 +4010,7 @@
         try { await st.assignTechs(r.apptId, d.add); }
         catch (e) { if (st.isSignedOut(e)) throw e; return res('couldn\'t add ' + names(d.add) + ' (' + errText(e) + '). Nothing changed', 'problem'); }
         if (!await confirmTechs(r.apptId, ids => d.add.every(id => hasId(ids, id)))) return res('ServiceTitan didn\'t add ' + names(d.add) + '. Nothing else changed', 'problem');
+        if (now.appointment.start && now.appointment.end) ctx.given.push({ ids: d.add.slice(), start: now.appointment.start, end: now.appointment.end });
       }
       // 2) Then take the old one(s) off.
       if (d.remove.length) {
@@ -4033,6 +4040,7 @@
       updateButtons();
       fit(); progress.scrollIntoView({ block: 'nearest' });
       const results = new Map();   // apptId -> result
+      const ctx = { given: [] };
       const record = (x, rr, retry) => { results.set(S(x.it.r.apptId), { x, rr }); add(label(x.it.r) + ': ' + (retry ? 'retry: ' : '') + rr.text); };
       const verb = m === 'putback' ? 'Putting back' : m === 'unassign' ? 'Unassigning' : m === 'add' ? 'Adding' : m === 'move' ? 'Moving' : 'Swapping';
       const lastRun = [];
@@ -4041,7 +4049,7 @@
         for (let n = 0; n < todo.length; n++) {
           if (stop) { add('Stopped. ' + plural(todo.length - n, 'job') + ' not done.'); break; }
           say(verb + ' ' + (n + 1) + ' of ' + todo.length + ' (job ' + todo[n].it.r.jobId + ')');
-          record(todo[n], await doItem(todo[n], m, okWarn));
+          record(todo[n], await doItem(todo[n], m, okWarn, ctx));
         }
         // One more try for jobs that had a problem (a fresh look decides what's still left to do).
         const failed = todo.filter(x => { const y = results.get(S(x.it.r.apptId)); return y && y.rr.kind === 'problem' && !y.rr.noRetry; });
@@ -4052,7 +4060,7 @@
             if (stop) { add('Stopped. ' + (failed.length - n) + ' retry(s) not done.'); break; }
             say('Retrying ' + (n + 1) + ' of ' + failed.length + ' (job ' + failed[n].it.r.jobId + ')');
             const first = results.get(S(failed[n].it.r.apptId)).rr;
-            const rr = await doItem(failed[n], m, okWarn);
+            const rr = await doItem(failed[n], m, okWarn, ctx);
             // Keep where the job started from, if the first try had already changed it.
             if (first.changed && rr.changed) { rr.before = first.before; rr.text = 'finished the change, now ' + (rr.after.length ? names(rr.after) : 'unassigned'); }
             // The first try changed it and the retry didn't: Put back still needs to know.
