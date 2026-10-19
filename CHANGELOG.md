@@ -9,9 +9,8 @@
   - holds aren't included (the Hold list has its own choice under Who);
   - the picked list shows everyone, so you can take anyone off with ✕ before pressing Start. All the usual checks still run before anything is typed.
 - **New folder: 📣 OutReach**, for reminders to customers on the board. Its repeat rule skips anyone who got the same message in the last 30 days, and it starts with a **🔥 Heater reminder** you can edit. The starter text is a plain reminder ending in *Reply STOP to opt out*, with no phone number, offer or "call us" (that's what makes a reminder read as a sales text). If you already saved your own folders, OutReach is added once at the end of your list; delete it and it stays deleted. If you already have a folder called Outreach, you don't get a second one.
-- **Faster big runs (about a quarter to a third faster per text):**
-  - The quick fresh look at the next customer (a new reply, a STOP, blocked in ServiceTitan) now happens while the current text is being typed and sent, so it's ready when that customer's turn comes. If it's more than 15 seconds old by then (Type only, while you take your time), it's done again. The open conversation is still checked right before typing, every time.
-  - The check before starting looks at 6 customers at a time instead of 4 (it still eases off if ServiceTitan is slow).
+- **Faster big runs (about 15% faster per text, measured on the test board with slow ServiceTitan answers):**
+  - The full fresh look at the next customer (a new reply, a STOP, blocked in ServiceTitan) now happens while the current text is being typed and sent. At their turn, one quick read of their conversation confirms nothing has changed since and that you're still signed in; if anything changed, the full look is done again. A look more than 15 seconds old (Type only, while you take your time) is done again, and holds always get the full look at their turn. The open conversation is still checked right before typing, every time.
   - It notices a loaded conversation and a sent text sooner (checks every 0.1 to 0.15 seconds instead of every 0.25 to 0.3).
 - Added tests (`tests/test_customer_texts.py`, `tests/test_outreach.py`, `tests/board_texts.html`).
 

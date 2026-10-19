@@ -59,7 +59,7 @@ Text customers a saved message through ServiceTitan's Chat Center. Messages are 
 - **Repeat rules per folder:** Holds skips anyone who got a text from us in the last 7 days. Tech Updates and Reschedule skip anyone who already got that same message today. OutReach skips anyone who got that same message in the last 30 days. Change them in 📁 Edit folders. Automatic notifications and texts that failed don't count.
 - **Skipped every time:** anyone who replied STOP or is blocked in ServiceTitan, anyone with an unread reply (listed so you can read it; their conversation isn't opened, so it stays unread), numbers on your 🚫 never-text list, and a number shared with another customer in the same run (texted once).
 - **Type only:** it opens each conversation and types the message. You press Send and it moves on by itself. **Auto-send:** you confirm by typing how many texts it will send, and it checks each text went out. A few seconds after each text it also checks ServiceTitan really delivered it, and lists any that failed. It stops if a text can't be confirmed or 3 fail in a row.
-- **✏️ Edit messages**, **📁 Edit folders** and **⚙️ Settings** are saved in your own browser. About 3 seconds per text (the next customer is checked while the current text goes out); keep the tab on screen while it runs.
+- **✏️ Edit messages**, **📁 Edit folders** and **⚙️ Settings** are saved in your own browser. About 3 to 4 seconds per text (the next customer is checked while the current text goes out); keep the tab on screen while it runs.
 
 **🔀 Move Jobs**
 Move jobs between techs without dragging, from the Dispatch board. It works on the day the board shows. Pick what to do:

@@ -3205,7 +3205,7 @@
         confAsk.textContent = 'Type only: it opens each conversation and types the message. You press Send, and it moves to the next one.';
         confGo.textContent = 'Start';
       }
-      confAsk.appendChild(el('div', 'color:#666;margin-top:4px', 'Keep this tab on screen while it runs (browsers slow down hidden tabs). About 3 seconds per text.'));
+      confAsk.appendChild(el('div', 'color:#666;margin-top:4px', 'Keep this tab on screen while it runs (browsers slow down hidden tabs). About 3 to 4 seconds per text.'));
     };
     confInput.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); go(); } };
 
@@ -3381,17 +3381,26 @@
     });
     // One number, checked from the chat data: { ok } or { skip: reason, kind }.
     // alive(): optional; once false, the answer isn't wanted any more, so it stops asking.
+    // What the conversation looks like right now (its last message, read and blocked status), so a
+    // later quick read can tell whether anything has changed since. null if it can't be told.
+    const threadSig = t => {
+      if (!t) return 'none';
+      const m = Array.isArray(t.Messages) && t.Messages.length ? t.Messages[t.Messages.length - 1] : null;
+      if (!m || (m.SmsId == null && !m.CreatedOn)) return null;
+      return [t.ThreadId, t.ReadStatus, t.BlockedStatus, m.SmsId, m.CreatedOn, m.SmsDeliveryStatus].join('|');
+    };
     const checkNumber = async (num, f, text, alive) => {
       const c = codes();
       const t = await st.chatThread(num);
-      if (!t || (alive && !alive())) return { ok: true };   // never texted before (or no longer wanted)
-      if (t.BlockedStatus === c.blocked) return { skip: 'blocked in ServiceTitan (opted out)', kind: 'skipped' };
-      if (t.ReadStatus === c.unread) return { skip: 'they have an unread reply. Read it first', kind: 'look' };
+      const sig = threadSig(t);
+      if (!t || (alive && !alive())) return { ok: true, sig };   // never texted before (or no longer wanted)
+      if (t.BlockedStatus === c.blocked) return { skip: 'blocked in ServiceTitan (opted out)', kind: 'skipped', sig };
+      if (t.ReadStatus === c.unread) return { skip: 'they have an unread reply. Read it first', kind: 'look', sig };
       const hist = asPageMsgs(await st.chatMessages(t.ThreadId, 100), c);
-      if (optedOut(hist)) return { skip: 'they replied STOP', kind: 'skipped' };
+      if (optedOut(hist)) return { skip: 'they replied STOP', kind: 'skipped', sig };
       const recent = recentText(hist, f, text);
-      if (recent) return { skip: (f.same ? 'got this message ' : 'texted ') + ago(recent), kind: 'skipped' };
-      return { ok: true };
+      if (recent) return { skip: (f.same ? 'got this message ' : 'texted ') + ago(recent), kind: 'skipped', sig };
+      return { ok: true, sig };
     };
     // Everyone in the list, checked a few at a time: who gets a text and who's skipped (and why).
     // stop(): true once the check is cancelled. Returns { sends, skips }, or { stopped } or { signedOut }.
@@ -3399,7 +3408,7 @@
       // If the chat data keeps failing, stop asking for it: those numbers get checked on their
       // conversation's page during the run instead (as when it can't be read at all).
       let chatTrouble = 0;
-      const results = await st.pool(list, 6, async (r, i, alive) => {
+      const results = await st.pool(list, 4, async (r, i, alive) => {
         if (uses(tmpl, 'tech') && !r.tech) return { skips: [{ why: 'no tech on the board for {tech}', kind: 'skipped' }] };
         const info = await billTo(r, alive);
         if (!alive()) return null;
@@ -3508,37 +3517,44 @@
           } catch (e) { /* the result just isn't known; the text did leave the Chat Center */ }
         })());
       };
-      // A quick fresh look (no page) for each text: still a hold? Anything new since the check,
-      // like a reply or a STOP? The next text's look starts while this one is being typed and
-      // sent, so it's ready when its turn comes. A look more than 15 seconds old (Type only,
-      // while you take your time) is done again, and the open conversation is always checked
-      // again right before typing.
+      // A quick fresh look (no page) before each text: still a hold? Anything new since the check,
+      // like a reply or a STOP? Signed out? To save time, the next customer's full look starts
+      // while the current text is being typed and sent. At their turn, one quick read of their
+      // conversation confirms nothing has changed since (and that you're still signed in); if
+      // anything has, the full look is done again. A look more than 15 seconds old (Type only,
+      // while you take your time) is redone, holds always get the full look at their turn, and the
+      // open conversation is still checked right before typing.
       const LOOK_FRESH_MS = 15000;
-      const lookAt = x => {
+      const lookAt = x => { const p = checkNumber(x.num, f, x.text); p.catch(() => {}); return { x, p, at: Date.now() }; };
+      const fullLook = async x => {
         const r = x.r;
-        const p = (async () => {
-          if (r.hold && r.listStatus) { const j = await jobRecord(r.jobId); const why = holdGone(r, j && typeof j.Status === 'string' ? j.Status : ''); if (why) return { skip: why, kind: 'skipped' }; }
-          return x.unchecked ? null : await checkNumber(x.num, f, x.text);
-        })();
-        p.catch(() => {});   // read (and its error handled) when its turn comes
-        return { x, p, at: Date.now() };
+        if (r.hold && r.listStatus) { const j = await jobRecord(r.jobId); const why = holdGone(r, j && typeof j.Status === 'string' ? j.Status : ''); if (why) return { skip: why, kind: 'skipped' }; }
+        return x.unchecked ? null : await checkNumber(x.num, f, x.text);
       };
+      const canLookAhead = x => !!(x && !x.unchecked && !(x.r.hold && x.r.listStatus));
       let ahead = null;
       try {
         for (let n = 0; n < sends.length; n++) {
           if (stopRun) { add('Stopped. ' + s1(sends.length - n, 'text') + ' not sent.'); break; }
           const x = sends[n], r = x.r, num = x.num, text = x.text;
           runMsg.textContent = (auto ? 'Texting ' : 'Typing ') + (n + 1) + ' of ' + sends.length + ': ' + (r.customer || '#' + r.jobId);
-          // If ServiceTitan has signed you out, stop here.
-          let fresh = null;
-          const look = ahead && ahead.x === x && Date.now() - ahead.at <= LOOK_FRESH_MS ? ahead : lookAt(x);
+          const look = ahead && ahead.x === x && Date.now() - ahead.at <= LOOK_FRESH_MS ? ahead : null;
           ahead = null;
-          try { fresh = await look.p; }
-          catch (e) {
+          let fresh = null;
+          try {
+            if (look) {
+              let early = null;
+              try { early = await look.p; } catch (e) { if (st.isSignedOut(e)) throw e; }
+              if (early && early.skip) fresh = early;
+              else if (early && early.sig) fresh = threadSig(await st.chatThread(num)) === early.sig ? early : await checkNumber(num, f, text);
+              else fresh = await checkNumber(num, f, text);
+            } else fresh = await fullLook(x);
+          } catch (e) {
+            // If ServiceTitan has signed you out, stop here.
             if (st.isSignedOut(e)) { signedOut = true; add('⚠️ ' + e.message + ' Stopped. ' + s1(sends.length - n, 'text') + ' not sent.'); break; }
             /* otherwise the page's own checks below still run */
           }
-          if (n + 1 < sends.length && !stopRun) ahead = lookAt(sends[n + 1]);
+          if (n + 1 < sends.length && !stopRun && canLookAhead(sends[n + 1])) ahead = lookAt(sends[n + 1]);
           if (fresh && fresh.skip) { out(r, num, 'skipped: ' + fresh.skip, fresh.kind); continue; }
           const c = await openChat(num, r.jobId);
           if (!c) {

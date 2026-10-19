@@ -50,6 +50,9 @@ def open_board(page, saved=None, added=None):
 def folder_names(page):
     return [f['name'] for f in json.loads(page.evaluate("() => localStorage.getItem('stCtFolders') || '[]'"))]
 
+def msg_calls(page, num):
+    return page.evaluate("n => window.apiLog.filter(u => u.indexOf('/GrowthChatCenter/Messages?threadId=' + Number(n)) === 0).length", num)
+
 def thread_calls(page, num):
     return page.evaluate("n => window.apiLog.filter(u => u.indexOf('/GrowthChatCenter/ChatThread?number=' + n) === 0).length", num)
 
@@ -77,7 +80,9 @@ with sync_playwright() as p:
     added = json.loads(page.evaluate("() => localStorage.getItem('stCtAddedFolders') || '[]'"))
     check('📣 OutReach' in added, 'marked as offered, so deleting it later sticks')
 
-    # Everyone on the board, then a real run with the starter message
+    # Everyone on the board, then a real run with the starter message. Mo Day got a text 40 days
+    # ago (so OutReach's 30-day rule doesn't skip him, but he has a conversation to read).
+    page.evaluate("() => { window.CHATS['6015550022'] = { unread: false, msgs: [{ Body: 'old promo', IsOutbound: true, CreatedOn: new Date(Date.now() - 40 * 86400000).toISOString() }] }; }")
     B(page, 'Everyone on the board').click()
     page.wait_for_function("() => /Added \\d+ job/.test(document.getElementById('st-toolbox').innerText)", timeout=10000)
     page.locator('#st-toolbox label:visible', has_text='Auto-send').locator('input').check()
@@ -89,7 +94,7 @@ with sync_playwright() as p:
     # A STOP that arrives after the next customer's fresh look was taken is still caught, by the
     # open conversation's own check right before typing.
     page.fill('#st-ct-confirm-count', '4')
-    n_before = thread_calls(page, '6015550021')
+    mo_threads, mo_msgs = thread_calls(page, '6015550022'), msg_calls(page, '6015550022')
     B(page, 'Send 4 texts').click()
     page.wait_for_function("() => window.chatOpened.indexOf('6015550020') > -1", timeout=15000)
     page.evaluate("() => { window.CHATS['6015550021'] = { unread: false, msgs: [{ Body: 'STOP', IsInbound: true, CreatedOn: new Date().toISOString() }] }; }")
@@ -98,8 +103,11 @@ with sync_playwright() as p:
     sent = page.evaluate("() => window.SENT.slice()")
     nums = [x[0] for x in sent]
     check(sorted(nums) == sorted(['6015550020', '6015550022', '6015550031']), 'three texted: %s' % nums)
-    check('Lou Ng …0021: skipped: they replied STOP' in lg and '6015550021' not in nums, 'a STOP after the look-ahead is still caught on the open conversation')
-    check(thread_calls(page, '6015550021') - n_before == 1, "Lou's fresh look was taken while the text before was going out (once, not again)")
+    check('Lou Ng …0021: skipped: they replied STOP' in lg and '6015550021' not in nums, 'a STOP that arrives after the look-ahead is still caught at their turn')
+    # Reads of Mo's conversation during the run: the full look ahead (conversation + messages), one
+    # quick read at his turn (conversation only), and the delivery check after his text (both).
+    check(thread_calls(page, '6015550022') - mo_threads == 3 and msg_calls(page, '6015550022') - mo_msgs == 2,
+          "Mo's full look was taken ahead, and at his turn one quick read confirmed nothing changed (%d conversation reads, %d message reads)" % (thread_calls(page, '6015550022') - mo_threads, msg_calls(page, '6015550022') - mo_msgs))
     check(all(x[1].endswith('Reply STOP to opt out.') for x in sent), 'every OutReach text has the opt-out line')
 
     # Second time: everyone got it already (30-day rule)
@@ -139,7 +147,7 @@ with sync_playwright() as p:
     left = json.dumps(json.loads(OLD))
     added = page.evaluate("() => localStorage.getItem('stCtAddedFolders')")
     open_board(page, left, added)
-    check('📣 OutReach' not in folder_names(page) and '📣 OutReach' not in panel_text(page), 'a deleted OutReach stays deleted')
+    check('📣 OutReach' not in folder_names(page) and B(page, '📣 OutReach').count() == 0, 'a deleted OutReach stays deleted')
     page.evaluate("() => window.__stToolbox.close()")
 
     # Someone who already made their own "Outreach" folder doesn't get a second one
