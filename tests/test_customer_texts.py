@@ -175,6 +175,27 @@ with sync_playwright() as p:
     check('Bob Smith …0102  (#5002)' in t, 'picked Hold-list job reaches the confirm list')
     B(page, 'Cancel').click()
     check(B(page, 'Pick on board').count() == 1, 'picking turned off when the run was set up')
+
+    # ＋ Everyone on the board: the timeline plus the whole Unassigned list, one text per customer
+    B(page, 'Clear').click()
+    B(page, 'Everyone on the board').click()
+    page.wait_for_function("() => /Added \\d+ job|Couldn't load everyone/.test(document.getElementById('st-toolbox').innerText)", timeout=10000)
+    t = panel_text(page)
+    print(t)
+    gj = page.evaluate("() => window.lastGetJobs")
+    check(gj['JobType'] == 'Unassigned' and gj['QueryFilter']['BusinessUnitIds'] == [621842244], "loads the Unassigned list for the board's branches")
+    local_day = page.evaluate("() => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T00:00:00'; }")
+    check(gj['Date'] == local_day, 'for the day the board shows: %s' % gj['Date'])
+    check('Added 5 jobs from the board (3 on the timeline, 2 unassigned, 2 canceled left out)' in t, 'everyone added: timeline + unassigned, canceled and other days left out')
+    check("That's 4 customers (one text each)" in t, 'Kim Wu on the timeline and in Unassigned counts once')
+    check('#7101' in t and 'Pia Lane' in t, 'an unassigned job not showing on the board is listed with its customer')
+    check('#6004' not in t and '#6005' not in t and '#7103' not in t, "canceled and yesterday's jobs not added")
+    check(B(page, 'Start (type only): 4 customers').count() == 1, 'start button counts customers')
+    t = review(page, 'Start (type only): 4 customers')
+    will = t.split('Will text')[1].split('Skipping')[0] if 'Skipping' in t else t.split('Will text')[1]
+    check('Pia Lane …0031  (#7101)' in will, 'unassigned customer reaches the confirm list (number from the customer)')
+    check(not any('/Job/Index/?id=7101' in x for x in page.evaluate("() => window.apiLog")), 'no job record needed for jobs it loaded')
+    B(page, 'Cancel').click()
     B(page, 'Clear').click()
     add_jobs(page, '6001')
 

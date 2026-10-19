@@ -42,7 +42,11 @@
     20: { name: 'Kim Wu', c: [['M', '(601) 555-0020']] },
     21: { name: 'Lou Ng', c: [['M', '(601) 555-0021']] },
     22: { name: 'Mo Day', c: [['M', '(601) 555-0022']] },
-    30: { name: 'Nia Ball', c: [['M', '(601) 555-9999']] }
+    30: { name: 'Nia Ball', c: [['M', '(601) 555-9999']] },
+    23: { name: 'Oz Tate', c: [['M', '(601) 555-0023']] },
+    24: { name: 'Pam Ott', c: [['M', '(601) 555-0024']] },
+    31: { name: 'Pia Lane', c: [['M', '(601) 555-0031']] },
+    32: { name: 'Quin Hart', c: [['M', '(601) 555-0032']] }
   };
   // Holds: job -> [customer, type]
   const HOLDS = [
@@ -55,7 +59,12 @@
     [5014, 14, 'Maintenance - Fall - Residential - Under 12 Yrs']
   ];
   // Board timeline jobs: job -> [customer, tech first name]
-  const BOARD = { 6001: [20, 'Paxton'], 6002: [21, 'Paxton'], 6003: [22, ''] };
+  const BOARD = { 6001: [20, 'Paxton'], 6002: [21, 'Paxton'], 6003: [22, ''], 6004: [23, 'Paxton'], 6005: [24, 'Paxton'] };
+  // Extra board data: 6004's appointment is Canceled (status 5); 6005 is yesterday's (a board
+  // that hasn't caught up with the day change).
+  const BOARD_EXTRA = { 6004: { AppointmentStatus: 5 }, 6005: { Start: new Date(today.getTime() - 86400000 + 9 * 3600000).toISOString() } };
+  // The day's Unassigned list: job -> [customer, canceled?]. 7102 is Kim Wu again (also on the timeline).
+  const UNASSIGNED = [[7101, 31], [7102, 20], [7103, 32, true]];
   const JOBCUST = {}; HOLDS.forEach(h => { JOBCUST[h[0]] = h[1]; }); Object.keys(BOARD).forEach(j => { JOBCUST[j] = BOARD[j][0]; }); JOBCUST[7001] = 30;
   // Chat history per number (last 10 digits)
   const RUNNING_LATE = 'Hey, this is Andrew with Air South Cooling and Heating. I am reaching out about your appointment. I wanted to update as I know your time is valuable. My expert has ran into a few delays, but is still scheduled to come out to see you. He will send you a text 30 minutes before his arrival. If you have any questions or concerns, please give me a call back at 601-847-9941. Thank you for being the best part of AirSouth!';
@@ -118,6 +127,10 @@
     if (u.indexOf('/Dispatch/GetJobs') === 0) {
       const b = JSON.parse(opts.body);
       window.lastGetJobs = b;
+      if (b.JobType === 'Unassigned') {
+        const rows = UNASSIGNED.map(x => ({ JobId: x[0], Customer: C[x[1]].name + ' ', CustomerId: x[1], Type: 'Service - HVAC', JobStatus: x[2] ? 'Canceled' : 'Scheduled', AppointmentStatus: x[2] ? 5 : 0 }));
+        return json({ Jobs: rows.slice(b.QueryFilter.Skip, b.QueryFilter.Skip + b.QueryFilter.Take), Count: rows.length });
+      }
       if (b.JobType !== 'Hold') return json({ Jobs: [], Count: 0 });
       const rows = HOLDS.map(h => ({ JobId: h[0], Customer: C[h[1]].name + ' ', CustomerId: h[1], Type: h[2], CustomerPhone: C[h[1]].c[0][1], JobStatus: LIST_STATUS[h[0]] || 'Hold', AppointmentStatus: 'Hold' }));
       return json({ Jobs: rows.slice(b.QueryFilter.Skip, b.QueryFilter.Skip + b.QueryFilter.Take), Count: rows.length });
@@ -163,7 +176,7 @@
         JobList: { AllVisibleJobs: ko.observable([5002, 5006].map(j => ({ JobId: j, Customer: C[JOBCUST[j]].name + ' ', CustomerId: JOBCUST[j] }))) },
         Date: ko.observable(today),
         BusinessUnitFilter: { getIds: () => [621842244] },
-        Assignments: ko.observable(Object.keys(BOARD).map(j => ({ JobId: Number(j), Customer: C[BOARD[j][0]].name, CustomerId: BOARD[j][0], FirstName: BOARD[j][1] || null, TechnicianName: BOARD[j][1] ? BOARD[j][1] + ' T' : null })))
+        Assignments: ko.observable(Object.keys(BOARD).map(j => Object.assign({ JobId: Number(j), Customer: C[BOARD[j][0]].name, CustomerId: BOARD[j][0], FirstName: BOARD[j][1] || null, TechnicianName: BOARD[j][1] ? BOARD[j][1] + ' T' : null }, BOARD_EXTRA[j] || {})))
       };
       root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => window.opened.push(a.getAttribute('data-job-id'))));
     } else if ((m = /^#\/ChatCenter\/(\d+)/.exec(h))) {

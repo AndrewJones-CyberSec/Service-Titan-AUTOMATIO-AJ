@@ -19,8 +19,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.6';
+  const VERSION = '1.6.1';
   const WHATS_NEW = {
+    '1.6.1': 'New in 📱 Customer Texts: ＋ Everyone on the board (under Jobs I pick) adds every job on the board for the day it shows, the timeline plus the whole Unassigned list, one text per customer. Canceled appointments are left out, and you can take anyone off with ✕ before you start.',
     '1.6': 'New: 🔀 Move Jobs. Move jobs to a tech, add or unassign a tech, or swap two jobs or two techs\' whole day, without dragging. ＋ All Unassigned puts every unassigned job on one tech in one go. Review first: it warns about skills, double-booking and jobs from another branch. ↩ Put back undoes it, even after closing the Toolbox (kept for a day), and the board refreshes itself after a move. Swaps are both jobs or neither and check time off and other jobs too.',
     '1.5.4': 'New: 🔕 Job Notifications can turn notifications back ON (Turn on notifications…), not just off. Fix: 📱 Customer Texts works again for logins that can\'t open job records (it wrongly stopped as if you weren\'t signed in). It now reads phone numbers from the customer instead.',
     '1.5.3': 'Fix: 📝 Notes no longer opens a "This Page Could Not Be Found" page. When you click a job, ServiceTitan shows a blank customer link for about a second while the job loads; Notes now waits for the real customer instead of following the blank one.',
@@ -2735,8 +2736,64 @@
     };
 
     // ---------- Jobs picked on the board ----------
-    // Customer and tech: from the timeline if the job is on it, else from the job list at the bottom.
-    const jobInfo = j => timelineJob(j) || listJob(j);
+    // Customer and tech: from the timeline if the job is on it, else from the job list at the bottom,
+    // else from what ＋ Everyone on the board loaded (it also loads Unassigned jobs that aren't showing).
+    const boardInfo = new Map();   // job -> { jobId, customer, customerId, tech }
+    const jobInfo = j => timelineJob(j) || listJob(j) || boardInfo.get(String(j)) || null;
+
+    // ---------- ＋ Everyone on the board ----------
+    // Every job on the day the board shows: the timeline (with your board's filters) plus the whole
+    // Unassigned list (all pages, for your board's branches). Holds aren't included: they have
+    // their own choice under Who. Canceled appointments are left out.
+    let everyoneLoading = false;
+    const pad2 = n => String(n).padStart(2, '0');
+    const localDayISO = d => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + 'T00:00:00';
+    const boardDay = () => { try { const d = un(boardVM().Date); return d instanceof Date && !isNaN(d) ? d : null; } catch (e) { return null; } };
+    const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    // Appointment status 5 is Canceled (checked on the live account, Oct 2026). Words are checked
+    // too, in case it comes as text.
+    const canceled = x => {
+      const a = un(x.AppointmentStatus);
+      if (a === 5) return true;
+      return [a, un(x.Status), un(x.JobStatus)].some(s => typeof s === 'string' && /^cancell?ed$/i.test(norm(s)));
+    };
+    const loadEveryone = async () => {
+      const vm = boardVM(), day = boardDay();
+      if (!vm || !day) throw new Error('open the Dispatch board first');
+      const jobs = [], seen = new Set();
+      let onTimeline = 0, unassignedN = 0, canceledN = 0;
+      (un(vm.Assignments) || []).forEach(a => {
+        try {
+          const j = String(un(a.JobId));
+          if (!/^\d+$/.test(j) || seen.has(j)) return;   // a two-tech job is on the board twice
+          const start = un(a.Start), sd = start ? new Date(start) : null;
+          if (sd && !isNaN(sd) && !sameDay(sd, day)) return;
+          if (canceled(a)) { canceledN++; seen.add(j); return; }
+          seen.add(j); onTimeline++;
+          jobs.push({ jobId: j, customer: norm(un(a.Customer)), customerId: un(a.CustomerId) || null, tech: titleCase(firstWord(un(a.FirstName) || un(a.TechnicianName))) });
+        } catch (e) {}
+      });
+      const PAGE = 500;
+      const page = skip => st.getJSON('/Dispatch/GetJobs', 30000, { JobType: 'Unassigned', Date: localDayISO(day), QueryFilter: { Skip: skip, Take: PAGE, Start: {}, Created: {}, BusinessUnitIds: boardBUs() } });
+      const first = await page(0);
+      if (!first || !Array.isArray(first.Jobs)) {
+        health.flag(TOOL, 'the Unassigned list came back in a shape the Toolbox doesn\'t know', '/Dispatch/GetJobs');
+        throw new Error('the Unassigned list came back in a shape the Toolbox doesn\'t know');
+      }
+      let rows = first.Jobs.slice();
+      const total = Number(first.Count) || rows.length;
+      for (let skip = PAGE; skip < Math.min(total, 5000); skip += PAGE) { const d = await page(skip); if (d && Array.isArray(d.Jobs)) rows = rows.concat(d.Jobs); }
+      rows.forEach(x => {
+        const j = String(x && x.JobId);
+        if (!/^\d+$/.test(j) || seen.has(j)) return;
+        seen.add(j);
+        if (canceled(x)) { canceledN++; return; }
+        unassignedN++;
+        jobs.push({ jobId: j, customer: norm(x.Customer), customerId: x.CustomerId || null, tech: '' });
+      });
+      health.clear(TOOL);
+      return { jobs, onTimeline, unassigned: unassignedN, canceled: canceledN };
+    };
 
     // ---------- UI ----------
     const pane = el('div', 'padding:8px 10px 10px');
@@ -2866,9 +2923,31 @@
       finally { holdsLoading = false; renderMain(); }
     };
 
+    const everyoneBtn = smallBtn('＋ Everyone on the board', () => addEveryone());
+    everyoneBtn.title = 'Adds every job on the board for the day it shows: the timeline and the whole Unassigned list (all pages, your board\'s branches). Holds aren\'t included. Take anyone off with ✕.';
+    const everyoneRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap;margin-top:5px');
+    everyoneRow.appendChild(everyoneBtn);
     const renderPicked = () => {
       whoBox.textContent = '';
-      whoBox.appendChild(picker.box);
+      everyoneBtn.textContent = everyoneLoading ? 'Loading everyone…' : '＋ Everyone on the board';
+      everyoneBtn.disabled = everyoneLoading;
+      everyoneBtn.style.opacity = everyoneLoading ? '.5' : '1';
+      whoBox.append(picker.box, everyoneRow);
+    };
+    const addEveryone = async () => {
+      if (everyoneLoading || running) return;
+      if (!onBoard()) { say('Open the Dispatch board first.'); return; }
+      everyoneLoading = true; renderMain();
+      say('Loading everyone on the board…');
+      try {
+        const r = await loadEveryone();
+        const labels = {};
+        r.jobs.forEach(x => { boardInfo.set(x.jobId, x); labels[x.jobId] = x.customer; });
+        const n = picker.addMany(r.jobs.map(x => x.jobId), labels);
+        say('Added ' + s1(n, 'job') + ' from the board (' + r.onTimeline + ' on the timeline, ' + r.unassigned + ' unassigned' +
+          (r.canceled ? ', ' + r.canceled + ' canceled left out' : '') + '). That\'s ' + s1(recipients().length, 'customer') + ' (one text each). Take anyone off with ✕.');
+      } catch (e) { say('⚠️ Couldn\'t load everyone on the board: ' + errText(e)); }
+      finally { everyoneLoading = false; renderMain(); }
     };
 
     const renderMain = () => {

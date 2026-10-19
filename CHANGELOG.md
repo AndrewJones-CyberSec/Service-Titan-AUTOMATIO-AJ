@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.6.1
+
+- **New in 📱 Customer Texts: ＋ Everyone on the board.** Under **Who → 🖱️ Jobs I pick**, it adds every job on the board for the day it shows:
+  - every job on the timeline (with your board's filters), and the whole Unassigned list for that day (all pages, for your board's branches), even jobs not showing at the bottom of the board;
+  - one text per customer, as always (a customer on the timeline and in Unassigned counts once);
+  - canceled appointments are left out, and so is anything from another day;
+  - holds aren't included (the Hold list has its own choice under Who);
+  - the picked list shows everyone, so you can take anyone off with ✕ before pressing Start. All the usual checks still run before anything is typed.
+- Added tests for it (`tests/test_customer_texts.py`, `tests/board_texts.html`).
+
 ## 1.6
 
 - **New: 🔀 Move Jobs.** Move jobs between techs without dragging on the board:
