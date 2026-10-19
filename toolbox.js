@@ -21,7 +21,7 @@
 (() => {
   const VERSION = '1.6.1';
   const WHATS_NEW = {
-    '1.6.1': 'New in 📱 Customer Texts: ＋ Everyone on the board (under Jobs I pick) adds every job on the board for the day it shows, the timeline plus the whole Unassigned list, one text per customer. Canceled appointments are left out, and you can take anyone off with ✕ before you start.',
+    '1.6.1': 'New in 📱 Customer Texts: ＋ Everyone on the board (under Jobs I pick) adds every job on the board for the day it shows, the timeline plus the whole Unassigned list, one text per customer. New 📣 OutReach folder with a heater reminder (skips anyone who got it in the last 30 days). Big runs are faster: the next customer is checked while the current text goes out.',
     '1.6': 'New: 🔀 Move Jobs. Move jobs to a tech, add or unassign a tech, or swap two jobs or two techs\' whole day, without dragging. ＋ All Unassigned puts every unassigned job on one tech in one go. Review first: it warns about skills, double-booking and jobs from another branch. ↩ Put back undoes it, even after closing the Toolbox (kept for a day), and the board refreshes itself after a move. Swaps are both jobs or neither and check time off and other jobs too.',
     '1.5.4': 'New: 🔕 Job Notifications can turn notifications back ON (Turn on notifications…), not just off. Fix: 📱 Customer Texts works again for logins that can\'t open job records (it wrongly stopped as if you weren\'t signed in). It now reads phone numbers from the customer instead.',
     '1.5.3': 'Fix: 📝 Notes no longer opens a "This Page Could Not Be Found" page. When you click a job, ServiceTitan shows a blank customer link for about a second while the job loads; Notes now waits for the real customer instead of following the blank one.',
@@ -2621,7 +2621,7 @@
   const texts = (() => {
     const TOOL = 'Customer Texts';
     const BOX = 'textarea.cht-response-input';
-    const K = { folders: 'stCtFolders', folder: 'stCtFolder', pick: 'stCtPick', mode: 'stCtMode', name: 'stCtName', all: 'stCtAllMobiles', never: 'stCtNever', types: 'stCtTypes', source: 'stCtSource' };
+    const K = { folders: 'stCtFolders', folder: 'stCtFolder', pick: 'stCtPick', mode: 'stCtMode', name: 'stCtName', all: 'stCtAllMobiles', never: 'stCtNever', types: 'stCtTypes', source: 'stCtSource', added: 'stCtAddedFolders' };
     const loadJSON = (k, d) => { try { const v = JSON.parse(get(k)); return v == null ? d : v; } catch (e) { return d; } };
     const showNum = d => d ? '…' + String(d).slice(-4) : '?';
     const s1 = plural;
@@ -2643,6 +2643,12 @@
       ] },
       { name: '📅 Reschedule', days: 1, same: true, msgs: [
         ['📅 Need to reschedule', 'Hey, this is {dispatcher} with AirSouth Cooling, Heating, Plumbing and Electrical. We need to reschedule your appointment. Please give us a call at 601-847-9941 so we can find a time that works for you. Thank you!']
+      ] },
+      // Reminders to customers on the board (＋ Everyone on the board). The starter message is a
+      // plain reminder: no phone number, offer or "call us", which is what makes a reminder read
+      // as a sales text.
+      { name: '📣 OutReach', days: 30, same: true, msgs: [
+        ['🔥 Heater reminder', 'Hey, this is {dispatcher} with AirSouth Cooling, Heating, Plumbing and Electrical. Cooler weather is on the way, so here is a friendly reminder to switch your thermostat to heat and let it run for a few minutes before the first cold night. Reply STOP to opt out.']
       ] }
     ];
     const cloneDefaults = () => DEFAULT_FOLDERS.map(f => ({ name: f.name, days: f.days, same: f.same, msgs: f.msgs.map(m => m.slice()) }));
@@ -2651,6 +2657,26 @@
     const tidy = f => { f.days = Math.max(0, Math.min(365, parseInt(f.days, 10) || 0)); f.same = !!f.same; return f; };
     let folders = (() => { const v = loadJSON(K.folders, null); return validFolders(v) ? v : cloneDefaults(); })().map(tidy);
     const saveFolders = () => set(K.folders, JSON.stringify(folders));
+    // Folders added to the defaults in an update. Someone who already saved their own folders gets
+    // each one once, at the end of their list (unless they already have one by that name), and
+    // never again after deleting it. Someone still on the defaults already has them.
+    const ADDED_LATER = ['📣 OutReach'];
+    const folderKey = n => norm(n).replace(/[^a-z0-9]/gi, '').toLowerCase();
+    (() => {
+      let seen = loadJSON(K.added, []);
+      if (!Array.isArray(seen)) seen = [];
+      const usingDefaults = !validFolders(loadJSON(K.folders, null));
+      let changed = false;
+      ADDED_LATER.forEach(name => {
+        if (seen.indexOf(name) > -1) return;
+        seen.push(name);
+        if (usingDefaults || folders.some(f => folderKey(f.name) === folderKey(name))) return;
+        const d = DEFAULT_FOLDERS.find(f => f.name === name);
+        if (d) { folders.push(tidy({ name: d.name, days: d.days, same: d.same, msgs: d.msgs.map(m => m.slice()) })); changed = true; }
+      });
+      set(K.added, JSON.stringify(seen));
+      if (changed) saveFolders();
+    })();
     let fIdx = Math.max(0, Math.min(parseInt(get(K.folder) || '0', 10) || 0, folders.length - 1));
     let picks = loadJSON(K.pick, {});
     if (!picks || typeof picks !== 'object' || Array.isArray(picks)) picks = {};
@@ -3179,7 +3205,7 @@
         confAsk.textContent = 'Type only: it opens each conversation and types the message. You press Send, and it moves to the next one.';
         confGo.textContent = 'Start';
       }
-      confAsk.appendChild(el('div', 'color:#666;margin-top:4px', 'Keep this tab on screen while it runs (browsers slow down hidden tabs). About 4 seconds per text.'));
+      confAsk.appendChild(el('div', 'color:#666;margin-top:4px', 'Keep this tab on screen while it runs (browsers slow down hidden tabs). About 3 seconds per text.'));
     };
     confInput.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); go(); } };
 
@@ -3277,7 +3303,7 @@
       const want = '#/ChatCenter/' + num;
       if (location.hash.split('?')[0] === want) { location.hash = '#/DispatchBoard'; await wait(800); }
       location.hash = want + (jobId ? '?jobid=' + jobId : '');
-      const c = await until(() => chatFor(num), 15000, 250);
+      const c = await until(() => chatFor(num), 15000, 100);
       if (!c) return null;
       await wait(400);   // let the message history settle
       return chatFor(num);
@@ -3373,7 +3399,7 @@
       // If the chat data keeps failing, stop asking for it: those numbers get checked on their
       // conversation's page during the run instead (as when it can't be read at all).
       let chatTrouble = 0;
-      const results = await st.pool(list, 4, async (r, i, alive) => {
+      const results = await st.pool(list, 6, async (r, i, alive) => {
         if (uses(tmpl, 'tech') && !r.tech) return { skips: [{ why: 'no tech on the board for {tech}', kind: 'skipped' }] };
         const info = await billTo(r, alive);
         if (!alive()) return null;
@@ -3482,21 +3508,37 @@
           } catch (e) { /* the result just isn't known; the text did leave the Chat Center */ }
         })());
       };
+      // A quick fresh look (no page) for each text: still a hold? Anything new since the check,
+      // like a reply or a STOP? The next text's look starts while this one is being typed and
+      // sent, so it's ready when its turn comes. A look more than 15 seconds old (Type only,
+      // while you take your time) is done again, and the open conversation is always checked
+      // again right before typing.
+      const LOOK_FRESH_MS = 15000;
+      const lookAt = x => {
+        const r = x.r;
+        const p = (async () => {
+          if (r.hold && r.listStatus) { const j = await jobRecord(r.jobId); const why = holdGone(r, j && typeof j.Status === 'string' ? j.Status : ''); if (why) return { skip: why, kind: 'skipped' }; }
+          return x.unchecked ? null : await checkNumber(x.num, f, x.text);
+        })();
+        p.catch(() => {});   // read (and its error handled) when its turn comes
+        return { x, p, at: Date.now() };
+      };
+      let ahead = null;
       try {
         for (let n = 0; n < sends.length; n++) {
           if (stopRun) { add('Stopped. ' + s1(sends.length - n, 'text') + ' not sent.'); break; }
           const x = sends[n], r = x.r, num = x.num, text = x.text;
           runMsg.textContent = (auto ? 'Texting ' : 'Typing ') + (n + 1) + ' of ' + sends.length + ': ' + (r.customer || '#' + r.jobId);
-          // A quick fresh look (no page): still a hold? Anything new since the check, like a
-          // reply or a STOP? If ServiceTitan has signed you out, stop here.
+          // If ServiceTitan has signed you out, stop here.
           let fresh = null;
-          try {
-            if (r.hold && r.listStatus) { const j = await jobRecord(r.jobId); const why = holdGone(r, j && typeof j.Status === 'string' ? j.Status : ''); if (why) fresh = { skip: why, kind: 'skipped' }; }
-            if (!fresh && !x.unchecked) fresh = await checkNumber(num, f, text);
-          } catch (e) {
+          const look = ahead && ahead.x === x && Date.now() - ahead.at <= LOOK_FRESH_MS ? ahead : lookAt(x);
+          ahead = null;
+          try { fresh = await look.p; }
+          catch (e) {
             if (st.isSignedOut(e)) { signedOut = true; add('⚠️ ' + e.message + ' Stopped. ' + s1(sends.length - n, 'text') + ' not sent.'); break; }
             /* otherwise the page's own checks below still run */
           }
+          if (n + 1 < sends.length && !stopRun) ahead = lookAt(sends[n + 1]);
           if (fresh && fresh.skip) { out(r, num, 'skipped: ' + fresh.skip, fresh.kind); continue; }
           const c = await openChat(num, r.jobId);
           if (!c) {
@@ -3529,7 +3571,7 @@
             // Wait for the person to press Send (noticed automatically), or Next / Skip / Stop.
             let watch = true;
             const watcher = (async () => {
-              while (watch) { if (wentOut(num, text, before)) return 'sent'; await wait(300); }
+              while (watch) { if (wentOut(num, text, before)) return 'sent'; await wait(150); }
               return null;
             })();
             const ans = await Promise.race([
@@ -3561,7 +3603,7 @@
           }
           const sentAt = Date.now();
           send.click();
-          const sent = await until(() => wentOut(num, text, before), 15000, 300);
+          const sent = await until(() => wentOut(num, text, before), 15000, 150);
           if (!sent) {
             out(r, num, 'NOT CONFIRMED: it may not have sent. Stopping to be safe.', 'problem');
             stopRun = true; break;

@@ -59,7 +59,7 @@ with sync_playwright() as p:
     check(B(page, 'Customer Texts').count() == 1, 'menu has Customer Texts')
     B(page, 'Customer Texts').click()
     t = panel_text(page)
-    check('⏸️ Holds' in t and '🚚 Tech Updates' in t and '📅 Reschedule' in t, 'three folders')
+    check('⏸️ Holds' in t and '🚚 Tech Updates' in t and '📅 Reschedule' in t and '📣 OutReach' in t, 'four folders (with OutReach)')
     check('Texts are signed as Andrew.' in t, '{dispatcher} found from the login (Andrew)')
     check('Skips anyone who got any text from us in the last 7 days.' in t, 'Holds folder rule shown')
 
