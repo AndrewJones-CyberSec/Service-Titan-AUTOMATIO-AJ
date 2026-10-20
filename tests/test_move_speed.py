@@ -112,14 +112,15 @@ with sync_playwright() as p:
     check(ev(page, "() => window.maxInflight") == 3, 'three jobs at once (most changes on their way together: %d)' % ev(page, "() => window.maxInflight"))
     check(all(x['inflight'] <= 3 for x in e if x['edge'] == 'start' and x['kind'] in ('assign', 'unassign')), 'never more than three')
     # Each job: the add is answered, and a reading confirms it, before the old tech is taken off.
+    # (By the order the events happened in: two can share a millisecond.)
     ok = True
     for k in jobs:
         a = int(k)
-        mine = [x for x in e if x['appt'] == a]
-        a_end = [x['at'] for x in mine if x['kind'] == 'assign' and x['edge'] == 'end']
-        u_start = [x['at'] for x in mine if x['kind'] == 'unassign' and x['edge'] == 'start']
-        reads_between = [x for x in mine if x['kind'] == 'read' and x['edge'] == 'end' and a_end and u_start and a_end[0] < x['at'] < u_start[0]]
-        if not (len(a_end) == 1 and len(u_start) == 1 and a_end[0] < u_start[0] and reads_between): ok = False; print('order problem', k, mine)
+        mine = [(i, x) for i, x in enumerate(e) if x['appt'] == a]
+        a_end = [i for i, x in mine if x['kind'] == 'assign' and x['edge'] == 'end']
+        u_start = [i for i, x in mine if x['kind'] == 'unassign' and x['edge'] == 'start']
+        reads_between = [i for i, x in mine if x['kind'] == 'read' and x['edge'] == 'end' and a_end and u_start and a_end[0] < i < u_start[0]]
+        if not (len(a_end) == 1 and len(u_start) == 1 and a_end[0] < u_start[0] and reads_between): ok = False; print('order problem', k, [x for _, x in mine])
     check(ok, 'each job: add answered and confirmed before the old tech comes off')
     calls = ev(page, "() => window.calls.slice()")
     check(sorted(c[1] for c in calls if c[0] == 'assign') == sorted(int(k) for k in jobs) and all(c[2] == [104] for c in calls if c[0] == 'assign'), 'one add per job')
