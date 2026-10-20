@@ -133,6 +133,17 @@ with sync_playwright() as p:
     check(ev(page, "() => window.maxInflight") <= 3, 'put back: never more than three at once')
     drop_jobs(page, jobs)
 
+    # ================= The run ends as soon as the board shows the change =================
+    jobs = {'9650': [7650, 1, 9, [101]]}
+    add_jobs(page, jobs)
+    clear_jobs(page); type_jobs(page, '7650')
+    review(page)
+    t0 = time.time(); check(go(page), 'one-job run finishes'); secs = time.time() - t0
+    lg = log(page)
+    check(techs(page, 9650) == [104] and 'Refreshed' not in lg and "hasn't caught up" not in lg, 'the board showed it by itself')
+    check(secs < 2, 'no fixed 2.5 s wait at the end: %.1fs for one job' % secs)
+    drop_jobs(page, jobs)
+
     # ================= Two visits of one job are never worked on at the same time =================
     jobs = {'9701': [7700, 1, 8, [101]], '9702': [7700, 2, 13, [101]], '9703': [7701, 1, 9, [101]], '9704': [7702, 1, 10, [101]]}
     add_jobs(page, jobs)

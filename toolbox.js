@@ -21,7 +21,7 @@
 (() => {
   const VERSION = '1.6.2';
   const WHATS_NEW = {
-    '1.6.2': 'Faster 🔀 Move Jobs: it now works on up to three jobs at once, so moving jobs from one tech to another takes less than half as long (Unassigned moves, whole-day swaps and Put back are faster too). Each job is still done the same careful way: checked again right before, the new tech added first and confirmed, then the old one taken off and confirmed. Stop lets the jobs already started finish.',
+    '1.6.2': 'Faster 🔀 Move Jobs: it now works on up to three jobs at once, so moving jobs from one tech to another takes about a third of the time (Unassigned moves, whole-day swaps and Put back are faster too). A run also ends as soon as the board shows the changes, instead of always waiting 2.5 seconds. Each job is still done the same careful way: checked again right before, the new tech added first and confirmed, then the old one taken off and confirmed. Stop lets the jobs already started finish.',
     '1.6.1': 'New in 📱 Customer Texts: ＋ Everyone on the board (under Jobs I pick) adds every job on the board for the day it shows, the timeline plus the whole Unassigned list, one text per customer. New 📣 OutReach folder with a heater reminder (skips anyone who got it in the last 30 days). Big runs are faster: the next customer is checked while the current text goes out.',
     '1.6': 'New: 🔀 Move Jobs. Move jobs to a tech, add or unassign a tech, or swap two jobs or two techs\' whole day, without dragging. ＋ All Unassigned puts every unassigned job on one tech in one go. Review first: it warns about skills, double-booking and jobs from another branch. ↩ Put back undoes it, even after closing the Toolbox (kept for a day), and the board refreshes itself after a move. Swaps are both jobs or neither and check time off and other jobs too.',
     '1.5.4': 'New: 🔕 Job Notifications can turn notifications back ON (Turn on notifications…), not just off. Fix: 📱 Customer Texts works again for logins that can\'t open job records (it wrongly stopped as if you weren\'t signed in). It now reads phone numbers from the customer instead.',
@@ -4589,9 +4589,12 @@
         if (unsure.length) add('⚠️ Couldn\'t confirm what ServiceTitan did on ' + unsure.map(z => '#' + z.jobId).join(', ') + '. Check ' + (unsure.length === 1 ? 'it' : 'them') + ' on the board.');
         if (undo.length && m !== 'putback') add('↩ Put back can undo ' + plural(undo.length, 'job') + '.');
         if (lastRun.length) {
-          // The board usually updates by itself. If it hasn't caught up, reload the board's data
-          // (the board's own refresh: same day and filters, no page reload), then check again.
-          await wait(2500);
+          // The board usually updates by itself, often within a second: it's checked every 0.2
+          // seconds, and the run ends as soon as it shows every change. If it hasn't caught up
+          // after 2.5 seconds, reload the board's data (the board's own refresh: same day and
+          // filters, no page reload), then check again.
+          say('Waiting for the board to show the changes...');
+          await until(() => !boardBehind(lastRun).length, 2500, 200);
           let behind = boardBehind(lastRun);
           if (behind.length && onBoard()) {
             say('Refreshing the board...');
