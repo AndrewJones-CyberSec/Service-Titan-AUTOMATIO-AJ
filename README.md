@@ -80,7 +80,7 @@ Pick jobs with **🖱️ Pick on board**, **+ All in the list**, typed job numbe
 - If the board doesn't show a move after a couple of seconds, Move Jobs refreshes the board for you (same day and filters).
 - **🔕 Notifications for these jobs…** opens Job Notifications with the moved jobs already picked, to turn their notifications off. That part needs permission to open job records.
 
-It sends the same requests the job panel's ⋮ → Assign/Unassign sends, one job at a time: about a second or two per job, where clicking through the panel takes several. Up to 300 jobs per run.
+It sends the same requests the job panel's ⋮ → Assign/Unassign sends. Up to three jobs are worked on at once (each one step by step: checked, new tech added and confirmed, old tech taken off and confirmed), so a run takes a fraction of a second to a couple of seconds per job, where clicking through the panel takes several. Two visits of the same job, and a two-job swap, go one after the other. Up to 300 jobs per run.
 
 **🩺 Health check**
 If ServiceTitan changes something a tool relies on, a yellow bar at the top of the Toolbox says which tool is affected and what's missing, instead of the tool failing quietly. Use **Copy report** to pass the details along, or **🩺 Check** in the menu to check any time.

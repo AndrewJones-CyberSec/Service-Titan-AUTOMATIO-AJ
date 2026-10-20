@@ -369,20 +369,26 @@ with sync_playwright() as p:
     check(B(page, 'Put back (').count() == 0, 'a Put back over a day old is not offered')
     reset(page, 9001, [101]); ev(page, "() => { render(); localStorage.removeItem('stMoveUndo'); }")
 
-    # ---- Stop mid-run ----
-    for a in (9101, 9102, 9103): reset(page, a, [])
-    clear_jobs(page); pick_to(page, 101)
-    B(page, 'All Unassigned').click()
-    page.wait_for_function("() => /Added \\d+ job/.test(document.getElementById('st-toolbox').innerText)", timeout=10000)
+    # ---- Stop mid-run (up to three jobs at once: the ones started finish, no new one starts) ----
+    # Nine extra jobs on Jack for this test, moved to Dana.
+    extra = list(range(9401, 9410))
+    page.evaluate("(ids) => { ids.forEach((k, i) => { APPTS[k] = { job: 7400 + i, n: 1, cust: 'Stop ' + i, s: at(8 + i), e: at(9 + i), techs: [101], bu: 1, total: 0, status: 'Scheduled', skills: [] }; }); render(); window.calls = []; }", extra)
+    clear_jobs(page); type_jobs(page, ' '.join(str(7400 + i) for i in range(9)))
+    pick_to(page, 104); pick_from(page, None)
     review(page)
     ev(page, "() => { window.API_DELAY = 400; }")
     page.click('#st-move-go')
-    time.sleep(1.2)
+    time.sleep(1.5)
     B(page, 'Stop').click()
+    check('Stopping after the jobs in progress' in T(page), 'stop says the jobs already started finish first')
     check(wait_done(page, 30), 'stopped run ends')
-    done = sum(1 for a in (9101, 9102, 9103) if techs(page, a) == [101])
-    check(1 <= done < 3 and 'Stopped.' in log(page), 'stop leaves the rest (%d of 3 done)' % done)
-    ev(page, "() => { window.API_DELAY = 30; }")
+    n_calls = len(calls(page)); time.sleep(1.5)
+    check(len(calls(page)) == n_calls, 'nothing is still being sent after the run ends')
+    moved = [a for a in extra if techs(page, a) == [104]]
+    check(1 <= len(moved) < 9 and 'Stopped.' in log(page), 'stop leaves the rest (%d of 9 done)' % len(moved))
+    check(all(techs(page, a) in ([101], [104]) for a in extra), 'no job left halfway: each is on Jack or on Dana: %s' % [techs(page, a) for a in extra])
+    check(B(page, 'Put back (%d)' % len(moved)).count() == 1, 'Put back counts exactly the jobs moved')
+    page.evaluate("(ids) => { ids.forEach(k => { delete APPTS[k]; }); window.API_DELAY = 30; localStorage.removeItem('stMoveUndo'); render(); }", extra)
 
     # ---- Stacking overlapping jobs on one tech: the run's own jobs don't count as "booked" ----
     for a in (9101, 9102, 9103): reset(page, a, [])

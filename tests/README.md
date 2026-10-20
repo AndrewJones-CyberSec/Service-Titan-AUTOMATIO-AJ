@@ -21,6 +21,7 @@ python3 tests/run_all.py
 | `test_no_permission.py` | 📱 Customer Texts for a login that can't open job records: numbers from the customer, never a false "signed out" |
 | `test_move_jobs.py` | 🔀 Move Jobs: move, add, unassign, both swaps, skill / booked / managed-tech / other-branch warnings, failures and retries, a job changed after the review, Put back (and a saved Put back after reopening), the board refreshing itself, Stop, handing jobs to Job Notifications |
 | `test_move_safety.py` | 🔀 Move Jobs safety (from the Oct 2026 review): swaps are both jobs or neither, lost answers and exact Put back, bookings in swaps and stacking, fresh techs and old reviews, a sign-in check that never answers, answers in an unknown shape, status numbers (a board that's behind can't hide a Dispatch), an unknown tech never counted as managed, a job your board's filters hide, booked mid-run in a 3-job stack (read from the day's full schedule), Put back's booked and status checks, an exact match before every change, closing during a run |
+| `test_move_speed.py` | 🔀 Move Jobs three jobs at once (1.6.2): never more than three, each add confirmed before the old tech comes off, two visits of a job one after the other, one at a time after a problem, signed out with several jobs on their way, a whole-day swap and its exact Put back |
 | `test_concurrency.py` | Several reads at once: Stop and Cancel mid-read, slow and timed-out answers, sign-out, failing answers, the board changing during a run |
 | `board*.html` | The fake pages the tests run on |
 

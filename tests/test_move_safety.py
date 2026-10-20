@@ -63,6 +63,19 @@ def restore(page):
              "BOOKED = {}; NONJOB = {}; ASSIGN_FAIL = {}; UNASSIGN_FAIL = {}; ASSIGN_IGNORE = {}; ASSIGN_LOST = {}; UNASSIGN_LOST = {}; "
              "BOOKED_BY_SCHEDULE = false; BOOKED_DRIFT = false; API_401 = false; APPT_401 = false; PERM_HANG = false; SIGNOUT_AFTER_ASSIGN = false; API_DELAY = 0; FULLDAY_FAIL = false; delete APPTS[9200]; "
              "window.calls = []; localStorage.removeItem('stMoveUndo'); render(); }", START)
+# Move Jobs works on up to three jobs at once, so "mid-run" means: after some jobs have changed,
+# but before another job's own already-booked check. This holds back the check for one
+# appointment (found by its time) until `n` assigns have gone through, then runs `then_js`
+# (someone books the tech, say) and lets the check go.
+def hold_check(page, appt, n, then_js):
+    page.evaluate("""([appt, n, then]) => { const f = window.fetch; let done = 0, release; const gate = new Promise(r => { release = r; });
+        const s = APPTS[appt].s.toISOString(), e = APPTS[appt].e.toISOString();
+        window.fetch = async (url, opts) => {
+          const u = String(url);
+          if (u.indexOf('/Job/TechniciansAreBooked') === 0) { const b = JSON.parse(opts.body); if (b.start === s && b.end === e) await gate; }
+          const r = await f(url, opts);
+          if (/\\/AssignTechnicians/.test(u) && ++done === n) { (0, eval)(then); window.fetch = f; release(); }
+          return r; }; }""", [appt, n, then_js])
 def open_moves(page):
     if ev(page, "() => !!window.__stToolbox"): page.evaluate("() => window.__stToolbox.close()")
     page.evaluate(TOOLBOX)
@@ -238,11 +251,11 @@ with sync_playwright() as p:
     check(techs(page, 9101) == [104] and techs(page, 9102) == [104] and techs(page, 9103) == [], '4: the run\'s own jobs don\'t block, but a real new booking still does (3rd job left alone)')
     check('Dana K is already booked on another job then (since the review)' in lg, '4: and it says why')
     restore(page)
-    # The reviewer's case: two overlapping jobs, a booking added between them.
+    # The reviewer's case: two overlapping jobs, a booking added between them (after the first is
+    # on Dana, before the second job's own check).
     clear_jobs(page); type_jobs(page, '7101 7102')
     review(page)
-    ev(page, "() => { window.__realAssign = true; }")
-    page.evaluate("""() => { const f = window.fetch; window.fetch = async (url, opts) => { const r = await f(url, opts); if (String(url).indexOf('AssignTechnicians') > -1 && String(url).indexOf('Unassign') < 0) { BOOKED[104] = true; window.fetch = f; } return r; }; }""")
+    hold_check(page, 9102, 1, "BOOKED[104] = true")
     go(page)
     check(techs(page, 9101) == [104] and techs(page, 9102) == [], '4: a booking made mid-run is caught even though the run\'s own job also overlaps')
     restore(page)
@@ -386,10 +399,9 @@ with sync_playwright() as p:
     # the Toolbox reads the day's full schedule (every branch and team) instead of trusting the board.
     pick_to(page, 104)
     three = "() => { APPTS[9103].s = new Date(APPTS[9101].s); APPTS[9103].s.setHours(10); APPTS[9103].e = new Date(APPTS[9101].s); APPTS[9103].e.setHours(13); BOOKED_BY_SCHEDULE = true; render(); window.calls = []; window.fullDayCalls = 0; }"
-    # A hidden job that hits only the 10-1 job (12:30-1), added after the review, after the 2nd job.
-    hide_after_2nd = """() => { const f = window.fetch; let n = 0; window.fetch = async (url, opts) => { const r = await f(url, opts); if (/\\/AssignTechnicians/.test(String(url)) && ++n === 2) {
-        const d = new Date(APPTS[9101].s); APPTS[9200] = { job: 7200, n: 1, cust: 'Other Branch', s: new Date(d.setHours(12, 30)), e: new Date(d.setHours(13, 0)), techs: [104], bu: 2, total: 0, status: 'Scheduled', skills: [], hidden: true };
-        window.fetch = f; } return r; }; }"""
+    # A hidden job that hits only the 10-1 job (12:30-1), added after the review, once the other two
+    # jobs are on Dana (before the 10-1 job's own check).
+    hidden_job = "(() => { const d = new Date(APPTS[9101].s); APPTS[9200] = { job: 7200, n: 1, cust: 'Other Branch', s: new Date(d.setHours(12, 30)), e: new Date(d.setHours(13, 0)), techs: [104], bu: 2, total: 0, status: 'Scheduled', skills: [], hidden: true }; })()"
     # Hidden and already there at the review: ServiceTitan's own check catches it (exact at review).
     ev(page, three); ev(page, "() => { const d = new Date(APPTS[9101].s); APPTS[9200] = { job: 7200, n: 1, cust: 'Other Branch', s: new Date(d.setHours(12, 30)), e: new Date(d.setHours(13, 0)), techs: [104], bu: 2, total: 0, status: 'Scheduled', skills: [], hidden: true }; render(); }")
     check(ev(page, "() => !document.querySelector('a.appointment[data-job-id=\"7200\"]')"), 'hidden: the other branch\'s job isn\'t on the board')
@@ -403,7 +415,7 @@ with sync_playwright() as p:
     ev(page, three)
     clear_jobs(page); type_jobs(page, '7101 7102 7103')
     review(page)
-    page.evaluate(hide_after_2nd)
+    hold_check(page, 9103, 2, hidden_job)
     go(page)
     lg = log(page); print(lg)
     check(techs(page, 9101) == [104] and techs(page, 9102) == [104] and techs(page, 9103) == [], 'hidden: a job the board doesn\'t show, booked mid-run, stops the 3rd job of a stack')
@@ -412,16 +424,19 @@ with sync_playwright() as p:
     ev(page, "() => { delete APPTS[9200]; }")
     restore(page)
     # No other booking: a 3-job stack still goes on, reading the full schedule (no false alarm).
+    # (The 10-1 job is checked once the other two are on Dana, so ServiceTitan says she's booked.)
     ev(page, three)
     clear_jobs(page); type_jobs(page, '7101 7102 7103')
-    review(page); go(page)
+    review(page)
+    hold_check(page, 9103, 2, "0")
+    go(page)
     check(all(techs(page, a) == [104] for a in (9101, 9102, 9103)) and ev(page, "() => window.fullDayCalls") >= 1, 'hidden: with nothing else booked, the 3-job stack still goes on')
     restore(page)
     # The full schedule can't be read: the 3rd job is left alone (safe side), and it says why.
     ev(page, three)
     clear_jobs(page); type_jobs(page, '7101 7102 7103')
     review(page)
-    ev(page, "() => { FULLDAY_FAIL = true; }")
+    hold_check(page, 9103, 2, "FULLDAY_FAIL = true")
     go(page)
     lg = log(page)
     check(techs(page, 9103) == [] and "couldn't read the day's full schedule" in lg and techs(page, 9101) == [104] and techs(page, 9102) == [104], 'hidden: if the full schedule can\'t be read, that job is left alone and says why')
@@ -431,7 +446,7 @@ with sync_playwright() as p:
     ev(page, three)
     clear_jobs(page); type_jobs(page, '7101 7102 7103')
     review(page)
-    page.evaluate("""() => { const f = window.fetch; let n = 0; window.fetch = async (url, opts) => { const r = await f(url, opts); if (/\\/AssignTechnicians/.test(String(url)) && ++n === 2) { NONJOB[104] = true; window.fetch = f; } return r; }; }""")
+    hold_check(page, 9103, 2, "NONJOB[104] = true")
     go(page)
     lg = log(page)
     check(techs(page, 9103) == [] and 'Kim Wu: Dana K has a non-job event then' in lg and '(since the review)' in lg, 'hidden: time off added mid-run is still caught in a 3-job stack')

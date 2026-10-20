@@ -19,8 +19,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.6.1';
+  const VERSION = '1.6.2';
   const WHATS_NEW = {
+    '1.6.2': 'Faster 🔀 Move Jobs: it now works on up to three jobs at once, so moving jobs from one tech to another takes less than half as long (Unassigned moves, whole-day swaps and Put back are faster too). Each job is still done the same careful way: checked again right before, the new tech added first and confirmed, then the old one taken off and confirmed. Stop lets the jobs already started finish.',
     '1.6.1': 'New in 📱 Customer Texts: ＋ Everyone on the board (under Jobs I pick) adds every job on the board for the day it shows, the timeline plus the whole Unassigned list, one text per customer. New 📣 OutReach folder with a heater reminder (skips anyone who got it in the last 30 days). Big runs are faster: the next customer is checked while the current text goes out.',
     '1.6': 'New: 🔀 Move Jobs. Move jobs to a tech, add or unassign a tech, or swap two jobs or two techs\' whole day, without dragging. ＋ All Unassigned puts every unassigned job on one tech in one go. Review first: it warns about skills, double-booking and jobs from another branch. ↩ Put back undoes it, even after closing the Toolbox (kept for a day), and the board refreshes itself after a move. Swaps are both jobs or neither and check time off and other jobs too.',
     '1.5.4': 'New: 🔕 Job Notifications can turn notifications back ON (Turn on notifications…), not just off. Fix: 📱 Customer Texts works again for logins that can\'t open job records (it wrongly stopped as if you weren\'t signed in). It now reads phone numbers from the customer instead.',
@@ -113,7 +114,8 @@
   // directly takes a fraction of a second, where opening the page takes a few seconds. Most
   // tools still make their changes on the page, like a person would. Move Jobs is the exception:
   // it sends the same assign/unassign requests the job panel sends, after the same checks the
-  // panel makes (skills, already booked, managed tech), one job at a time, and confirms each.
+  // panel makes (skills, already booked, managed tech), and confirms each. Each job's steps go
+  // one after another; up to three jobs are worked on at once.
   // ===================================================================
   const st = (() => {
     const HEADERS = { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' };
@@ -177,7 +179,7 @@
       }
     };
     // Reads several things at once, a few at a time (gentle on ServiceTitan), keeping the order.
-    // Only for reading: changes are always made one at a time.
+    // Only for reading. (Move Jobs works on a few jobs at once with its own careful loop.)
     //   - A failed item gives { error } instead of stopping the rest.
     //   - opts.stop(): once it's true, pool returns right away (reads already on their way are
     //     not waited for). out.stopped is set.
@@ -3667,7 +3669,8 @@
   // A new tech is always added before the old one comes off, so a job is never left in
   // Unassigned halfway (where a job from another branch would drop off your board). Plain
   // Unassign warns about those. Each change is confirmed from ServiceTitan's data, problem jobs
-  // get one more try, and ↩ Put back undoes the last run.
+  // get one more try, and ↩ Put back undoes the last run. Up to three jobs are worked on at once
+  // (a two-job swap goes one job after the other, as both jobs or neither).
   // ===================================================================
   const moves = (() => {
     const TOOL = 'Move Jobs';
@@ -3865,7 +3868,8 @@
     const progress = el('div', 'display:none;gap:6px');
     const log = el('pre', 'max-height:220px;overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
     const progRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
-    const requestStop = () => { if (!running) return; stop = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping after this job...'; };
+    // Up to three jobs are worked on at once, so Stop lets the ones already started finish.
+    const requestStop = () => { if (!running) return; stop = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping after the jobs in progress...'; };
     const stopBtn = smallBtn('Stop', () => requestStop());
     const copyBtn = smallBtn('Copy results', async () => { if (await copy(log.textContent)) copyBtn.textContent = 'Copied'; });
     const notifBtn = smallBtn('🔕 Notifications…', () => handOff());
@@ -4043,17 +4047,21 @@
     // to 5 seconds (a big stack can need it for every job); every review and run starts fresh.
     // A booking can land between any check and the change itself, as it can for the job panel; the
     // 5 seconds only add to that window, and only in this rare case.
-    let sched = { day: '', at: 0, list: null };
-    const freshSchedule = () => { sched = { day: '', at: 0, list: null }; };
-    const fullDay = async when => {
-      const d = new Date(when), key = dayISO(d);
-      if (sched.list && sched.day === key && Date.now() - sched.at < 5000) return sched.list;
-      const list = await st.daySchedule(key);
-      sched = { day: key, at: Date.now(), list };
-      return list;
+    // Jobs worked on at the same time share one read of it while it's on its way.
+    let sched = { day: '', at: 0, list: null, loading: null };
+    const freshSchedule = () => { sched = { day: '', at: 0, list: null, loading: null }; };
+    const fullDay = when => {
+      const key = dayISO(new Date(when));
+      if (sched.day === key && sched.list && Date.now() - sched.at < 5000) return Promise.resolve(sched.list);
+      if (sched.day === key && sched.loading) return sched.loading;
+      const mine = sched = { day: key, at: 0, list: null, loading: null };
+      mine.loading = st.daySchedule(key).then(
+        list => { mine.list = list; mine.at = Date.now(); mine.loading = null; return list; },
+        e => { mine.loading = null; throw e; });
+      return mine.loading;
     };
     // Which techs are booked at an appointment's time, not counting the appointments in ignore(id):
-    // jobs a swap takes them off, and jobs this run already put on them. ServiceTitan's check can
+    // jobs a swap takes them off, and the jobs this run puts on them. ServiceTitan's check can
     // leave out one appointment itself. With two or more to leave out (stacking three or more
     // overlapping jobs, or a whole-day swap where a tech already has overlapping jobs), a job
     // booking is looked up in the day's full schedule, every branch and team, so a job your board's
@@ -4062,7 +4070,8 @@
     const bookedAt = async (techIds, appt, ignore) => {
       const out = [], plain = [];
       for (const id of techIds) {
-        const ig = (ignore ? ignore(id) : []).filter(g => S(g.apptId) !== S(appt.apptId) && overlap(g, appt));
+        const seen = new Set();   // each appointment once
+        const ig = (ignore ? ignore(id) : []).filter(g => S(g.apptId) !== S(appt.apptId) && overlap(g, appt) && !seen.has(S(g.apptId)) && !!seen.add(S(g.apptId)));
         if (!ig.length) { plain.push(id); continue; }
         const b = (await st.techsBooked([id], appt.start, appt.end, ig.length === 1 ? ig[0].apptId : appt.apptId)).find(y => S(y.id) === S(id));
         if (!b || !b.booked) continue;
@@ -4359,10 +4368,21 @@
       }
     };
     const nowText = ids => ids ? (ids.length ? names(ids) : 'unassigned') : 'unknown';
+    // ctx.given: what this run puts on whom ([{ apptId, ids, start, end }], one entry per
+    // appointment). It starts with every job the run will do (several are done at once, so a job
+    // can't wait to hear what the others did), and a job's entry gets its fresh times once its
+    // tech is on. A job that ends up not done just means a tech isn't on it, so leaving it out of
+    // "booked" changes nothing.
+    const give = (ctx, apptId, ids, start, end) => {
+      const g = ctx.given.find(z => S(z.apptId) === S(apptId));
+      if (!g) { ctx.given.push({ apptId, ids: ids.slice(), start, end }); return; }
+      ids.forEach(id => { if (!hasId(g.ids, id)) g.ids.push(id); });
+      g.start = start; g.end = end;
+    };
     // One appointment: a fresh look, the change worked out again from who's on it now (in case the
     // board changed since the review), the checks again, then add first and remove second.
-    // ctx.given: what this run has already put on whom ([{ apptId, ids, start, end }]), and
-    // ctx.leaving: the jobs a swap takes each tech off. Neither counts as "booked"; anything else does.
+    // ctx.given: what this run puts on whom (above), and ctx.leaving: the jobs a swap takes each
+    // tech off. Neither counts as "booked"; anything else does.
     const doItem = async (x, m, okWarn, ctx) => {
       const r = x.it.r;
       let now;
@@ -4397,11 +4417,14 @@
       }
       let lost = '';
       // 1) Add the new tech(s) first, so the job is never left without a tech halfway.
+      // A sign-out answer means ServiceTitan refused the request (nothing changed), so the job's
+      // last reading still stands. Other failures leave it unknown until the job is read again.
       if (d.add.length) {
         let sent = null;
+        const pre = x.lastSeen;
         x.lastSeen = null; x.touched = true;
         try { await st.assignTechs(r.apptId, d.add); }
-        catch (e) { if (st.isSignedOut(e)) throw e; sent = e; }
+        catch (e) { if (st.isSignedOut(e)) { x.lastSeen = pre; throw e; } sent = e; }
         // If the request failed, ServiceTitan may still have made the change: look before saying anything.
         const got = await confirmTechs(r.apptId, ids => d.add.every(id => hasId(ids, id)), x, sent ? 2000 : 6000);
         if (!got) {
@@ -4410,14 +4433,15 @@
           return res(why + ', and couldn\'t confirm what it did (now ' + nowText(x.lastSeen) + '). Review again', 'problem');
         }
         if (sent) lost = 'ServiceTitan\'s answer got lost, but the change went through. ';
-        ctx.given.push({ apptId: r.apptId, ids: d.add.slice(), start: now.appointment.start, end: now.appointment.end });
+        give(ctx, r.apptId, d.add, now.appointment.start, now.appointment.end);
       }
       // 2) Then take the old one(s) off.
       if (d.remove.length) {
         let sent = null;
+        const pre = x.lastSeen;
         x.lastSeen = null; x.touched = true;
         try { await st.unassignTechs(r.apptId, d.remove); }
-        catch (e) { if (st.isSignedOut(e)) throw e; sent = e; }
+        catch (e) { if (st.isSignedOut(e)) { x.lastSeen = pre; throw e; } sent = e; }
         const got = await confirmTechs(r.apptId, ids => d.remove.every(id => !hasId(ids, id)), x, sent ? 2000 : 6000);
         if (!got) {
           const why = sent ? 'couldn\'t take off ' + names(d.remove) + ' (' + errText(sent) + ')' : 'ServiceTitan didn\'t take off ' + names(d.remove);
@@ -4427,6 +4451,45 @@
       }
       return res(lost + changeText(cur, d), 'done');
     };
+
+    // Up to AT_ONCE jobs at a time. Each job is still done the same careful way as before (fresh
+    // look, checks, add first, confirm, then take off, confirm); only the waiting for ServiceTitan
+    // overlaps, which is where the time went (a job moving off a tech waits on six answers).
+    //   - Two visits of the same job are never worked on at the same time.
+    //   - After a job has a problem (one that gets a retry), it goes back to one job at a time
+    //     until a job goes through, to go easy on ServiceTitan when it's slow or failing.
+    //   - Stop (or ServiceTitan signing you out) starts nothing new. The jobs already started are
+    //     always finished first, so nothing is still changing after the run says it's done.
+    // done(x, result) for each job as it finishes; progress(finished). Returns how many were never
+    // started (0 unless stopped). A sign-out, or an unexpected error, is thrown once the rest finish.
+    const AT_ONCE = 3;
+    const doMany = (list, m, okWarn, ctx, done, progress) => new Promise((resolve, reject) => {
+      const started = list.map(() => false), working = new Set();
+      let active = 0, finished = 0, limit = AT_ONCE, fatal = null;
+      const nextOne = () => list.findIndex((x, i) => !started[i] && !working.has(S(x.it.r.jobId)));
+      const one = async i => {
+        const x = list[i], key = S(x.it.r.jobId);
+        try {
+          const rr = await doItem(x, m, okWarn, ctx);
+          done(x, rr);
+          if (rr.kind === 'problem' && !rr.noRetry) limit = 1;
+          else if (rr.kind === 'done') limit = AT_ONCE;
+        } catch (e) { if (!fatal) fatal = e; }
+        finally { active--; finished++; working.delete(key); progress(finished); pump(); }
+      };
+      const pump = () => {
+        while (!stop && !fatal && active < limit) {
+          const i = nextOne();
+          if (i < 0) break;
+          started[i] = true; active++; working.add(S(list[i].it.r.jobId));
+          one(i);
+        }
+        if (active) return;
+        if (fatal) reject(fatal);
+        else resolve(started.filter(s => !s).length);
+      };
+      pump();
+    });
 
     const go = async () => {
       if (!planned || busy) return;
@@ -4447,6 +4510,7 @@
       freshSchedule();
       const results = new Map();   // apptId -> result
       const ctx = { given: [], leaving: p.leaving || new Map() };
+      todo.forEach(x => { if (x.d && x.d.add.length) give(ctx, x.it.r.apptId, x.d.add, x.start, x.end); });
       const record = (x, rr, retry) => { results.set(S(x.it.r.apptId), { x, rr }); add(label(x.it.r) + ': ' + (retry ? 'retry: ' : '') + rr.text); };
       const verb = m === 'putback' ? 'Putting back' : m === 'unassign' ? 'Unassigning' : m === 'add' ? 'Adding' : m === 'move' ? 'Moving' : 'Swapping';
       const needsRetry = rr => rr.kind === 'problem' && !rr.noRetry;
@@ -4480,11 +4544,9 @@
             }
           }
         } else {
-          for (let n = 0; n < todo.length; n++) {
-            if (stop) { add('Stopped. ' + plural(todo.length - n, 'job') + ' not done.'); break; }
-            say(verb + ' ' + (n + 1) + ' of ' + todo.length + ' (job ' + todo[n].it.r.jobId + ')');
-            record(todo[n], await doItem(todo[n], m, okWarn, ctx));
-          }
+          say(verb + '... 0 of ' + todo.length + ' done');
+          const notStarted = await doMany(todo, m, okWarn, ctx, (x, rr) => record(x, rr), n => say(verb + '... ' + n + ' of ' + todo.length + ' done'));
+          if (notStarted) add('Stopped. ' + plural(notStarted, 'job') + ' not done.');
           // One more try for jobs that had a problem (a fresh look decides what's still left to do).
           const failed = todo.filter(x => { const y = results.get(S(x.it.r.apptId)); return y && needsRetry(y.rr); });
           if (failed.length && !stop) {
