@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.6.3
+
+- **Safer with two tabs open (💬 Tech Messages and 📱 Customer Texts).** Each tab used to load your 🛡️ *Who can be messaged* and 🚫 *Never text* lists once, when the Toolbox opened. So with the Toolbox open in two tabs:
+  - someone blocked in tab A could still be messaged or texted from tab B, and
+  - opening 🛡️ or ⚙️ Settings in tab B and pressing Save **erased** the blocks made in tab A (it saved tab B's old list over them).
+
+  Now both tools read the lists as saved right now: when showing who's picked, when picking on the board, on the check before sending, when opening 🛡️ / ⚙️ Settings, and again right before each person. Someone blocked mid-run (in another tab) is skipped at their turn with *on your 🚫 never-text list* or *blocked by your 🛡️ settings*, and their conversation is never opened. If the saved list can't be read, the tool keeps the list it already had rather than an empty one (for 🛡️ teams, damaged settings block everyone).
+- **📱 Customer Texts no longer fills the Back button.** Every conversation a run opened was a new step behind the browser's Back button (a 150-text OutReach run left 150+). Now each page the run opens takes the place of the one before, ending back on the board, so Back works the same after a run as before it.
+- **💬 Tech Messages puts the Toolbox back.** During a run it slides the Toolbox to the left so it doesn't cover the message panel; it now goes back where it was when the run ends (unless you dragged it somewhere during the run).
+- **Job and tech numbers only.** Clicking a job or tech on the board only ever picks a real number, and only numbers go into the highlight styling. (ServiceTitan's IDs are always numbers, so this is a guard, not a fix you'd notice.)
+- **📱 STOP / START at the same moment.** If a customer's STOP and START replies have the same time (or no time), they're read in message-number order instead of whatever order the list came in.
+- Tests: new `tests/test_review_fixes.py` and `tests/board_send.html` (a fake Send Message panel, so Tech Messages' sending is tested for the first time). The fake Chat Center data can now set a message's number.
+
 ## 1.6.2
 
 - **Faster 🔀 Move Jobs: up to three jobs at once.** Moving a job off one tech and onto another waits on six answers from ServiceTitan (a fresh look, the booked check, the add, a reading to confirm it, the take-off, a reading to confirm that), where a job from Unassigned waits on four. Done one job after another, that's what made tech-to-tech moves slow. Now up to three jobs are worked on at once, so the waiting overlaps. On the test board with ServiceTitan answering in 0.3 s, 6 jobs from one tech to another went from about 15 s to 4 s, and 6 from Unassigned from about 11 s to 3 s (with the quicker ending below).

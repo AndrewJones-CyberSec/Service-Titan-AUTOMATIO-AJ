@@ -19,8 +19,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.6.2';
+  const VERSION = '1.6.3';
   const WHATS_NEW = {
+    '1.6.3': 'Safer with two tabs open: 💬 Tech Messages and 📱 Customer Texts now check your 🛡️ / 🚫 never lists as saved right now, before the list, Start and each person, so someone you block in another tab is never messaged from this one, and saving settings in one tab no longer undoes blocks made in another. A Customer Texts run no longer fills the Back button with every conversation it opened. Tech Messages puts the Toolbox back where it was after moving it aside for the message panel.',
     '1.6.2': 'Faster 🔀 Move Jobs: it now works on up to three jobs at once, so moving jobs from one tech to another takes about a third of the time (Unassigned moves, whole-day swaps and Put back are faster too). A run also ends as soon as the board shows the changes, instead of always waiting 2.5 seconds. Each job is still done the same careful way: checked again right before, the new tech added first and confirmed, then the old one taken off and confirmed. Stop lets the jobs already started finish.',
     '1.6.1': 'New in 📱 Customer Texts: ＋ Everyone on the board (under Jobs I pick) adds every job on the board for the day it shows, the timeline plus the whole Unassigned list, one text per customer. New 📣 OutReach folder with a heater reminder (skips anyone who got it in the last 30 days). Big runs are faster: the next customer is checked while the current text goes out.',
     '1.6': 'New: 🔀 Move Jobs. Move jobs to a tech, add or unassign a tech, or swap two jobs or two techs\' whole day, without dragging. ＋ All Unassigned puts every unassigned job on one tech in one go. Review first: it warns about skills, double-booking and jobs from another branch. ↩ Put back undoes it, even after closing the Toolbox (kept for a day), and the board refreshes itself after a move. Swaps are both jobs or neither and check time off and other jobs too.',
@@ -51,6 +52,15 @@
   const ID = 'st-toolbox';
   const get = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
   const set = (k, v) => { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } };
+  // A saved setting, read fresh from this browser's storage (so a change made in another tab counts).
+  // Not saved yet: d. Storage can't be read, or the saved value is damaged: cur, what this copy
+  // already had, so a glitch never empties a safety list.
+  const readSaved = (k, d, cur) => {
+    let raw;
+    try { raw = localStorage.getItem(k); } catch (e) { return cur; }
+    if (raw == null) return d;
+    try { const v = JSON.parse(raw); return v == null ? d : v; } catch (e) { return cur; }
+  };
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const until = async (fn, max, gap) => {
     const end = Date.now() + max;
@@ -66,7 +76,7 @@
   const clickedJob = target => {
     if (!target || !target.closest) return null;
     const a = target.closest('a.appointment[data-job-id]');
-    if (a) return a.getAttribute('data-job-id');
+    if (a) { const j = a.getAttribute('data-job-id'); return /^\d+$/.test(j || '') ? j : null; }   // job numbers only
     const tr = target.closest('.job-list tr[class*="qa-job-"]');
     const m = tr && /(?:^|\s)qa-job-(\d+)(?:\s|$)/.exec(String(tr.className));
     return m ? m[1] : null;
@@ -82,10 +92,13 @@
       return { customer: String(window.ko.unwrap(x.Customer) || '').replace(/\s+/g, ' ').trim(), customerId: window.ko.unwrap(x.CustomerId) || null };
     } catch (e) { return null; }
   };
-  // Highlights picked jobs on the timeline and in the job list.
-  const pickedCss = (ids, color, soft) => !ids.length ? '' :
-    ids.map(j => 'a.appointment[data-job-id="' + j + '"]').join(',') + '{outline:3px solid ' + color + ' !important;outline-offset:-3px !important;box-shadow:0 0 0 3px ' + soft + ' !important}' +
-    ids.map(j => '.job-list tr.qa-job-' + j + ' > td').join(',') + '{background:' + soft + ' !important;box-shadow:inset 0 2px 0 ' + color + ',inset 0 -2px 0 ' + color + ' !important}';
+  // Highlights picked jobs on the timeline and in the job list (job numbers only go into the CSS).
+  const pickedCss = (all, color, soft) => {
+    const ids = all.map(String).filter(j => /^\d+$/.test(j));
+    return !ids.length ? '' :
+      ids.map(j => 'a.appointment[data-job-id="' + j + '"]').join(',') + '{outline:3px solid ' + color + ' !important;outline-offset:-3px !important;box-shadow:0 0 0 3px ' + soft + ' !important}' +
+      ids.map(j => '.job-list tr.qa-job-' + j + ' > td').join(',') + '{background:' + soft + ' !important;box-shadow:inset 0 2px 0 ' + color + ',inset 0 -2px 0 ' + color + ' !important}';
+  };
   const isMac = /Mac|iPhone|iPad/i.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || '');
   const ALT = isMac ? 'Option' : 'Alt';
   const el = (tag, css, text) => { const e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; };
@@ -1660,6 +1673,16 @@
     // never: { techId: name }. selected: tech IDs picked last time.
     let teamRules = loadJSON(K.teams, null);
     let never = loadJSON(K.never, {});
+    // The 🛡️ settings are read again before they're used (the list, picking, Start, and right
+    // before each person), so blocking someone or unticking a team in another tab counts here too.
+    // Damaged team rules block everyone; a damaged never-list keeps the one this copy already had.
+    const isMap = v => !!v && typeof v === 'object' && !Array.isArray(v);
+    const syncSafety = () => {
+      const r = readSaved(K.teams, null, teamRules);
+      teamRules = isMap(r) ? r : null;
+      const n = readSaved(K.never, {}, never);
+      if (isMap(n)) never = n;
+    };
     let selected = new Set(loadJSON(K.sel, []));
     let pickIdx = Math.max(0, Math.min(parseInt(get(K.pick) || '0', 10) || 0, list.length - 1));
 
@@ -1751,6 +1774,8 @@
       return topEl === host;
     };
     // Moves the Toolbox panel to the left of the message panel so it doesn't cover it.
+    // The run puts it back where it was afterward (see go()).
+    let dodged = false;
     const dodge = () => {
       const h = acHost();
       if (!h) return;
@@ -1758,6 +1783,7 @@
       if (hr.width && pr.right > hr.left && pr.left < hr.right) {
         panel.style.left = Math.max(0, hr.left - pr.width - 16) + 'px';
         panel.style.right = 'auto';
+        dodged = true;
       }
     };
     // A missing ServiceTitan piece (not a one-off glitch): flag it and stop the whole run.
@@ -1861,6 +1887,7 @@
       return Array.from(selected).map(id => techs.get(id)).filter(t => canMessage(t));
     };
     const renderMain = () => {
+      syncSafety();
       msgList.textContent = '';
       list.forEach(([name, text], i) => {
         const on = i === pickIdx;
@@ -1907,7 +1934,8 @@
     };
     const clickedTech = target => {
       const t = target && target.closest && target.closest('.technician[data-technician-id]');
-      return t ? t.getAttribute('data-technician-id') : null;
+      const id = t ? t.getAttribute('data-technician-id') : null;
+      return /^\d+$/.test(id || '') ? id : null;   // tech IDs are numbers; anything else is ignored
     };
     const setPicking = on => {
       if (on && !teamRules) { openSafety(); return; }
@@ -1926,6 +1954,7 @@
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       const t = boardTechs().get(id);
       if (!t) return;
+      syncSafety();
       if (selected.has(id)) { selected.delete(id); say('Took ' + t.name + ' off.'); }
       else if (!canMessage(t)) { say('🛡️ ' + t.name + ' can\'t be messaged: ' + (never[id] ? 'they\'re on the never-message list.' : !t.team ? 'their team isn\'t known yet (clear the board filter once).' : 'their team (' + t.team + ') is blocked.')); return; }
       else { selected.add(id); say('Added ' + t.name + '.'); }
@@ -1954,6 +1983,7 @@
     const saveSel = () => { set(K.sel, JSON.stringify(Array.from(selected))); paintTechs(); };
     const openPicker = () => { if (!teamRules) return openSafety(); sub('pick'); renderPicker(); };
     const renderPicker = () => {
+      syncSafety();
       const techs = Array.from(boardTechs().values());
       const qtext = search.value.trim().toLowerCase();
       // Drop anyone no longer allowed from the selection.
@@ -2000,6 +2030,8 @@
     vSafe.append(head('🛡️ Who can be messaged'), safeMsg, teamList, neverHead, neverList, neverAdd, neverResults, safeNav);
     const openSafety = () => {
       if (!onBoard()) { sub('main'); say('Open the Dispatch board first, so the Toolbox can see the teams.'); return; }
+      // Start from what's saved right now, so saving here doesn't undo a change made in another tab.
+      syncSafety();
       const teams = teamsOnBoard();
       draftRules = Object.assign({}, teamRules || {});
       // First time: suggest. Later: any team we haven't seen before starts blocked.
@@ -2085,6 +2117,7 @@
     const openConfirm = () => {
       if (lock) return say('Wait for ' + lock + ' to finish first.');
       setPicking(false);
+      syncSafety();
       pending = recipients();
       if (!pending.length) return say('Nobody picked. Click 👥 Choose techs.');
       if (pending.length > MAX_PER_RUN) return say('⚠️ ' + pending.length + ' people picked. For safety the limit is ' + MAX_PER_RUN + ' per run.');
@@ -2149,15 +2182,20 @@
       add((auto ? 'Auto-send' : 'Type only') + ': "' + tmpl + '" to ' + people.length);
       const tally = {};
       const out = (t, s, k) => { tally[k] = (tally[k] || 0) + 1; add(t.name + ': ' + s); };
+      // Where the panel sits now. dodge() may slide it aside during the run; it goes back here
+      // afterward, unless you dragged it somewhere yourself during the run (that saves a new spot).
+      const homePos = { left: panel.style.left, right: panel.style.right, saved: get('stPos') };
+      dodged = false;
       try {
         for (let n = 0; n < people.length; n++) {
           if (stopRun) { add('Stopped. ' + (people.length - n) + ' not messaged.'); break; }
           const planned = people[n];
           runMsg.textContent = (auto ? 'Sending ' : 'Typing ') + (n + 1) + ' of ' + people.length + ': ' + planned.name;
           if (!onBoard()) { out(planned, 'stopped: not on the Dispatch board', 'problem'); break; }
-          // Re-check the live board right before each person.
+          // Re-check the live board and the saved 🛡️ settings right before each person.
           const t = boardTechs().get(planned.id);
           if (!t) { out(planned, 'skipped: not on the board any more', 'skipped'); continue; }
+          syncSafety();
           if (!canMessage(t)) { out(t, 'skipped: blocked by your 🛡️ settings', 'skipped'); continue; }
           if (!(await closeJobDrawer())) { out(t, 'skipped: a job panel would not close', 'problem'); continue; }
           const err = await openChatFor(t);
@@ -2224,6 +2262,8 @@
       } catch (e) {
         runMsg.textContent = '⚠️ Stopped by an error: ' + errText(e);
       } finally {
+        if (dodged && get('stPos') === homePos.saved) { panel.style.left = homePos.left; panel.style.right = homePos.right; }
+        dodged = false;
         running = false; lock = null;
         stopBtn.style.display = 'none'; doneBtn.style.display = 'inline-block';
         if (stepResolve) stepResolve('stop');
@@ -2706,6 +2746,13 @@
     // ---------- Settings ----------
     let allMobiles = get(K.all) === '1';
     let never = (loadJSON(K.never, []) || []).map(last10).filter(n => n.length === 10);
+    // The 🚫 never-text list, read again before it's used (Settings, the check before texting, and
+    // right before each text), so a number blocked in another tab is never texted from this one.
+    // A damaged list keeps the one this copy already had.
+    const syncNever = () => {
+      const v = readSaved(K.never, [], never);
+      if (Array.isArray(v)) never = v.map(last10).filter(n => n.length === 10);
+    };
 
     // ---------- Reading the board ----------
     const boardVM = () => { const jl = document.querySelector('.job-list'); return jl ? vmOf(jl) : null; };
@@ -3124,6 +3171,7 @@
       nameIn.placeholder = auto ? auto + ' (from your ServiceTitan login)' : 'Your first name';
       setMsg.textContent = 'Leave the name empty to use the first name on your ServiceTitan login' + (auto ? ' (' + auto + ').' : '.');
       allChk.c.checked = allMobiles;
+      syncNever();   // so saving here doesn't undo a number blocked in another tab
       neverIn.value = never.map(n => '(' + n.slice(0, 3) + ') ' + n.slice(3, 6) + '-' + n.slice(6)).join('\n');
       sub('settings');
     };
@@ -3153,6 +3201,7 @@
       const pending = recipients();
       if (!pending.length) return say(source === 'holds' ? 'Load the holds and tick at least one kind.' : 'Pick some jobs first.');
       picker.setPicking(false);
+      syncNever();
       const f = curFolder(), tmpl = m[1];
       const id = ++checkId;
       planned = null;
@@ -3301,10 +3350,17 @@
       if (un(v.LoadingMessages) || un(v.HasFetchedMessagePage) === false) return null;
       return { box: b, vm: v };
     };
+    // Goes to a page without adding a step to the browser's Back button. A run starts on the
+    // board and every page it opens takes the place of the one before, ending back on the board,
+    // so a 150-text run leaves Back working as it did (instead of 150 conversations behind it).
+    // The full address is used so only the part after # changes (never a page reload).
+    const goTo = hash => {
+      try { location.replace(location.href.split('#')[0] + hash); } catch (e) { location.hash = hash; }
+    };
     const openChat = async (num, jobId) => {
       const want = '#/ChatCenter/' + num;
-      if (location.hash.split('?')[0] === want) { location.hash = '#/DispatchBoard'; await wait(800); }
-      location.hash = want + (jobId ? '?jobid=' + jobId : '');
+      if (location.hash.split('?')[0] === want) { goTo('#/DispatchBoard'); await wait(800); }
+      goTo(want + (jobId ? '?jobid=' + jobId : ''));
       const c = await until(() => chatFor(num), 15000, 100);
       if (!c) return null;
       await wait(400);   // let the message history settle
@@ -3319,9 +3375,12 @@
     const timeOf = m => { const t = new Date(m.CreatedOn).getTime(); return isFinite(t) ? t : 0; };
     const STOP_WORDS = /^(stop|stop all|stopall|unsubscribe|cancel|end|quit|stop texting( me)?|remove me)[.!]*$/i;
     const START_WORDS = /^(start|unstop|yes)[.!]*$/i;
+    // Replies in the order they came in. Two with the same time (or no time) go by message number
+    // (normally higher for newer messages), so a STOP and a START close together are read in order.
+    const idOf = m => { const n = Number(m && m.SmsId); return isFinite(n) ? n : 0; };
     const optedOut = list => {
       let out = false;
-      list.filter(m => m.IsInbound).sort((a, b) => timeOf(a) - timeOf(b)).forEach(m => {
+      list.filter(m => m.IsInbound).sort((a, b) => timeOf(a) - timeOf(b) || idOf(a) - idOf(b)).forEach(m => {
         const b = norm(m.Body);
         if (STOP_WORDS.test(b)) out = true; else if (START_WORDS.test(b)) out = false;
       });
@@ -3540,6 +3599,9 @@
           if (stopRun) { add('Stopped. ' + s1(sends.length - n, 'text') + ' not sent.'); break; }
           const x = sends[n], r = x.r, num = x.num, text = x.text;
           runMsg.textContent = (auto ? 'Texting ' : 'Typing ') + (n + 1) + ' of ' + sends.length + ': ' + (r.customer || '#' + r.jobId);
+          // The 🚫 never-text list again, as saved right now (it may have changed in another tab).
+          syncNever();
+          if (never.indexOf(num) > -1) { ahead = null; out(r, num, 'skipped: on your 🚫 never-text list', 'skipped'); continue; }
           const look = ahead && ahead.x === x && Date.now() - ahead.at <= LOOK_FRESH_MS ? ahead : null;
           ahead = null;
           let fresh = null;
@@ -3639,7 +3701,7 @@
         runMsg.textContent = '⚠️ Stopped by an error: ' + errText(e);
       } finally {
         if (stepResolve) stepResolve('stop');
-        if (location.hash !== home) { location.hash = home; await wait(800); }
+        if (location.hash !== home) { goTo(home); await wait(800); }
         running = false; lock = null; planned = null;
         stopBtn.style.display = 'none'; doneBtn.style.display = 'inline-block';
       }

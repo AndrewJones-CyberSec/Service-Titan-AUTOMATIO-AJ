@@ -84,7 +84,7 @@
   CHATS['6015550014'] = { unread: false, msgs: [{ Body: 'On my way! - Paxton', IsOutbound: true, tech: true, CreatedOn: daysAgo(2) }, { Body: '5', IsInbound: true, survey: true, CreatedOn: daysAgo(1) }] };
   // The chat data, as ServiceTitan's Chat Center reads it. window.CHAT_API_DOWN = true makes it unreadable.
   const rawMsgs = (num, chat) => chat.msgs.map((x, i) => ({
-    SmsId: Number(num.slice(-4)) * 1000 + i, Body: x.Body, CreatedOn: x.CreatedOn,
+    SmsId: x.SmsId != null ? x.SmsId : Number(num.slice(-4)) * 1000 + i, Body: x.Body, CreatedOn: x.CreatedOn,
     SmsDirection: x.IsOutbound ? 1 : 0, Channel: x.IsNotification ? 7 : x.tech ? 1 : x.survey ? 9 : (x.IsOutbound ? 3 : 0),
     SmsSendErrorCode: x.SmsSendErrorCode || 0, SmsDeliveryStatus: x.SmsSendErrorCode ? 1 : (x.late ? 2 : 0)
   }));

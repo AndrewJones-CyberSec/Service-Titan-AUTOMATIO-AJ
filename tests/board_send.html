@@ -1,0 +1,62 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Mock board send message</title>
+<style>
+  body{font:13px sans-serif;margin:0}
+  .technician{padding:6px;border:1px solid #ccc;width:160px;cursor:pointer}
+  .appointment{display:inline-block;padding:4px 8px;background:#cfe;margin:2px}
+  .technician-menu{position:absolute;left:170px;background:#fff;border:1px solid #999;padding:4px}
+  .technician-menu a{display:block;padding:3px 6px;cursor:pointer}
+  servicetitan-activity-center-x{position:fixed;right:0;top:0;width:380px;height:100vh;background:#eef;display:none}
+</style>
+<script>
+  // The board from board_techs.html, plus the tech menu's "Send Message" and a stand-in for
+  // ServiceTitan's Activity Center (the Send Message panel on the right, inside a shadow root).
+  // window.SENT lists [tech name, text] for every message sent.
+  window.opened = [];
+  window.SENT = [];
+  const TEAMS = [['Install HVAC', [[1, 'Tech One'], [2, 'Tech Two']]], ['Leadership Team', [[3, 'Boss Man']]]];
+  let ac = null;
+  const activityCenter = () => {
+    if (ac) return ac;
+    ac = document.createElement('servicetitan-activity-center-x');
+    const r = ac.attachShadow({ mode: 'open' });
+    r.innerHTML = '<div style="padding:10px"><h3 id="who"></h3><div id="hist"></div>' +
+      '<textarea data-cy="technician-chat-input" style="width:340px;height:60px"></textarea>' +
+      '<button data-cy="send-chat-message">Send</button></div>';
+    const box = r.querySelector('textarea');
+    r.querySelector('button').addEventListener('click', () => {
+      if (!box.value) return;
+      window.SENT.push([r.getElementById('who').textContent, box.value]);
+      const p = document.createElement('p'); p.textContent = box.value;
+      r.getElementById('hist').appendChild(p);
+      box.value = '';
+    });
+    document.body.appendChild(ac);
+    return ac;
+  };
+  const openChat = name => {
+    const host = activityCenter();
+    host.shadowRoot.getElementById('who').textContent = name;
+    host.shadowRoot.getElementById('hist').textContent = '';
+    host.style.display = 'block';
+  };
+  function render() {
+    const root = document.getElementById('root');
+    if (!/^#\/DispatchBoard/.test(location.hash)) { root.innerHTML = ''; return; }
+    root.innerHTML = TEAMS.map(([team, techs]) => '<div class="team-header"><span class="team-name">' + team + '</span></div><div class="team-container">' +
+      techs.map(([id, name]) => '<div class="technician" id="team-technician-' + id + '" data-technician-id="' + id + '"><span class="name">' + name + '</span></div>' +
+        '<div id="team-timeline-row-' + id + '"><a class="appointment" data-job-id="' + (7000 + id) + '" data-technician-id="' + id + '">Job ' + (7000 + id) + '</a></div>').join('') + '</div>').join('');
+    root.querySelectorAll('.technician').forEach(t => t.addEventListener('click', () => {
+      window.opened.push('tech' + t.getAttribute('data-technician-id'));
+      document.querySelectorAll('.technician-menu').forEach(m => m.remove());
+      const name = t.querySelector('.name').textContent;
+      const menu = document.createElement('div');
+      menu.className = 'technician-menu dropdown-menu';
+      menu.innerHTML = '<a>Send Message</a><a>Send Memo</a>';
+      menu.querySelector('a').addEventListener('click', () => { menu.remove(); openChat(name); });
+      t.after(menu);
+    }));
+    root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => window.opened.push('job' + a.getAttribute('data-job-id'))));
+  }
+  addEventListener('hashchange', render); addEventListener('DOMContentLoaded', render);
+</script></head><body><div id="root"></div></body></html>
