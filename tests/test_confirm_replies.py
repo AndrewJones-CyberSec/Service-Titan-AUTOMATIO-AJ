@@ -257,7 +257,7 @@ with sync_playwright() as p:
     page.evaluate("() => { window.CONFIRM_IGNORE = {}; window.APPT_STATUS = {}; }")
 
     # Reply wording: what counts as yes, and what you read yourself.
-    YES = ['C', 'c.', ' C ', 'CC', 'Yes', 'yes ma’am', 'Yep!', 'OK 👍', 'Okay thank you', '👍', '✅', 'Confirmed, thanks!', 'confirm', 'Sounds good', "We'll be there"]
+    YES = ['Ok that’s fine', 'Alright', 'I will be waiting', 'C', 'c.', ' C ', 'CC', 'Yes', 'yes ma’am', 'Yep!', 'OK 👍', 'Okay thank you', '👍', '✅', 'Confirmed, thanks!', 'confirm', 'Sounds good', "We'll be there"]
     NO = ['No', 'C?', 'Can you call me', 'Cancel', 'Who is this', 'C but can he come after 2', 'reschedule please', '😡', 'Questioned “Hey…”', 'yes but late']
     def kind_of(reply):
         page.evaluate("() => { Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); }")
@@ -269,6 +269,33 @@ with sync_playwright() as p:
     check(not bad_yes, 'counted as yes: ' + ', '.join(YES) + ('  MISSED: %s' % bad_yes if bad_yes else ''))
     bad_no = [r for r in NO if kind_of(r) != 'look']
     check(not bad_no, 'left for you to read: ' + ', '.join(NO) + ('  WRONG: %s' % bad_no if bad_no else ''))
+
+    # Confirm texts worded differently still count: a coworker typing "Air South", another
+    # coworker's own wording, and ServiceTitan's automatic reminder. Replies count from the first.
+    AIR_SOUTH = CONFIRM.replace('Andrew', 'Jasmin').replace('AirSouth', 'Air South')
+    OWN = 'Good evening! this is Harlee with AirSouth Cooling, Heating, Plumbing, & Electrical. I was reaching out to remind you of your appointment tomorrow! An expert will be arriving at your home, and it\'s important that all decision-makers and homeowners are present. Please respond to this chat with a, "C" to CONFIRM your appointment or give us a call at 601-847-9941. Thank you for being the best part of AirSouth!'
+    AUTO = "Reminder from AirSouth Cooling, Heating, Plumbing, & Electrical: A Service Expert will be arriving tomorrow. Please call us at 601-847-9941 if you have any questions. We look forward to seeing you. Reply 'C' to confirm."
+    page.evaluate("() => { Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); }")
+    chats(page, {
+        KIM: {'unread': False, 'msgs': [msg(AIR_SOUTH, True, 3), msg('C', hours=2)]},
+        LOU: {'unread': False, 'msgs': [msg(OWN, True, 3), msg('Yes', hours=2)]},
+        MO: {'unread': False, 'msgs': [msg(AUTO, True, 4, IsNotification=True), msg('Can he come before 10?', hours=3)]},
+        PIA: {'unread': False, 'msgs': [msg(CONFIRM, True, 5), msg('c', hours=4), msg(AUTO, True, 3, IsNotification=True)]},
+    })
+    log = run_check(page); print(log)
+    yes = section(log, '✅ Answered yes')
+    check('Kim Wu' in yes, '"Air South" (with a space) still counts as the confirm text')
+    check('Lou Ng' in yes, 'a coworker\'s own wording that asks for a "C" counts')
+    check('Mo Day' in section(log, '⚠️ Needs a look') and 'Can he come before 10?' in log, 'a question answering ServiceTitan\'s automatic reminder: needs a look')
+    check('Pia Lane' in yes, 'replies count from the first confirm text (a reminder sent after her C doesn\'t hide it)')
+    back(page)
+    # A C to ServiceTitan's automatic reminder: ServiceTitan confirms it itself.
+    chats(page, {MO: {'unread': False, 'msgs': [msg(AUTO, True, 4, IsNotification=True), msg('C', hours=3), msg('Your appointment with AirSouth LLC has been confirmed', True, 3)]}})
+    page.evaluate("() => { window.CONFIRMED[106003] = true; }")
+    log = run_check(page)
+    check('Mo Day' in section(log, '☑️ Answered yes, already confirmed'), 'a C to the automatic reminder shows as already confirmed')
+    page.evaluate("() => { delete window.CONFIRMED[106003]; }")
+    back(page)
 
     # Jobs picked: only those are checked.
     chats(page, {KIM: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('C', hours=2)]}, MO: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('C', hours=2)]}})

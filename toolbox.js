@@ -3563,7 +3563,7 @@
     const asPageMsgs = (raw, c) => raw.map(m => {
       const outbound = m.SmsDirection === c.out;
       return {
-        Body: m.Body, CreatedOn: m.CreatedOn, SmsId: m.SmsId,
+        Body: m.Body, CreatedOn: m.CreatedOn, SmsId: m.SmsId, Channel: m.Channel,
         IsOutbound: outbound, IsInbound: !outbound,
         // Reminders, confirmations, surveys and the like are automatic, not texts from us.
         IsNotification: outbound && c.auto.has(m.Channel),
@@ -3860,14 +3860,25 @@
       return d;
     };
     const escRe = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // A saved message as a pattern that matches it once sent (fill-ins can be any short text).
-    const tmplMatcher = tmpl => new RegExp('^' + norm(tmpl).split(/(\{(?:dispatcher|first|tech)\})/i)
-      .map(p => /^\{(?:dispatcher|first|tech)\}$/i.test(p) ? '.{0,60}?' : escRe(p)).join('') + '$', 'i');
+    // A saved message as a pattern that matches it once sent. Only letters and numbers are
+    // compared, so "Air South" / "AirSouth", "&" / "and", quotes and spacing don't matter, and a
+    // fill-in can be any short text.
+    const lettersOf = t => String(t == null ? '' : t).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const tmplMatcher = tmpl => {
+      const re = new RegExp('^' + norm(tmpl).split(/(\{(?:dispatcher|first|tech)\})/i)
+        .map(p => /^\{(?:dispatcher|first|tech)\}$/i.test(p) ? '[a-z0-9]{0,40}?' : escRe(lettersOf(p).replace(/and/g, '\u0001')).replace(/\u0001/g, '(?:and)?')).join('') + '$');
+      return { test: body => re.test(lettersOf(body)) };
+    };
+    // Any text that asks the customer to reply C to confirm, however it's worded: ServiceTitan's
+    // own automatic reminder ("…Reply 'C' to confirm."), a coworker's own wording ("respond…with
+    // a, "C" to CONFIRM"), or a saved message from a confirm folder.
+    const ASKS_FOR_C = /(["'‘’“”]\s*c\s*["'‘’“”][^.!?\n]{0,15}confirm)|(\b(reply|respond|text|send)\b[^.!?\n]{0,40}\bc\b[^.!?\n]{0,15}confirm)/i;
+    const isConfirmText = (m, pats) => !!m && m.IsOutbound && (ASKS_FOR_C.test(norm(m.Body)) || (!m.IsNotification && pats.some(p => p.test(m.Body))));
     // Is this reply a yes? C, Yes, OK, Confirmed, 👍 and the like, with or without "thanks". A
     // question, a second sentence or anything else is not: those are read by you.
     const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu;
     const YES_EMOJI = /[\u{1F44D}\u{1F44C}\u{2705}\u{2714}\u{2611}]/u;   // 👍 👌 ✅ ✔ ☑
-    const YES_WORDS = /^(c|cc|c c|confirm|confirmed|confirming|i confirm|confirm appt|confirm appointment|confirmed appt|confirmed appointment|y|ye|yes|yes sir|yes maam|yes mam|yes mame|yes please|yes yes|yep|yup|yeah|yea|ya|ok|okay|ok c|okay c|k|kk|sure|sounds good|will do|see you then|see you tomorrow|see ya then|see ya tomorrow|we will be there|well be there|i will be there|ill be there|we will be home|well be home|i will be home|ill be home|10 4|104)$/;
+    const YES_WORDS = /^(c|cc|c c|confirm|confirmed|confirming|i confirm|confirm appt|confirm appointment|confirmed appt|confirmed appointment|y|ye|yes|yes sir|yes maam|yes mam|yes mame|yes please|yes yes|yep|yup|yeah|yea|ya|ok|okay|ok c|okay c|k|kk|sure|sounds good|will do|alright|all right|ok thats fine|okay thats fine|thats fine|that works|perfect|great|got it|ok got it|i will be waiting|ill be waiting|we will be waiting|well be waiting|see you then|see you tomorrow|see ya then|see ya tomorrow|we will be there|well be there|i will be there|ill be there|we will be home|well be home|i will be home|ill be home|10 4|104)$/;
     const isYes = body => {
       let b = norm(body).toLowerCase().replace(/[‘’`´]/g, '\'').replace(/[“”]/g, '"');
       if (/^(liked|loved|emphasized|emphasised) ["']/.test(b)) return true;   // an iPhone reaction (👍 ❤️ ‼️) to our text
@@ -3917,7 +3928,12 @@
         throw Object.assign(new Error('their phone numbers didn\'t load (' + errText(e) + ')'), { kind: e.kind });
       }
       const nums = Array.from(new Set(phones.map(p => p.num)));
-      let best = null, unreadLeft = false;
+      // Per number: the confirm texts sent since the last weekday before the board's day (all for
+      // this appointment), and the replies after the first one that went through. A C to
+      // ServiceTitan's automatic reminder gets confirmed by ServiceTitan itself (it shows as
+      // already confirmed); anything else said to it is read like any other reply.
+      const per = [];
+      let unreadLeft = '';
       for (const num of nums) {
         if (!alive()) return null;
         const t = await st.chatThread(num);
@@ -3925,20 +3941,27 @@
         let raw;
         if (t.ReadStatus === c.unread) { raw = await ctx.readUnread(t, num); if (!raw) { unreadLeft = unreadLeft || num; continue; } }
         else raw = await st.chatMessages(t.ThreadId, 60);
-        const msgs = asPageMsgs(raw, c);
-        const sent = msgs.filter(m => m.IsOutbound && !m.IsNotification && timeOf(m) >= fromT && timeOf(m) < toT && pats.some(re => re.test(norm(m.Body))))
-          .sort((a, b) => timeOf(b) - timeOf(a) || idOf(b) - idOf(a))[0];
-        if (!sent || (best && timeOf(best.sent) >= timeOf(sent))) continue;
-        const after = m => timeOf(m) > timeOf(sent) || (timeOf(m) === timeOf(sent) && idOf(m) > idOf(sent));
-        best = { num, sent, sig: replySig(t), replies: msgs.filter(m => m.IsInbound && after(m)).sort((a, b) => timeOf(a) - timeOf(b) || idOf(a) - idOf(b)) };
+        const msgs = asPageMsgs(raw, c).sort((a, b) => timeOf(a) - timeOf(b) || idOf(a) - idOf(b));
+        const asks = msgs.filter(m => timeOf(m) >= fromT && timeOf(m) < toT && isConfirmText(m, pats));
+        if (!asks.length) continue;
+        const ok = asks.filter(m => !m.SmsSendErrorCode && !m.HasNotBeenDelivered);
+        const first = ok[0] || null;
+        const after = m => first && (timeOf(m) > timeOf(first) || (timeOf(m) === timeOf(first) && idOf(m) > idOf(first)));
+        per.push({ num, sig: replySig(t), failed: !first, replies: msgs.filter(m => m.IsInbound && after(m)) });
       }
-      if (!best) return unreadLeft ? { kind: 'look', why: 'has an unread message. Read it in the Chat Center', num: unreadLeft } : { kind: 'notTexted', num: nums[0] || '' };
-      const base = { num: best.num, sig: best.sig };
-      if (best.sent.SmsSendErrorCode || best.sent.HasNotBeenDelivered) return Object.assign(base, { kind: 'look', why: 'the confirm text didn\'t go through' });
-      if (!best.replies.length) return Object.assign(base, { kind: 'noReply' });
-      const said = best.replies.map(m => norm(m.Body) || '(a picture or empty message)');
-      if (optedOut(best.replies)) return Object.assign(base, { kind: 'look', why: 'replied STOP / Cancel', said });
-      if (best.replies.every(m => isYes(m.Body))) return Object.assign(base, { kind: 'yes', said });
+      if (!per.length) return unreadLeft ? { kind: 'look', why: 'has an unread message. Read it in the Chat Center', num: unreadLeft } : { kind: 'notTexted', num: nums[0] || '' };
+      const sigs = {};
+      per.forEach(x => { sigs[x.num] = x.sig; });
+      const sent = per.filter(x => !x.failed);
+      if (!sent.length) return { kind: 'look', why: 'the confirm text didn\'t go through', num: per[0].num, sigs };
+      const replies = [].concat.apply([], sent.map(x => x.replies)).sort((a, b) => timeOf(a) - timeOf(b) || idOf(a) - idOf(b));
+      // The number they answered from (the latest reply), else the first one texted.
+      const last = replies[replies.length - 1];
+      const base = { num: last ? sent.find(x => x.replies.indexOf(last) > -1).num : sent[0].num, sigs };
+      if (!replies.length) return Object.assign(base, { kind: 'noReply' });
+      const said = replies.map(m => norm(m.Body) || '(a picture or empty message)');
+      if (optedOut(replies)) return Object.assign(base, { kind: 'look', why: 'replied STOP / Cancel', said });
+      if (replies.every(m => isYes(m.Body))) return Object.assign(base, { kind: 'yes', said });
       return Object.assign(base, { kind: 'look', why: 'replied', said });
     };
     // What the conversation's newest message is, ignoring read/unread (you or a coworker reading
@@ -4085,9 +4108,14 @@
       const total = P.yes.reduce((k, x) => k + x.todo.length, 0);
       const one = async cu => {
         // Anything new in their conversation since the check? Then you read it first.
-        const t = await st.chatThread(cu.num);
-        if (!cu.sig) { look.push(item(cu, 'Not confirmed: couldn\'t tell whether a new message came in. Read their conversation', cu.todo.map(a => a.jobId))); n += cu.todo.length; return; }
-        if (replySig(t) !== cu.sig) { look.push(item(cu, 'Not confirmed: a new message came in after the check. Read it, then check again', cu.todo.map(a => a.jobId))); n += cu.todo.length; return; }
+        const nums = Object.keys(cu.sigs || {});
+        let changed = !nums.length, unknown = false;
+        for (const num of nums) {
+          if (!cu.sigs[num]) { unknown = true; continue; }
+          if (replySig(await st.chatThread(num)) !== cu.sigs[num]) changed = true;
+        }
+        if (unknown && !changed) { look.push(item(cu, 'Not confirmed: couldn\'t tell whether a new message came in. Read their conversation', cu.todo.map(a => a.jobId))); n += cu.todo.length; return; }
+        if (changed) { look.push(item(cu, 'Not confirmed: a new message came in after the check. Read it, then check again', cu.todo.map(a => a.jobId))); n += cu.todo.length; return; }
         for (let ai = 0; ai < cu.todo.length; ai++) {
           const a = cu.todo[ai];
           if (rStop || signedOut) { look.push(item(cu, 'Not confirmed (stopped)', cu.todo.slice(ai).map(z => z.jobId))); return; }
