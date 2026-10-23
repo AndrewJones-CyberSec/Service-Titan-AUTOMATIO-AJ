@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.5
+
+- **📱 Customer Texts: `{when}` fill-in.** It becomes **today**, **tomorrow**, or the date (**on Friday, October 30**) by comparing the appointment's day on the board with today's date when the text goes out. Today and tomorrow stay plain words; anything later is the date. Jobs on the board's day (the timeline, or **＋ Everyone on the board**, which also adds that day's Unassigned list) use the board's day; a job picked from another tab of the job list or typed in gets its next appointment read from ServiceTitan (the same list the job panel shows). Holds are skipped with the reason, and so is a day that has already passed.
+- **✅ Confirm Appt uses it:** *…remind you of your appointment you have with us {when}…*, so one message works the day before, the morning of, or a week ahead. Anyone with the 1.6.4 message saved unchanged gets it updated once; a message you changed is left alone.
+- **📥 Check replies reads dates.** A confirm text that names a date (*on Friday, October 30*, *Oct 30th*, *10/30*, or ServiceTitan's reminder with its date) counts for that day only, however long before it was sent, so a reminder sent a week ahead counts and one for a different appointment doesn't. A text without a date counts when it was sent since the last weekday before the day, as before, except that one saying *today* only counts if it was sent on the day itself, and one saying *tomorrow* doesn't if it was (each is about another appointment). **Not texted** now says which day: *no confirm text for Fri, Oct 23*.
+- Tests: new `tests/test_when.py`.
+
 ## 1.6.4
 
 - **📱 Customer Texts: ✅ Confirm Appt folder** (new default; added once for anyone who already saved their folders). Its message: *Hey, this is {dispatcher} with AirSouth… remind you of your appointment you have with us tomorrow… Reply 'C' to confirm. Thank you!* Same-message-today repeat rule. Send it with the board on tomorrow and **＋ Everyone on the board**.

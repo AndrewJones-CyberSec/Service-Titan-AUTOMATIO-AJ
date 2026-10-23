@@ -19,8 +19,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.6.4';
+  const VERSION = '1.6.5';
   const WHATS_NEW = {
+    '1.6.5': 'New fill-in for 📱 Customer Texts: {when} says "today", "tomorrow", or the date ("on Friday, October 30") from the appointment\'s day on the board and today\'s date. ✅ Confirm Appt uses it, so the same message works the day before, the morning of, or a week ahead. 📥 Check replies is smarter too: a confirm text that names a date only counts for that date.',
     '1.6.4': 'New in 📱 Customer Texts: a ✅ Confirm Appt folder with the "Reply \'C\' to confirm" reminder for tomorrow\'s customers, and 📥 Check replies and confirm. It reads the replies to any text asking for a C (yours, a coworker\'s, or ServiceTitan\'s automatic reminder) and confirms the appointments of everyone who answered C, yes or 👍 when you press Confirm. Everyone else is a card under Needs a look, No reply yet or Not texted, with what they said, their number, copy buttons, and ✅ Add to confirm for the ones you decide are a yes. It never sends anything.',
     '1.6.3': 'Safer with two tabs open: 💬 Tech Messages and 📱 Customer Texts now check your 🛡️ / 🚫 never lists as saved right now, before the list, Start and each person, so someone you block in another tab is never messaged from this one, and saving settings in one tab no longer undoes blocks made in another. A Customer Texts run no longer fills the Back button with every conversation it opened. Tech Messages puts the Toolbox back where it was after moving it aside for the message panel.',
     '1.6.2': 'Faster 🔀 Move Jobs: it now works on up to three jobs at once, so moving jobs from one tech to another takes about a third of the time (Unassigned moves, whole-day swaps and Put back are faster too). A run also ends as soon as the board shows the changes, instead of always waiting 2.5 seconds. Each job is still done the same careful way: checked again right before, the new tech added first and confirmed, then the old one taken off and confirmed. Stop lets the jobs already started finish.',
@@ -362,9 +363,16 @@
       if (typeof a.isConfirmed !== 'boolean') throw fail('bad', 'the appointment came back in a shape the Toolbox doesn\'t know (no confirmed flag)');
       return { confirmed: a.isConfirmed, status: a.jobAppointmentStatus, start: a.start || null };
     };
+    // A job's appointments, as the job panel lists them: [{ id, status, start }] (seen Oct 2026:
+    // status 0 = Scheduled, 4 = Done, 5 = Canceled). Works without permission to open the job record.
+    const jobAppointments = async jobId => {
+      const d = await getJSON('/dispatch/job-edit-flyout/GetJobAppointments?jobId=' + encodeURIComponent(jobId));
+      if (!Array.isArray(d) || d.some(a => !a || a.id == null)) throw fail('bad', 'the job\'s appointments came back in a shape the Toolbox doesn\'t know');
+      return d.map(a => ({ id: a.id, status: a.status, start: a.start || null }));
+    };
     const setConfirmed = (apptId, on) => getJSON('/dispatch/job-edit-flyout/UpdateJobAppointmentIsConfirmed', 20000, { jobAppointmentId: apptId, isConfirmed: !!on });
     return { getJSON, pool, NOT_RUN, haltNote, SIGNED_OUT, isSignedOut, isNoPermission, job, jobEdit, chatThread, chatMessages, customerPhones, code,
-      appointment, jobSkills, technicians, techsBooked, daySchedule, assignTechs, unassignTechs, apptConfirmed, setConfirmed };
+      appointment, jobSkills, technicians, techsBooked, daySchedule, assignTechs, unassignTechs, apptConfirmed, setConfirmed, jobAppointments };
   })();
 
   // Customer cards: customers in sections (Needs a look, Confirmed, No reply…), one card each with
@@ -2799,10 +2807,11 @@
       { name: '📅 Reschedule', days: 1, same: true, msgs: [
         ['📅 Need to reschedule', 'Hey, this is {dispatcher} with AirSouth Cooling, Heating, Plumbing and Electrical. We need to reschedule your appointment. Please give us a call at 601-847-9941 so we can find a time that works for you. Thank you!']
       ] },
-      // Sent the day before (＋ Everyone on the board, with the board on tomorrow). Customers who
-      // answer C get their appointment confirmed by 📥 Check replies.
+      // Sent to ＋ Everyone on the board for the day of their appointments. {when} says today,
+      // tomorrow or the date. Customers who answer C get their appointment confirmed by
+      // 📥 Check replies.
       { name: '✅ Confirm Appt', days: 1, same: true, msgs: [
-        ['📅 Confirm tomorrow', 'Hey, this is {dispatcher} with AirSouth Cooling, Heating, Plumbing, and Electrical. I\'m reaching out to remind you of your appointment you have with us tomorrow. If you have any questions, please call (601) 847-9941. Reply \'C\' to confirm. Thank you!']
+        ['📅 Confirm appointment', 'Hey, this is {dispatcher} with AirSouth Cooling, Heating, Plumbing, and Electrical. I\'m reaching out to remind you of your appointment you have with us {when}. If you have any questions, please call (601) 847-9941. Reply \'C\' to confirm. Thank you!']
       ] },
       // Reminders to customers on the board (＋ Everyone on the board). The starter message is a
       // plain reminder: no phone number, offer or "call us", which is what makes a reminder read
@@ -2845,6 +2854,16 @@
     let confirmKeys = (() => { const v = loadJSON(K.confirm, null); return Array.isArray(v) ? v.filter(x => typeof x === 'string') : CONFIRM_DEFAULT.map(folderKey); })();
     const isConfirmFolder = f => !!f && confirmKeys.indexOf(folderKey(f.name)) > -1;
     const saveConfirm = () => set(K.confirm, JSON.stringify(confirmKeys));
+    // 1.6.5: the Confirm Appt message as it shipped in 1.6.4 ("…with us tomorrow.") becomes the
+    // {when} one, once, and only where nobody changed it.
+    (() => {
+      if (get('stCtWhenUpdated') === '1') return;
+      const was = 'Hey, this is {dispatcher} with AirSouth Cooling, Heating, Plumbing, and Electrical. I\'m reaching out to remind you of your appointment you have with us tomorrow. If you have any questions, please call (601) 847-9941. Reply \'C\' to confirm. Thank you!', now = 'Hey, this is {dispatcher} with AirSouth Cooling, Heating, Plumbing, and Electrical. I\'m reaching out to remind you of your appointment you have with us {when}. If you have any questions, please call (601) 847-9941. Reply \'C\' to confirm. Thank you!';
+      let changed = false;
+      folders.forEach(f => f.msgs.forEach(m => { if (m[1] === was) { m[1] = now; if (m[0] === '📅 Confirm tomorrow') m[0] = '📅 Confirm appointment'; changed = true; } }));
+      if (changed) saveFolders();
+      set('stCtWhenUpdated', '1');
+    })();
     let fIdx = Math.max(0, Math.min(parseInt(get(K.folder) || '0', 10) || 0, folders.length - 1));
     let picks = loadJSON(K.pick, {});
     if (!picks || typeof picks !== 'object' || Array.isArray(picks)) picks = {};
@@ -2867,7 +2886,50 @@
     };
     const myName = () => norm(get(K.name)) || autoName();
     const uses = (tmpl, key) => new RegExp('\\{' + key + '\\}', 'i').test(tmpl);
-    const fill = (tmpl, r) => tmpl.replace(/\{dispatcher\}/gi, myName()).replace(/\{first\}/gi, r.first || '').replace(/\{tech\}/gi, r.tech || '');
+    const fill = (tmpl, r) => tmpl.replace(/\{dispatcher\}/gi, myName()).replace(/\{first\}/gi, r.first || '').replace(/\{tech\}/gi, r.tech || '').replace(/\{when\}/gi, r.when || '');
+    // {when}: the appointment's day compared with today's date when the text goes out: "today",
+    // "tomorrow", or "on Friday, October 30" for anything later. null once the day has passed.
+    const whenText = day => {
+      const t = new Date(); t.setHours(0, 0, 0, 0);
+      const d = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+      const diff = Math.round((d.getTime() - t.getTime()) / 86400000);
+      if (diff < 0) return null;
+      if (diff === 0) return 'today';
+      if (diff === 1) return 'tomorrow';
+      return 'on ' + d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    };
+    // A job's next appointment day (today or later, not Done or Canceled), read from the job panel's
+    // list of its appointments. For a job not on the board's day (another tab of the job list at
+    // the bottom, or typed in). null if it has none.
+    const nextApptDay = async jobId => {
+      const t = new Date(); t.setHours(0, 0, 0, 0);
+      const days = (await st.jobAppointments(jobId))
+        .filter(a => !(a.status === 4 || a.status === 5 || (typeof a.status === 'string' && /^(done|completed|cancell?ed)$/i.test(norm(a.status)))))
+        .map(a => a.start ? new Date(a.start) : null).filter(d => d && !isNaN(d))
+        .map(d => new Date(d.getFullYear(), d.getMonth(), d.getDate())).filter(d => d.getTime() >= t.getTime())
+        .sort((a, b) => a - b);
+      return days[0] || null;
+    };
+    // A picked job's appointment day: the board's day, for a job on the board's timeline that day
+    // or added by ＋ Everyone on the board (that day's timeline and Unassigned list). null otherwise
+    // (another tab of the job list, a typed job): its next appointment is then read (nextApptDay).
+    const jobDay = j => {
+      const day = boardDay();
+      if (!day) return null;
+      // Added by ＋ Everyone on the board for the day the board shows now. (Loaded for another day,
+      // it's read fresh below instead.)
+      const b = boardInfo.get(String(j));
+      if (b && b.day instanceof Date && sameDay(b.day, day)) return day;
+      try {
+        const on = (un(boardVM().Assignments) || []).some(a => {
+          if (String(un(a.JobId)) !== String(j) || canceled(a)) return false;
+          const sd = un(a.Start) ? new Date(un(a.Start)) : null;
+          return !sd || isNaN(sd) || sameDay(sd, day);
+        });
+        if (on) return day;
+      } catch (e) {}
+      return null;
+    };
 
     // ---------- Settings ----------
     let allMobiles = get(K.all) === '1';
@@ -2971,7 +3033,7 @@
           if (sd && !isNaN(sd) && !sameDay(sd, day)) return;
           if (canceled(a)) { canceledN++; seen.add(j); return; }
           seen.add(j); onTimeline++;
-          jobs.push({ jobId: j, customer: norm(un(a.Customer)), customerId: un(a.CustomerId) || null, tech: titleCase(firstWord(un(a.FirstName) || un(a.TechnicianName))) });
+          jobs.push({ jobId: j, customer: norm(un(a.Customer)), customerId: un(a.CustomerId) || null, tech: titleCase(firstWord(un(a.FirstName) || un(a.TechnicianName))), day });
         } catch (e) {}
       });
       const PAGE = 500;
@@ -2990,7 +3052,7 @@
         seen.add(j);
         if (canceled(x)) { canceledN++; return; }
         unassignedN++;
-        jobs.push({ jobId: j, customer: norm(x.Customer), customerId: x.CustomerId || null, tech: '' });
+        jobs.push({ jobId: j, customer: norm(x.Customer), customerId: x.CustomerId || null, tech: '', day });
       });
       health.clear(TOOL);
       return { jobs, onTimeline, unassigned: unassignedN, canceled: canceledN };
@@ -3070,7 +3132,7 @@
         if (!holds) return out;
         holds.jobs.forEach(h => { if (typeSel.has(h.type)) addOne({ jobId: h.jobId, customer: h.customer, customerId: h.customerId, tech: '', hold: true, listStatus: h.status }); });
       } else {
-        picker.ids().forEach(j => { const b = jobInfo(j) || {}; addOne({ jobId: j, customer: b.customer || picker.label(j) || '', customerId: b.customerId || null, tech: b.tech || '' }); });
+        picker.ids().forEach(j => { const b = jobInfo(j) || {}; addOne({ jobId: j, customer: b.customer || picker.label(j) || '', customerId: b.customerId || null, tech: b.tech || '', day: jobDay(j) }); });
       }
       return out;
     };
@@ -3205,7 +3267,7 @@
     const vEdit = mkView('edit');
     const editHead = head('');
     const editMsg = msgLine();
-    const EDIT_HINT = 'Fill-ins: {dispatcher} = your first name, {first} = customer\'s first name, {tech} = the tech\'s first name (jobs on the board only). Saved in this browser.';
+    const EDIT_HINT = 'Fill-ins: {dispatcher} = your first name, {first} = customer\'s first name, {tech} = the tech\'s first name (jobs on the board only), {when} = when their appointment is: "today", "tomorrow" or "on Friday, October 30" (not for holds). Saved in this browser.';
     const ed = listEditor('message', 'Button name (e.g. 🆓 Free quote)', 'Message text', 'calc(100vh - 320px)', { allowEmpty: true });
     const editNav = row();
     editNav.append(
@@ -3607,6 +3669,22 @@
       let chatTrouble = 0;
       const results = await st.pool(list, 4, async (r, i, alive) => {
         if (uses(tmpl, 'tech') && !r.tech) return { skips: [{ why: 'no tech on the board for {tech}', kind: 'skipped' }] };
+        let when = '';
+        if (uses(tmpl, 'when')) {
+          if (r.hold) return { skips: [{ why: 'on hold, so there\'s no appointment day for {when}', kind: 'skipped' }] };
+          let day = r.day;
+          if (!day) {
+            try { day = await nextApptDay(r.jobId); }
+            catch (e) {
+              if (st.isSignedOut(e)) throw e;
+              return { skips: [{ why: 'its appointment couldn\'t be read for {when} (' + errText(e) + ')', kind: 'problem' }] };
+            }
+            if (!alive()) return null;
+            if (!day) return { skips: [{ why: 'no upcoming appointment for {when}', kind: 'skipped' }] };
+          }
+          when = whenText(day);
+          if (when === null) return { skips: [{ why: 'their appointment day has already passed', kind: 'skipped' }] };
+        }
         const info = await billTo(r, alive);
         if (!alive()) return null;
         if (holdGone(r, info.status)) return { info, skips: [{ why: holdGone(r, info.status), kind: 'skipped' }] };
@@ -3614,7 +3692,7 @@
         const pickN = pickNumbers(info.phones);
         if (!pickN.nums.length) return { info, skips: [{ why: 'no mobile number on the Bill To', kind: 'skipped' }] };
         if (uses(tmpl, 'first') && !firstWord(name)) return { info, skips: [{ why: 'no customer name for {first}', kind: 'skipped' }] };
-        const text = fill(tmpl, { first: titleCase(firstWord(name)), tech: r.tech });
+        const text = fill(tmpl, { first: titleCase(firstWord(name)), tech: r.tech, when });
         const nums = await Promise.all(pickN.nums.map(async num => {
           if (never.indexOf(num) > -1) return { num, skip: 'on your 🚫 never-text list', kind: 'skipped' };
           // If the chat data can't be read, the conversation's own page is checked during the run.
@@ -3870,14 +3948,30 @@
     // fill-in can be any short text.
     const lettersOf = t => String(t == null ? '' : t).toLowerCase().replace(/[^a-z0-9]/g, '');
     const tmplMatcher = tmpl => {
-      const re = new RegExp('^' + norm(tmpl).split(/(\{(?:dispatcher|first|tech)\})/i)
-        .map(p => /^\{(?:dispatcher|first|tech)\}$/i.test(p) ? '[a-z0-9]{0,40}?' : escRe(lettersOf(p).replace(/and/g, '\u0001')).replace(/\u0001/g, '(?:and)?')).join('') + '$');
+      const re = new RegExp('^' + norm(tmpl).split(/(\{(?:dispatcher|first|tech|when)\})/i)
+        .map(p => /^\{(?:dispatcher|first|tech|when)\}$/i.test(p) ? '[a-z0-9]{0,40}?' : escRe(lettersOf(p).replace(/and/g, '\u0001')).replace(/\u0001/g, '(?:and)?')).join('') + '$');
       return { test: body => re.test(lettersOf(body)) };
     };
     // Any text that asks the customer to reply C to confirm, however it's worded: ServiceTitan's
     // own automatic reminder ("…Reply 'C' to confirm."), a coworker's own wording ("respond…with
     // a, "C" to CONFIRM"), or a saved message from a confirm folder.
     const ASKS_FOR_C = /(["'‘’“”]\s*c\s*["'‘’“”][^.!?\n]{0,15}confirm)|(\b(reply|respond|text|send)\b[^.!?\n]{0,40}\bc\b[^.!?\n]{0,15}confirm)/i;
+    // The day a text names ("on Friday, October 30", "Oct 30th", "10/30", or ServiceTitan's
+    // "Friday October 23 2026"), or null. A December text naming January is next year's.
+    const MONTH_RE = /\b(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sept|sep|october|oct|november|nov|december|dec)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b/i;
+    const MONTHS3 = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const namedDay = (body, sent) => {
+      const t = String(body == null ? '' : body);
+      let mo = -1, dd = 0;
+      const m = MONTH_RE.exec(t);
+      if (m) { mo = MONTHS3.indexOf(m[1].slice(0, 3).toLowerCase()); dd = Number(m[2]); }
+      else { const n = /(?:^|[^\d\/])(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?(?![\d\/])/.exec(t); if (n) { mo = Number(n[1]) - 1; dd = Number(n[2]); } }
+      if (mo < 0 || mo > 11 || dd < 1 || dd > 31) return null;
+      let d = new Date(sent.getFullYear(), mo, dd);
+      if (d.getMonth() !== mo) return null;   // no such day (Feb 31)
+      if (d.getTime() < sent.getTime() - 7 * 86400000) d = new Date(sent.getFullYear() + 1, mo, dd);
+      return d;
+    };
     const isConfirmText = (m, pats) => !!m && m.IsOutbound && (ASKS_FOR_C.test(norm(m.Body)) || (!m.IsNotification && pats.some(p => p.test(m.Body))));
     // Is this reply a yes? C, Yes, OK, Confirmed, 👍 and the like, with or without "thanks". A
     // question, a second sentence or anything else is not: those are read by you.
@@ -3924,7 +4018,7 @@
     };
     // One customer's replies. ctx.readUnread decides whether an unread conversation can be read
     // without ServiceTitan marking it read (see below).
-    const readReplies = async (cust, pats, fromT, toT, ctx, alive) => {
+    const readReplies = async (cust, pats, fromT, toT, ctx, alive, day) => {
       const c = codes();
       let phones;
       try { phones = await st.customerPhones(cust.customerId); }
@@ -3947,7 +4041,22 @@
         if (t.ReadStatus === c.unread) { raw = await ctx.readUnread(t, num); if (!raw) { unreadLeft = unreadLeft || num; continue; } }
         else raw = await st.chatMessages(t.ThreadId, 60);
         const msgs = asPageMsgs(raw, c).sort((a, b) => timeOf(a) - timeOf(b) || idOf(a) - idOf(b));
-        const asks = msgs.filter(m => timeOf(m) >= fromT && timeOf(m) < toT && isConfirmText(m, pats));
+        // A text that names a date counts for that date only (a reminder sent a week ahead, or one
+        // for a different appointment). One that doesn't counts when it was sent since the last
+        // weekday before the day, except that "today" only counts if sent on the day itself and
+        // "tomorrow" doesn't if sent on the day itself (each is about another appointment).
+        const forDay = m => {
+          const t = timeOf(m);
+          if (t >= toT) return false;
+          const named = namedDay(m.Body, new Date(t));
+          if (named) return sameDay(named, day);
+          if (t < fromT) return false;
+          const b = String(m.Body == null ? '' : m.Body).toLowerCase();
+          if (/\btoday\b/.test(b)) return sameDay(new Date(t), day);        // "today" is the day it was sent
+          if (/\btomorrow\b/.test(b)) return !sameDay(new Date(t), day);    // "tomorrow" sent on the day is the next day's
+          return true;
+        };
+        const asks = msgs.filter(m => isConfirmText(m, pats) && forDay(m));
         if (!asks.length) continue;
         const ok = asks.filter(m => !m.SmsSendErrorCode && !m.HasNotBeenDelivered);
         const first = ok[0] || null;
@@ -4053,7 +4162,7 @@
         if (ctx.markRead) return null;
         return await st.chatMessages(t.ThreadId, 60);
       };
-      const res = await st.pool(custs, 4, (cu, i, alive) => readReplies(cu, pats, fromT, toT, ctx, alive),
+      const res = await st.pool(custs, 4, (cu, i, alive) => readReplies(cu, pats, fromT, toT, ctx, alive, day),
         (d, t) => { if (id === rCheckId) repMsg.textContent = 'Reading replies… ' + d + ' of ' + t; }, { stop: () => id !== rCheckId });
       if (id !== rCheckId || res.stopped) return;
       if (res.halted === 'signedOut') { repMsg.textContent = '⚠️ ' + st.SIGNED_OUT + '\n\nNothing was confirmed.'; return; }
@@ -4086,7 +4195,6 @@
       if (ctx.markRead) P.notes.push('ℹ️ ServiceTitan marked a conversation read when its replies were read (…' + ctx.markedNum.slice(-4) + '), so other unread ones were left unread and are under Needs a look.');
       if (!custs.length) P.notes.push('No appointments' + (picked.length ? ' for the jobs you picked' : '') + ' on ' + dayText + '.');
       if (notOnDay.length) P.notes.push('Picked jobs not on ' + dayText + ': #' + notOnDay.join(', #'));
-      P.fromDay = textsFrom(day).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
       P.checked = 'Checked ' + s1(custs.length, 'customer') + ' in ' + Math.max(1, Math.round((Date.now() - t0) / 1000)) + 's.';
       showPlan(P);
     };
@@ -4122,7 +4230,7 @@
         }) },
         { key: 'already', title: '☑️ Answered yes, already confirmed', tone: 'done', items: P.already.map(x => item(x, 'Already confirmed')) },
         { key: 'noReply', title: '💤 No reply yet', tone: 'quiet', items: P.noReply.map(x => addable('noReply', x, 'No reply yet')) },
-        { key: 'notTexted', title: '📭 Not texted (no confirm text since ' + P.fromDay + ')', tone: 'faint', items: P.notTexted.map(x => addable('notTexted', x, 'No confirm text since ' + P.fromDay)) }
+        { key: 'notTexted', title: '📭 Not texted (no confirm text for ' + P.dayText + ')', tone: 'faint', items: P.notTexted.map(x => addable('notTexted', x, 'No confirm text for ' + P.dayText)) }
       ], P.notes);
       repMsg.textContent = P.checked + ' ' + (todo ? 'Nothing is confirmed until you press Confirm.' : 'Nothing to confirm.');
       repGo.textContent = 'Confirm ' + s1(todo, 'appointment');
@@ -4185,13 +4293,12 @@
         };
         await Promise.all([worker(), worker(), worker()]);
         const notDone = P.yes.slice(next).map(cu => item(cu, 'Not confirmed (stopped)', cu.todo.map(a => a.jobId)));
-        const fromDay = textsFrom(P.day).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
         cards.render([
           { key: 'look', title: '⚠️ Needs a look', tone: 'warn', open: true, items: cards.merge(look.concat(notDone, P.look.map(x => item(x, x.why)))) },
           { key: 'done', title: '✅ Confirmed', tone: 'good', open: true, items: cards.merge(done) },
           { key: 'already', title: '☑️ Already confirmed', tone: 'done', items: cards.merge(already.concat(P.already.map(x => item(x, 'Already confirmed')))) },
           { key: 'noReply', title: '💤 No reply yet', tone: 'quiet', items: P.noReply.map(x => item(x, 'No reply yet')) },
-          { key: 'notTexted', title: '📭 Not texted (no confirm text since ' + fromDay + ')', tone: 'faint', items: P.notTexted.map(x => item(x, 'No confirm text since ' + fromDay)) }
+          { key: 'notTexted', title: '📭 Not texted (no confirm text for ' + P.dayText + ')', tone: 'faint', items: P.notTexted.map(x => item(x, 'No confirm text for ' + P.dayText)) }
         ], notes);
         const sum = s1(done.length, 'appointment') + ' confirmed' + (look.length + notDone.length + P.look.length ? ', ' + (look.length + notDone.length + P.look.length) + ' need a look' : '') + ', ' + P.noReply.length + ' no reply yet';
         repMsg.textContent = signedOut ? '⚠️ ' + st.SIGNED_OUT + ' (Before that: ' + sum + '.)' : (rStop ? 'Stopped: ' : 'Done: ') + sum + '.';

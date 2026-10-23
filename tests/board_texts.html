@@ -144,6 +144,13 @@
       const a = Number(fl[1]);
       return json({ jobId: a - 100000, jobAppointments: [{ id: a, isConfirmed: !!window.CONFIRMED[a], jobAppointmentStatus: window.APPT_STATUS[a] || 0, start: window.APPT_START[a] || new Date(today.getTime() + 9 * 3600000).toISOString(), technicians: [] }] });
     }
+    // A job's appointments (holds have none here). APPT_START / APPT_STATUS change one.
+    let ja = /^\/dispatch\/job-edit-flyout\/GetJobAppointments\?jobId=(\d+)/.exec(u);
+    if (ja) {
+      const j = Number(ja[1]), a = j + 100000;
+      if (!JOBCUST[j] || HOLDS.some(h => h[0] === j)) return json([]);
+      return json([{ id: a, status: window.APPT_STATUS[a] || 0, start: window.APPT_START[a] || new Date(today.getTime() + 9 * 3600000).toISOString() }]);
+    }
     if (u.indexOf('/dispatch/job-edit-flyout/UpdateJobAppointmentIsConfirmed') === 0) {
       const b = JSON.parse(opts.body);
       window.CONFIRM_POSTS.push(b);

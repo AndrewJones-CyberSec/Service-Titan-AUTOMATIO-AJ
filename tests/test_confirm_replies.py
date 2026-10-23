@@ -100,7 +100,7 @@ with sync_playwright() as p:
     B(page, 'Start (type only)').click()
     page.wait_for_function("() => /Will text|Nobody to text/.test(document.getElementById('st-toolbox').innerText)", timeout=30000)
     t = panel_text(page)
-    check(CONFIRM in t, 'starter message is the exact Confirm Appt text, signed Andrew')
+    check(CONFIRM.replace('with us tomorrow.', 'with us today.') in t, 'starter message is the Confirm Appt text, signed Andrew, with {when} = today for today\'s board')
     B(page, 'Cancel').click()
     B(page, 'Clear').click()
 
@@ -189,7 +189,7 @@ with sync_playwright() as p:
     mo = page.locator('#st-toolbox .st-cust-card').filter(has_text='Mo Day').first
     check(not mo.is_visible() and page.locator('#st-toolbox .st-cust-card:visible').filter(has_text='Kim Wu').count() == 1, 'Not texted starts folded; Needs a look starts open')
     page.locator('#st-toolbox button:visible', has_text='📭 Not texted').first.click()
-    check(mo.is_visible() and '(601) 555-0022' in mo.inner_text() and 'No confirm text since' in mo.inner_text(), 'opening Not texted shows Mo\'s card, number and why')
+    check(mo.is_visible() and '(601) 555-0022' in mo.inner_text() and 'No confirm text for' in mo.inner_text(), 'opening Not texted shows Mo\'s card, number and why')
     page.locator('#st-toolbox button:visible', has_text='📭 Not texted').first.click()
     check(not mo.is_visible(), 'and it folds shut again')
     check('Pia Lane' in look and 'didn\'t go through' in look, 'a confirm text that failed: needs a look')
