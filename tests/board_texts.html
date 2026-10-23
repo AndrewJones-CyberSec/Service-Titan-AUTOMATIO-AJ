@@ -99,6 +99,7 @@
   // LIST_STATUS[job] the JobStatus the Hold list shows for it (like the real list, normally 'Hold').
   // apiCalls counts requests; apiLog lists them.
   window.apiCalls = 0; window.apiLog = []; window.JOB_STATUS = {}; window.LIST_STATUS = {};
+  window.CONFIRMED = {}; window.APPT_STATUS = {}; window.CONFIRM_IGNORE = {}; window.CONFIRM_POSTS = [];
   const pause = (ms, signal) => new Promise((res, rej) => {
     const t = setTimeout(res, ms);
     if (signal) signal.addEventListener('abort', () => { clearTimeout(t); rej(new DOMException('The user aborted a request.', 'AbortError')); });
@@ -128,12 +129,26 @@
       const b = JSON.parse(opts.body);
       window.lastGetJobs = b;
       if (b.JobType === 'Unassigned') {
-        const rows = UNASSIGNED.map(x => ({ JobId: x[0], Customer: C[x[1]].name + ' ', CustomerId: x[1], Type: 'Service - HVAC', JobStatus: x[2] ? 'Canceled' : 'Scheduled', AppointmentStatus: x[2] ? 5 : 0 }));
+        const rows = UNASSIGNED.map(x => ({ Id: x[0] + 100000, IsConfirmed: !!window.CONFIRMED[x[0] + 100000], JobId: x[0], Customer: C[x[1]].name + ' ', CustomerId: x[1], Type: 'Service - HVAC', JobStatus: x[2] ? 'Canceled' : 'Scheduled', AppointmentStatus: x[2] ? 5 : 0 }));
         return json({ Jobs: rows.slice(b.QueryFilter.Skip, b.QueryFilter.Skip + b.QueryFilter.Take), Count: rows.length });
       }
       if (b.JobType !== 'Hold') return json({ Jobs: [], Count: 0 });
       const rows = HOLDS.map(h => ({ JobId: h[0], Customer: C[h[1]].name + ' ', CustomerId: h[1], Type: h[2], CustomerPhone: C[h[1]].c[0][1], JobStatus: LIST_STATUS[h[0]] || 'Hold', AppointmentStatus: 'Hold' }));
       return json({ Jobs: rows.slice(b.QueryFilter.Skip, b.QueryFilter.Skip + b.QueryFilter.Take), Count: rows.length });
+    }
+    // The job panel's appointment data and its Confirm / Remove confirmation request.
+    // CONFIRMED[appt] = true: confirmed. APPT_STATUS[appt]: 4 = Done. CONFIRM_IGNORE[appt]: the
+    // confirm is accepted but doesn't stick. CONFIRM_POSTS lists what was sent.
+    let fl = /^\/dispatch\/job-edit-flyout\/GetJobEditFlyoutData\?appointmentId=(\d+)/.exec(u);
+    if (fl) {
+      const a = Number(fl[1]);
+      return json({ jobId: a - 100000, jobAppointments: [{ id: a, isConfirmed: !!window.CONFIRMED[a], jobAppointmentStatus: window.APPT_STATUS[a] || 0, technicians: [] }] });
+    }
+    if (u.indexOf('/dispatch/job-edit-flyout/UpdateJobAppointmentIsConfirmed') === 0) {
+      const b = JSON.parse(opts.body);
+      window.CONFIRM_POSTS.push(b);
+      if (!window.CONFIRM_IGNORE[b.jobAppointmentId]) window.CONFIRMED[b.jobAppointmentId] = !!b.isConfirmed;
+      return new Response('', { status: 200 });
     }
     let m = /^\/Job\/Index\/\?id=(\d+)/.exec(u);
     let c;
@@ -147,6 +162,7 @@
     if ((c = /^\/GrowthChatCenter\/Messages\?threadId=(\d+)/.exec(u))) {
       if (window.CHAT_API_DOWN) return json({}, 500);
       const num = c[1], chat = CHATS[num];
+      if (chat && window.MARK_READ_ON_FETCH) chat.unread = false;
       return json({ Messages: chat ? rawMsgs(num, chat) : [], HasNoMore: true });
     }
     if (m) {
@@ -176,7 +192,7 @@
         JobList: { AllVisibleJobs: ko.observable([5002, 5006].map(j => ({ JobId: j, Customer: C[JOBCUST[j]].name + ' ', CustomerId: JOBCUST[j] }))) },
         Date: ko.observable(today),
         BusinessUnitFilter: { getIds: () => [621842244] },
-        Assignments: ko.observable(Object.keys(BOARD).map(j => Object.assign({ JobId: Number(j), Customer: C[BOARD[j][0]].name, CustomerId: BOARD[j][0], FirstName: BOARD[j][1] || null, TechnicianName: BOARD[j][1] ? BOARD[j][1] + ' T' : null }, BOARD_EXTRA[j] || {})))
+        Assignments: ko.observable(Object.keys(BOARD).map(j => Object.assign({ Id: Number(j) + 100000, IsConfirmed: !!window.CONFIRMED[Number(j) + 100000], JobId: Number(j), Customer: C[BOARD[j][0]].name, CustomerId: BOARD[j][0], FirstName: BOARD[j][1] || null, TechnicianName: BOARD[j][1] ? BOARD[j][1] + ' T' : null }, BOARD_EXTRA[j] || {})))
       };
       root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => window.opened.push(a.getAttribute('data-job-id'))));
     } else if ((m = /^#\/ChatCenter\/(\d+)/.exec(h))) {

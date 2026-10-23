@@ -19,7 +19,7 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.6.3';
+  const VERSION = '1.6.4';
   const WHATS_NEW = {
     '1.6.3': 'Safer with two tabs open: 💬 Tech Messages and 📱 Customer Texts now check your 🛡️ / 🚫 never lists as saved right now, before the list, Start and each person, so someone you block in another tab is never messaged from this one, and saving settings in one tab no longer undoes blocks made in another. A Customer Texts run no longer fills the Back button with every conversation it opened. Tech Messages puts the Toolbox back where it was after moving it aside for the message panel.',
     '1.6.2': 'Faster 🔀 Move Jobs: it now works on up to three jobs at once, so moving jobs from one tech to another takes about a third of the time (Unassigned moves, whole-day swaps and Put back are faster too). A run also ends as soon as the board shows the changes, instead of always waiting 2.5 seconds. Each job is still done the same careful way: checked again right before, the new tech added first and confirmed, then the old one taken off and confirmed. Stop lets the jobs already started finish.',
@@ -351,8 +351,19 @@
     };
     const assignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/AssignTechnicians', 20000, { appointmentId: apptId, technicianIds: techIds });
     const unassignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/UnassignTechnicians', 20000, { appointmentId: apptId, technicianIds: techIds });
+    // ---- Confirming appointments (Customer Texts → 📥 Check replies). The same request the job
+    // panel's ⋮ menu sends for Confirm / Remove confirmation (seen Oct 2026).
+    // An appointment's confirmed flag and status, read fresh: { confirmed, status }, or throws.
+    const apptConfirmed = async (apptId, ms) => {
+      const d = await getJSON('/dispatch/job-edit-flyout/GetJobEditFlyoutData?appointmentId=' + encodeURIComponent(apptId), ms);
+      const a = d && Array.isArray(d.jobAppointments) ? d.jobAppointments.find(x => x && String(x.id) === String(apptId)) : null;
+      if (!a) throw fail('bad', 'the appointment wasn\'t found');
+      if (typeof a.isConfirmed !== 'boolean') throw fail('bad', 'the appointment came back in a shape the Toolbox doesn\'t know (no confirmed flag)');
+      return { confirmed: a.isConfirmed, status: a.jobAppointmentStatus };
+    };
+    const setConfirmed = (apptId, on) => getJSON('/dispatch/job-edit-flyout/UpdateJobAppointmentIsConfirmed', 20000, { jobAppointmentId: apptId, isConfirmed: !!on });
     return { getJSON, pool, NOT_RUN, haltNote, SIGNED_OUT, isSignedOut, isNoPermission, job, jobEdit, chatThread, chatMessages, customerPhones, code,
-      appointment, jobSkills, technicians, techsBooked, daySchedule, assignTechs, unassignTechs };
+      appointment, jobSkills, technicians, techsBooked, daySchedule, assignTechs, unassignTechs, apptConfirmed, setConfirmed };
   })();
 
   // The editable list used by ✏️ Edit notes and ✏️ Edit messages: a name and a text per item,
@@ -2663,7 +2674,7 @@
   const texts = (() => {
     const TOOL = 'Customer Texts';
     const BOX = 'textarea.cht-response-input';
-    const K = { folders: 'stCtFolders', folder: 'stCtFolder', pick: 'stCtPick', mode: 'stCtMode', name: 'stCtName', all: 'stCtAllMobiles', never: 'stCtNever', types: 'stCtTypes', source: 'stCtSource', added: 'stCtAddedFolders' };
+    const K = { folders: 'stCtFolders', folder: 'stCtFolder', pick: 'stCtPick', mode: 'stCtMode', name: 'stCtName', all: 'stCtAllMobiles', never: 'stCtNever', types: 'stCtTypes', source: 'stCtSource', added: 'stCtAddedFolders', confirm: 'stCtConfirmFolders' };
     const loadJSON = (k, d) => { try { const v = JSON.parse(get(k)); return v == null ? d : v; } catch (e) { return d; } };
     const showNum = d => d ? '…' + String(d).slice(-4) : '?';
     const s1 = plural;
@@ -2686,6 +2697,11 @@
       { name: '📅 Reschedule', days: 1, same: true, msgs: [
         ['📅 Need to reschedule', 'Hey, this is {dispatcher} with AirSouth Cooling, Heating, Plumbing and Electrical. We need to reschedule your appointment. Please give us a call at 601-847-9941 so we can find a time that works for you. Thank you!']
       ] },
+      // Sent the day before (＋ Everyone on the board, with the board on tomorrow). Customers who
+      // answer C get their appointment confirmed by 📥 Check replies.
+      { name: '✅ Confirm Appt', days: 1, same: true, msgs: [
+        ['📅 Confirm tomorrow', 'Hey, this is {dispatcher} with AirSouth Cooling, Heating, Plumbing, and Electrical. I\'m reaching out to remind you of your appointment you have with us tomorrow. If you have any questions, please call (601) 847-9941. Reply \'C\' to confirm. Thank you!']
+      ] },
       // Reminders to customers on the board (＋ Everyone on the board). The starter message is a
       // plain reminder: no phone number, offer or "call us", which is what makes a reminder read
       // as a sales text.
@@ -2702,7 +2718,7 @@
     // Folders added to the defaults in an update. Someone who already saved their own folders gets
     // each one once, at the end of their list (unless they already have one by that name), and
     // never again after deleting it. Someone still on the defaults already has them.
-    const ADDED_LATER = ['📣 OutReach'];
+    const ADDED_LATER = ['📣 OutReach', '✅ Confirm Appt'];
     const folderKey = n => norm(n).replace(/[^a-z0-9]/gi, '').toLowerCase();
     (() => {
       let seen = loadJSON(K.added, []);
@@ -2719,6 +2735,14 @@
       set(K.added, JSON.stringify(seen));
       if (changed) saveFolders();
     })();
+    // Folders whose messages ask customers to reply C (📁 Edit folders → "Customers confirm by
+    // replying C"). 📥 Check replies only looks at replies to these, so a reply to any other text
+    // (OutReach, Holds...) never confirms or flags anything. Kept apart from the folders
+    // themselves, so an older copy of the Toolbox reading the same folders isn't confused by it.
+    const CONFIRM_DEFAULT = ['✅ Confirm Appt'];
+    let confirmKeys = (() => { const v = loadJSON(K.confirm, null); return Array.isArray(v) ? v.filter(x => typeof x === 'string') : CONFIRM_DEFAULT.map(folderKey); })();
+    const isConfirmFolder = f => !!f && confirmKeys.indexOf(folderKey(f.name)) > -1;
+    const saveConfirm = () => set(K.confirm, JSON.stringify(confirmKeys));
     let fIdx = Math.max(0, Math.min(parseInt(get(K.folder) || '0', 10) || 0, folders.length - 1));
     let picks = loadJSON(K.pick, {});
     if (!picks || typeof picks !== 'object' || Array.isArray(picks)) picks = {};
@@ -2917,7 +2941,10 @@
       smallBtn('📁 Edit folders', () => openFolders()),
       smallBtn('⚙️ Settings', () => openSettings())
     );
-    vMain.append(mainMsg, label('Folder'), folderRow, ruleLine, label('Message'), msgList, label('Who'), whoRow, whoBox, label('How'), modeRow, startBtn, mainNav);
+    // 📥 Check replies: only on folders whose texts ask customers to reply C.
+    const repliesBtn = smallBtn('📥 Check replies and confirm', () => openReplies(), 'margin-top:6px;' + FULL + 'padding:7px;border-color:#2e7d32;color:#1b5e20;font-weight:600');
+    repliesBtn.title = 'Reads the replies to this folder\'s texts from everyone on the board (or the jobs you picked) for the day shown. Customers who answered C get their appointment confirmed; anyone who answered something else is listed for you to read. Nothing is sent.';
+    vMain.append(mainMsg, label('Folder'), folderRow, ruleLine, label('Message'), msgList, label('Who'), whoRow, whoBox, label('How'), modeRow, startBtn, repliesBtn, mainNav);
     const say = s => { mainMsg.textContent = s; };
 
     let stopRun = false, running = false, stepResolve = null;
@@ -3036,7 +3063,10 @@
         renderMain();
       })));
       const f = curFolder();
-      ruleLine.textContent = '🔁 ' + ruleText(f);
+      ruleLine.textContent = '🔁 ' + ruleText(f) + (isConfirmFolder(f) ? '\n✅ Customers confirm by replying C: use 📥 Check replies afterwards.' : '');
+      ruleLine.style.whiteSpace = 'pre-wrap';
+      repliesBtn.style.display = isConfirmFolder(f) ? 'block' : 'none';
+      repliesBtn.disabled = !onBoard(); repliesBtn.style.opacity = onBoard() ? '1' : '.5';
       msgList.textContent = '';
       if (!f.msgs.length) msgList.appendChild(el('div', 'font-size:12px;color:#666', 'No messages in this folder yet. Use ✏️ Edit messages.'));
       f.msgs.forEach(([name, text], i) => {
@@ -3107,35 +3137,39 @@
         rule.append(document.createTextNode('Skip if texted in the last'), days, document.createTextNode('days (0 = never skip, 1 = today)'));
         const sameOnly = check('Only count this same message (not other texts)', f.same, v => { f.same = v; });
         sameOnly.l.style.marginTop = '3px';
+        const confirms = check('✅ Customers confirm by replying C (for 📥 Check replies)', !!f.confirm, v => { f.confirm = v; });
+        confirms.l.title = 'Turn on for reminder texts that ask customers to reply C. 📥 Check replies then confirms the appointments of everyone who answered C. Leave it off for every other folder (OutReach, Holds...): replies to those are never read as a confirmation.';
         const tools = el('div', 'display:flex;gap:4px;margin-top:5px;align-items:center');
         const mv = d => () => { const j = i + d; if (j < 0 || j >= draftF.length) return; const t = draftF[i]; draftF[i] = draftF[j]; draftF[j] = t; renderFolders(); };
         tools.append(smallBtn('↑', mv(-1), i === 0 ? 'opacity:.4' : ''), smallBtn('↓', mv(1), i === draftF.length - 1 ? 'opacity:.4' : ''),
           el('span', 'flex:1;color:#666;padding-left:4px', s1(f.msgs.length, 'message')),
           smallBtn('Delete', () => { draftF.splice(i, 1); renderFolders(); }, 'color:#b00020;border-color:#e0a0a8'));
-        r.append(nm, rule, sameOnly.l, tools);
+        r.append(nm, rule, sameOnly.l, confirms.l, tools);
         foldBox.appendChild(r);
       });
     };
     const foldNav = row();
     foldNav.append(
       smallBtn('Save', () => {
-        const clean = draftF.map(f => tidy({ name: norm(f.name), days: f.days, same: f.same, msgs: f.msgs })).filter(f => f.name || f.msgs.length);
+        const kept = draftF.filter(f => norm(f.name) || f.msgs.length);
+        const clean = kept.map(f => tidy({ name: norm(f.name), days: f.days, same: f.same, msgs: f.msgs }));
         if (!clean.length) { foldMsg.textContent = '⚠️ Keep at least one folder.'; return; }
         clean.forEach((f, i) => { if (!f.name) f.name = 'Folder ' + (i + 1); });
         const names = clean.map(f => f.name.toLowerCase());
         if (new Set(names).size !== names.length) { foldMsg.textContent = '⚠️ Two folders have the same name.'; return; }
         folders = clean; saveFolders();
+        confirmKeys = clean.filter((f, i) => kept[i].confirm).map(f => folderKey(f.name)); saveConfirm();
         fIdx = Math.min(fIdx, folders.length - 1); set(K.folder, String(fIdx));
         sub('main'); say('✅ Folders saved.'); renderMain();
       }, PRIMARY),
       smallBtn('Cancel', () => { sub('main'); renderMain(); }),
-      smallBtn('+ Add folder', () => { draftF.push({ name: '', days: 1, same: true, msgs: [] }); renderFolders(); foldBox.scrollTop = foldBox.scrollHeight; }),
-      smallBtn('Reset to original', () => { draftF = cloneDefaults(); renderFolders(); foldMsg.textContent = 'Back to the original folders and messages. Press Save to keep this.'; })
+      smallBtn('+ Add folder', () => { draftF.push({ name: '', days: 1, same: true, confirm: false, msgs: [] }); renderFolders(); foldBox.scrollTop = foldBox.scrollHeight; }),
+      smallBtn('Reset to original', () => { draftF = cloneDefaults().map(f => Object.assign(f, { confirm: CONFIRM_DEFAULT.indexOf(f.name) > -1 })); renderFolders(); foldMsg.textContent = 'Back to the original folders and messages. Press Save to keep this.'; })
     );
     vFolders.append(head('📁 Edit folders'), foldMsg, foldBox, foldNav);
     const openFolders = () => {
       if (running) return;
-      draftF = folders.map(f => ({ name: f.name, days: f.days, same: f.same, msgs: f.msgs.map(m => m.slice()) }));
+      draftF = folders.map(f => ({ name: f.name, days: f.days, same: f.same, confirm: isConfirmFolder(f), msgs: f.msgs.map(m => m.slice()) }));
       foldMsg.textContent = 'Each folder has its own repeat rule. Deleting a folder deletes its messages when you Save.';
       renderFolders(); sub('folders');
     };
@@ -3707,13 +3741,298 @@
       }
     };
 
+    // ===================================================================
+    // 📥 Check replies (folders whose texts ask customers to reply C)
+    // Reads each customer's conversation (nothing is sent), finds the latest text from a confirm
+    // folder sent in the few days before the board's day, and the replies after it:
+    //   - only C, Yes, OK, 👍 and the like -> their appointments on the board's day get confirmed
+    //   - anything else, or STOP           -> "Needs a look", with what they said
+    //   - no reply yet, or never texted    -> listed; nothing is changed for them
+    // You see the list first. Nothing is confirmed until you press Confirm. Each appointment is
+    // read fresh just before (already confirmed? canceled or done?), confirmed with the request the
+    // job panel's ⋮ → Confirm sends, and read again to make sure it stuck. Right before a
+    // customer's appointments are confirmed, their conversation is looked at once more: if anything
+    // new came in since the check, they go to "Needs a look" instead.
+    // ===================================================================
+    const REPLY_DAYS = 3;   // a confirm text sent up to this many days before the board's day counts
+    const escRe = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // A saved message as a pattern that matches it once sent (fill-ins can be any short text).
+    const tmplMatcher = tmpl => new RegExp('^' + norm(tmpl).split(/(\{(?:dispatcher|first|tech)\})/i)
+      .map(p => /^\{(?:dispatcher|first|tech)\}$/i.test(p) ? '.{0,60}?' : escRe(p)).join('') + '$', 'i');
+    // Is this reply a yes? C, Yes, OK, Confirmed, 👍 and the like, with or without "thanks". A
+    // question, a second sentence or anything else is not: those are read by you.
+    const EMOJI_RE = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu;
+    const YES_EMOJI = /[\u{1F44D}\u{1F44C}\u{2705}\u{2714}\u{2611}]/u;   // 👍 👌 ✅ ✔ ☑
+    const YES_WORDS = /^(c|cc|c c|confirm|confirmed|confirming|i confirm|confirm appt|confirm appointment|confirmed appt|confirmed appointment|y|ye|yes|yes sir|yes maam|yes mam|yes mame|yes please|yes yes|yep|yup|yeah|yea|ya|ok|okay|ok c|okay c|k|kk|sure|sounds good|will do|see you then|see you tomorrow|see ya then|see ya tomorrow|we will be there|well be there|i will be there|ill be there|we will be home|well be home|i will be home|ill be home|10 4|104)$/;
+    const isYes = body => {
+      let b = norm(body).toLowerCase().replace(/[‘’`´]/g, '\'').replace(/[“”]/g, '"');
+      if (/^(liked|loved|emphasized|emphasised) ["']/.test(b)) return true;   // an iPhone reaction (👍 ❤️ ‼️) to our text
+      if (!b || b.indexOf('?') > -1) return false;
+      const yesEmoji = YES_EMOJI.test(b);
+      b = b.replace(EMOJI_RE, ' ').replace(/'/g, '').replace(/[.!,;:~*"()-]/g, ' ').replace(/\s+/g, ' ').trim();
+      b = b.replace(/\s*\b(thanks|thank you|thank u|thankyou|thx|ty|tysm)( so much| very much)?$/, '').trim();
+      if (!b) return yesEmoji;
+      return YES_WORDS.test(b);
+    };
+    // Every appointment on the board's day (timeline and the whole Unassigned list), canceled ones
+    // left out: [{ apptId, jobId, customer, customerId, confirmed }].
+    const dayAppts = async () => {
+      const vm = boardVM(), day = boardDay();
+      if (!vm || !day) throw new Error('open the Dispatch board first');
+      const out = new Map();
+      const take = x => {
+        const a = un(x.Id), j = String(un(x.JobId));
+        if (a == null || !/^\d+$/.test(String(a)) || !/^\d+$/.test(j) || out.has(String(a))) return;
+        const start = un(x.Start), sd = start ? new Date(start) : null;
+        if (sd && !isNaN(sd) && !sameDay(sd, day)) return;
+        if (canceled(x)) return;
+        out.set(String(a), { apptId: a, jobId: j, customer: norm(un(x.Customer)), customerId: un(x.CustomerId) || null, confirmed: un(x.IsConfirmed) === true });
+      };
+      (un(vm.Assignments) || []).forEach(x => { try { take(x); } catch (e) {} });
+      const PAGE = 500;
+      const page = skip => st.getJSON('/Dispatch/GetJobs', 30000, { JobType: 'Unassigned', Date: localDayISO(day), QueryFilter: { Skip: skip, Take: PAGE, Start: {}, Created: {}, BusinessUnitIds: boardBUs() } });
+      const first = await page(0);
+      if (!first || !Array.isArray(first.Jobs)) {
+        health.flag(TOOL, 'the Unassigned list came back in a shape the Toolbox doesn\'t know', '/Dispatch/GetJobs');
+        throw new Error('the Unassigned list came back in a shape the Toolbox doesn\'t know');
+      }
+      let rows = first.Jobs.slice();
+      const total = Number(first.Count) || rows.length;
+      for (let skip = PAGE; skip < Math.min(total, 5000); skip += PAGE) { const d = await page(skip); if (d && Array.isArray(d.Jobs)) rows = rows.concat(d.Jobs); }
+      rows.forEach(x => { try { take(x); } catch (e) {} });
+      return Array.from(out.values());
+    };
+    // One customer's replies. ctx.readUnread decides whether an unread conversation can be read
+    // without ServiceTitan marking it read (see below).
+    const readReplies = async (cust, pats, fromT, toT, ctx, alive) => {
+      const c = codes();
+      let phones;
+      try { phones = await st.customerPhones(cust.customerId); }
+      catch (e) {
+        if (st.isSignedOut(e)) throw e;
+        throw Object.assign(new Error('their phone numbers didn\'t load (' + errText(e) + ')'), { kind: e.kind });
+      }
+      const nums = Array.from(new Set(phones.map(p => p.num)));
+      let best = null, unreadLeft = false;
+      for (const num of nums) {
+        if (!alive()) return null;
+        const t = await st.chatThread(num);
+        if (!t) continue;
+        let raw;
+        if (t.ReadStatus === c.unread) { raw = await ctx.readUnread(t, num); if (!raw) { unreadLeft = true; continue; } }
+        else raw = await st.chatMessages(t.ThreadId, 60);
+        const msgs = asPageMsgs(raw, c);
+        const sent = msgs.filter(m => m.IsOutbound && !m.IsNotification && timeOf(m) >= fromT && timeOf(m) < toT && pats.some(re => re.test(norm(m.Body))))
+          .sort((a, b) => timeOf(b) - timeOf(a) || idOf(b) - idOf(a))[0];
+        if (!sent || (best && timeOf(best.sent) >= timeOf(sent))) continue;
+        const after = m => timeOf(m) > timeOf(sent) || (timeOf(m) === timeOf(sent) && idOf(m) > idOf(sent));
+        best = { num, sent, sig: threadSig(t), replies: msgs.filter(m => m.IsInbound && after(m)).sort((a, b) => timeOf(a) - timeOf(b) || idOf(a) - idOf(b)) };
+      }
+      if (!best) return unreadLeft ? { kind: 'look', why: 'has an unread message. Read it in the Chat Center' } : { kind: 'notTexted' };
+      const base = { num: best.num, sig: best.sig };
+      if (best.sent.SmsSendErrorCode || best.sent.HasNotBeenDelivered) return Object.assign(base, { kind: 'look', why: 'the confirm text didn\'t go through' });
+      if (!best.replies.length) return Object.assign(base, { kind: 'noReply' });
+      const said = best.replies.map(m => norm(m.Body) || '(a picture or empty message)');
+      if (optedOut(best.replies)) return Object.assign(base, { kind: 'look', why: 'replied STOP', said });
+      if (best.replies.every(m => isYes(m.Body))) return Object.assign(base, { kind: 'yes', said });
+      return Object.assign(base, { kind: 'look', why: 'replied', said });
+    };
+    const quote = said => said.map(x => '"' + (x.length > 90 ? x.slice(0, 87) + '…' : x) + '"').join(' then ');
+
+    const vReplies = mkView('replies');
+    const repHead = head('📥 Check replies');
+    const repMsg = el('div', 'font-size:12px;color:#444;margin-bottom:6px;min-height:16px;white-space:pre-wrap');
+    const repLog = el('pre', 'max-height:calc(100vh - 330px);overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
+    const repGo = smallBtn('Confirm', () => confirmRun(), 'background:#2e7d32;color:#fff;border-color:#2e7d32;font-weight:600;');
+    const repStop = smallBtn('Stop', () => { if (!rBusy) return; rStop = true; repStop.disabled = true; repStop.textContent = 'Stopping...'; });
+    const repCopy = smallBtn('Copy results', async () => { if (await copy(repMsg.textContent + '\n\n' + repLog.textContent)) repCopy.textContent = 'Copied'; });
+    const repBack = smallBtn('← Back', () => { rCheckId++; sub('main'); renderMain(); });
+    const repNav = row();
+    repNav.append(repGo, repStop, repCopy, repBack);
+    vReplies.append(repHead, repMsg, repLog, repNav);
+    let rBusy = false, rStop = false, rCheckId = 0, rPlan = null;
+    const showRep = (go, stop) => { repGo.style.display = go ? 'inline-block' : 'none'; repStop.style.display = stop ? 'inline-block' : 'none'; repBack.style.display = stop ? 'none' : 'inline-block'; repCopy.textContent = 'Copy results'; };
+    const custLine = (x, extra) => '• ' + (x.customer || 'job #' + x.appts[0].jobId) + (x.num ? ' ' + showNum(x.num) : '') + '  (#' + Array.from(new Set(x.appts.map(a => a.jobId))).join(', #') + ')' + (extra ? ': ' + extra : '');
+    const listOut = (lines, title, items, fmt, max) => {
+      if (!items.length) return;
+      lines.push('', title + ' (' + items.length + ')');
+      items.slice(0, max || 200).forEach(x => lines.push(fmt(x)));
+      if (items.length > (max || 200)) lines.push('…and ' + (items.length - (max || 200)) + ' more');
+    };
+
+    const openReplies = async () => {
+      if (running || rBusy) return;
+      if (lock) return say('Wait for ' + lock + ' to finish first.');
+      if (!onBoard()) return say('Open the Dispatch board first.');
+      const pats = [];
+      folders.filter(isConfirmFolder).forEach(f => f.msgs.forEach(m => { if (norm(m[1])) pats.push(tmplMatcher(m[1])); }));
+      if (!pats.length) return say('This folder has no messages to look for replies to.');
+      picker.setPicking(false);
+      const id = ++rCheckId;
+      const day = boardDay();
+      const dayText = day ? day.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'the day shown';
+      rPlan = null;
+      repHead.textContent = '📥 Check replies: ' + dayText;
+      repMsg.textContent = 'Loading the appointments on ' + dayText + '…'; repLog.textContent = '';
+      showRep(false, false);
+      sub('replies');
+      const t0 = Date.now();
+      let appts;
+      try { appts = await dayAppts(); }
+      catch (e) { if (id === rCheckId) repMsg.textContent = '⚠️ Couldn\'t load the board: ' + errText(e); return; }
+      if (id !== rCheckId) return;
+      // Jobs picked (if any), else everyone on the board.
+      const picked = picker.ids().map(String);
+      const notOnDay = picked.filter(j => !appts.some(a => a.jobId === j));
+      if (picked.length) appts = appts.filter(a => picked.indexOf(a.jobId) > -1);
+      const byCust = new Map(), noCust = [];
+      appts.forEach(a => {
+        if (!a.customerId) { noCust.push(a); return; }
+        const k = String(a.customerId);
+        if (!byCust.has(k)) byCust.set(k, { customerId: a.customerId, customer: a.customer, appts: [] });
+        byCust.get(k).appts.push(a);
+      });
+      const custs = Array.from(byCust.values());
+      repMsg.textContent = 'Reading replies from ' + s1(custs.length, 'customer') + '…';
+      const fromT = day.getTime() - REPLY_DAYS * 86400000, toT = day.getTime() + 86400000;
+      // Reading an unread conversation must not mark it read in ServiceTitan (the Chat Center page
+      // does that with a separate request, so reading the data shouldn't, but it's checked): the
+      // first unread one read is looked at again right after. If it turned read, no other unread
+      // conversation is read this time; those go to "Needs a look".
+      const ctx = { markRead: false, markedNum: '', canary: null };
+      ctx.readUnread = async (t, num) => {
+        if (ctx.markRead) return null;
+        if (!ctx.canary) {
+          const p = (async () => {
+            const raw = await st.chatMessages(t.ThreadId, 60);
+            const t2 = await st.chatThread(num);
+            if (t2 && t2.ReadStatus !== codes().unread) { ctx.markRead = true; ctx.markedNum = num; }
+            return raw;
+          })();
+          ctx.canary = p.then(() => true, () => { ctx.canary = null; return false; });
+          return await p;
+        }
+        await ctx.canary;
+        if (ctx.markRead) return null;
+        return await st.chatMessages(t.ThreadId, 60);
+      };
+      const res = await st.pool(custs, 4, (cu, i, alive) => readReplies(cu, pats, fromT, toT, ctx, alive),
+        (d, t) => { if (id === rCheckId) repMsg.textContent = 'Reading replies… ' + d + ' of ' + t; }, { stop: () => id !== rCheckId });
+      if (id !== rCheckId || res.stopped) return;
+      if (res.halted === 'signedOut') { repMsg.textContent = '⚠️ ' + st.SIGNED_OUT + '\n\nNothing was confirmed.'; return; }
+      const P = { yes: [], already: [], look: [], noReply: [], notTexted: [], day, dayText };
+      custs.forEach((cu, i) => {
+        const r = res[i];
+        if (r === st.NOT_RUN) { P.look.push(Object.assign(cu, { why: 'not checked: ServiceTitan is slow or not answering. Try again in a bit' })); return; }
+        if (!r || r.error) { P.look.push(Object.assign(cu, { why: r && r.error ? errText(r.error) : 'not checked' })); return; }
+        Object.assign(cu, r);
+        if (r.kind === 'yes') {
+          cu.todo = cu.appts.filter(a => !a.confirmed);
+          (cu.todo.length ? P.yes : P.already).push(cu);
+        } else P[r.kind].push(cu);
+      });
+      noCust.forEach(a => P.look.push({ customer: a.customer, appts: [a], why: 'no customer on the job' }));
+      // The board can be behind (someone confirmed since it loaded), so the yes customers'
+      // appointments are read fresh to show which are already confirmed.
+      const yesAppts = [];
+      P.yes.forEach(cu => cu.todo.forEach(a => yesAppts.push(a)));
+      if (yesAppts.length) {
+        repMsg.textContent = 'Reading ' + s1(yesAppts.length, 'appointment') + '…';
+        const fr = await st.pool(yesAppts, 4, a => st.apptConfirmed(a.apptId), null, { stop: () => id !== rCheckId });
+        if (id !== rCheckId || fr.stopped) return;
+        if (fr.halted === 'signedOut') { repMsg.textContent = '⚠️ ' + st.SIGNED_OUT + '\n\nNothing was confirmed.'; return; }
+        yesAppts.forEach((a, i) => { const r = fr[i]; if (r && r !== st.NOT_RUN && !r.error) a.confirmed = r.confirmed; });
+        P.yes = P.yes.filter(cu => { cu.todo = cu.todo.filter(a => !a.confirmed); if (cu.todo.length) return true; P.already.push(cu); return false; });
+      }
+      rPlan = P;
+      const todo = P.yes.reduce((n, x) => n + x.todo.length, 0);
+      const lines = [];
+      if (ctx.markRead) lines.push('ℹ️ ServiceTitan marked a conversation read when its replies were read (…' + ctx.markedNum.slice(-4) + '), so other unread ones were left unread and are under Needs a look.', '');
+      if (!custs.length) lines.push('No appointments' + (picked.length ? ' for the jobs you picked' : '') + ' on ' + dayText + '.');
+      listOut(lines, '✅ Answered yes: will confirm ' + s1(todo, 'appointment'), P.yes, x => custLine(x, quote(x.said)));
+      listOut(lines, '☑️ Answered yes, already confirmed', P.already, x => custLine(x, quote(x.said)));
+      listOut(lines, '⚠️ Needs a look', P.look, x => custLine(x, x.why + (x.said ? ' ' + quote(x.said) : '')));
+      listOut(lines, '💤 No reply yet', P.noReply, x => custLine(x));
+      listOut(lines, '— Not texted (no confirm text in the ' + REPLY_DAYS + ' days before)', P.notTexted, x => custLine(x), 60);
+      if (notOnDay.length) lines.push('', 'Picked jobs not on ' + dayText + ': #' + notOnDay.join(', #'));
+      repLog.textContent = lines.join('\n').trim();
+      repMsg.textContent = 'Checked ' + s1(custs.length, 'customer') + ' in ' + Math.max(1, Math.round((Date.now() - t0) / 1000)) + 's. ' +
+        (todo ? 'Nothing is confirmed until you press Confirm.' : 'Nothing to confirm.');
+      repGo.textContent = 'Confirm ' + s1(todo, 'appointment');
+      showRep(todo > 0, false);
+    };
+
+    const confirmRun = async () => {
+      if (rBusy || running || !rPlan) return;
+      if (lock) { repMsg.textContent = 'Wait for ' + lock + ' to finish first.'; return; }
+      const P = rPlan; rPlan = null;
+      rBusy = true; rStop = false; lock = TOOL;
+      repStop.disabled = false; repStop.textContent = 'Stop';
+      showRep(false, true);
+      const done = [], already = [], look = [];
+      let signedOut = false, failsInRow = 0, n = 0;
+      const total = P.yes.reduce((k, x) => k + x.todo.length, 0);
+      const one = async cu => {
+        // Anything new in their conversation since the check? Then you read it first.
+        const t = await st.chatThread(cu.num);
+        if (!cu.sig || threadSig(t) !== cu.sig) { look.push(custLine(cu, 'a new message came in after the check. Read it, then check again')); n += cu.todo.length; return; }
+        for (const a of cu.todo) {
+          if (rStop || signedOut) return;
+          n++; repMsg.textContent = 'Confirming ' + n + ' of ' + total + ': ' + (cu.customer || '#' + a.jobId);
+          const lab = '• ' + (cu.customer || '') + '  (#' + a.jobId + ')';
+          try {
+            const now = await st.apptConfirmed(a.apptId);
+            if (now.confirmed) { already.push(lab); continue; }
+            const s = now.status;
+            if (s === 4 || s === 5 || (typeof s === 'string' && /^(done|completed|cancell?ed)$/i.test(norm(s)))) { look.push(lab + ': not confirmed, the appointment is ' + (s === 4 || /^(done|completed)$/i.test(String(s)) ? 'done' : 'canceled')); continue; }
+            await st.setConfirmed(a.apptId, true);
+            let stuck = false;
+            for (let k = 0; k < 3 && !stuck; k++) { if (k) await wait(500); stuck = (await st.apptConfirmed(a.apptId, 8000)).confirmed; }
+            if (stuck) { done.push(lab); failsInRow = 0; }
+            else { look.push(lab + ': ServiceTitan didn\'t keep it confirmed'); if (++failsInRow >= 3) { rStop = true; look.push('3 problems in a row. Stopped to be safe.'); } }
+          } catch (e) {
+            if (st.isSignedOut(e)) { signedOut = true; return; }
+            look.push(lab + ': ' + errText(e));
+            if (++failsInRow >= 3) { rStop = true; look.push('3 problems in a row. Stopped to be safe.'); }
+          }
+        }
+      };
+      try {
+        // Three customers at a time; each customer's appointments one after another.
+        let next = 0;
+        const worker = async () => {
+          while (next < P.yes.length && !rStop && !signedOut) {
+            const cu = P.yes[next++];
+            try { await one(cu); }
+            catch (e) { if (st.isSignedOut(e)) { signedOut = true; break; } look.push(custLine(cu, errText(e))); }
+          }
+        };
+        await Promise.all([worker(), worker(), worker()]);
+        const notDone = P.yes.slice(next).map(cu => custLine(cu, 'not confirmed (stopped)'));
+        const lines = [];
+        listOut(lines, '✅ Confirmed', done, x => x);
+        listOut(lines, '☑️ Already confirmed', already.concat(P.already.map(x => custLine(x))), x => x);
+        listOut(lines, '⚠️ Needs a look', look.concat(notDone, P.look.map(x => custLine(x, x.why + (x.said ? ' ' + quote(x.said) : '')))), x => x);
+        listOut(lines, '💤 No reply yet', P.noReply, x => custLine(x));
+        listOut(lines, '— Not texted', P.notTexted, x => custLine(x), 60);
+        repLog.textContent = lines.join('\n').trim();
+        const sum = s1(done.length, 'appointment') + ' confirmed' + (look.length + notDone.length + P.look.length ? ', ' + (look.length + notDone.length + P.look.length) + ' need a look' : '') + ', ' + P.noReply.length + ' no reply yet';
+        repMsg.textContent = signedOut ? '⚠️ ' + st.SIGNED_OUT + ' (Before that: ' + sum + '.)' : (rStop ? 'Stopped: ' : 'Done: ') + sum + '.';
+      } catch (e) {
+        repMsg.textContent = '⚠️ Stopped by an error: ' + errText(e);
+      } finally {
+        rBusy = false; lock = null;
+        showRep(false, false);
+      }
+    };
+
     textsPane.appendChild(pane);
     sub('main');
     return {
-      refresh: () => { if (!running) { sub('main'); renderMain(); } },
-      leave: () => { checkId++; picker.setPicking(false); },
-      isRunning: () => running,
-      stop: requestStop,
+      refresh: () => { if (!running && !rBusy) { sub('main'); renderMain(); } },
+      leave: () => { checkId++; rCheckId++; picker.setPicking(false); },
+      isRunning: () => running || rBusy,
+      stop: () => { if (rBusy) { rStop = true; return; } requestStop(); },
       cleanup: () => picker.cleanup()
     };
   })();

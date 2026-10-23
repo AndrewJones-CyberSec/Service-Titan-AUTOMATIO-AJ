@@ -50,7 +50,7 @@ Switch the Business Unit on one job or many to a branch: **Mendenhall Branch** u
 If ServiceTitan locks a job's Business Unit, the job is skipped and listed. If ServiceTitan pops up a question after Save, the run stops there and leaves the question on screen for you to answer. Up to 50 jobs per run.
 
 **📱 Customer Texts**
-Text customers a saved message through ServiceTitan's Chat Center. Messages are sorted into folders, **⏸️ Holds**, **🚚 Tech Updates**, **📅 Reschedule** and **📣 OutReach**, plus any you add.
+Text customers a saved message through ServiceTitan's Chat Center. Messages are sorted into folders, **⏸️ Holds**, **🚚 Tech Updates**, **📅 Reschedule**, **✅ Confirm Appt** and **📣 OutReach**, plus any you add.
 
 - **Who:** the **Hold list** (every hold on the board's Hold tab loads at once; tick the kinds to text, such as Quote or Non Operational, or open a kind to tick single job types), or **jobs you pick** on the board, in the Unassigned / Hold list at the bottom (or the whole list tab with **+ All in the list**), or by job number. **＋ Everyone on the board** adds every job for the day the board shows: the timeline plus the whole Unassigned list (holds and canceled appointments aren't included). One text per customer.
 - **Checked before it starts:** pressing Start checks every customer first, without opening their conversation (a few seconds for a big list). The next screen shows exactly who will be texted and who is skipped, and why. Right before each text it takes one more quick look, in case something changed (a reply, a STOP, or a hold that has been booked since).
@@ -59,6 +59,12 @@ Text customers a saved message through ServiceTitan's Chat Center. Messages are 
 - **Repeat rules per folder:** Holds skips anyone who got a text from us in the last 7 days. Tech Updates and Reschedule skip anyone who already got that same message today. OutReach skips anyone who got that same message in the last 30 days. Change them in 📁 Edit folders. Automatic notifications and texts that failed don't count.
 - **Skipped every time:** anyone who replied STOP or is blocked in ServiceTitan, anyone with an unread reply (listed so you can read it; their conversation isn't opened, so it stays unread), numbers on your 🚫 never-text list, and a number shared with another customer in the same run (texted once).
 - **Type only:** it opens each conversation and types the message. You press Send and it moves on by itself. **Auto-send:** you confirm by typing how many texts it will send, and it checks each text went out. A few seconds after each text it also checks ServiceTitan really delivered it, and lists any that failed. It stops if a text can't be confirmed or 3 fail in a row.
+- **✅ Confirm Appt and 📥 Check replies:** with the board on tomorrow, send **✅ Confirm Appt** to **＋ Everyone on the board** (it asks customers to reply C). Later, press **📥 Check replies and confirm** in that folder. It reads each customer's replies (nothing is sent, and unread conversations stay unread) and shows:
+  - **✅ Answered yes:** they replied only C, Yes, OK, Confirmed, 👍 or similar (with or without "thanks"). Their appointments on the board's day get confirmed when you press **Confirm**, the same as ⋮ → Confirm on the job panel, and each one is checked afterwards.
+  - **⚠️ Needs a look:** anything else (a question, "C but…", STOP, a reply after their yes), a confirm text that didn't go through, or a confirm that didn't stick. What they said is shown so you can follow up.
+  - **💤 No reply yet** and **Not texted** (no confirm text in the 3 days before the board's day): nothing changes for them.
+  Picked jobs: only those are checked; nothing picked: everyone on the board. Right before a customer is confirmed their conversation is looked at once more; if a new message came in, they go to Needs a look instead. Canceled and Done appointments are never confirmed.
+  Which folders count is the **✅ Customers confirm by replying C** box in 📁 Edit folders (on for Confirm Appt only). Replies to any other folder's texts, like OutReach, are never read as a confirmation.
 - **✏️ Edit messages**, **📁 Edit folders** and **⚙️ Settings** are saved in your own browser. About 3 to 4 seconds per text (the next customer is checked while the current text goes out); keep the tab on screen while it runs.
 
 **🔀 Move Jobs**
@@ -111,7 +117,7 @@ The `tests` folder has automatic checks that run the Toolbox on fake copies of t
 - Notes never saves a note by itself; you always click **Add Note** in ServiceTitan.
 - Tech Messages only sends on its own in Auto-send mode, after you confirm.
 - Business Unit only saves jobs after you confirm, and checks each one afterwards.
-- Customer Texts only sends on its own in Auto-send mode, after you type how many customers it will text.
+- Customer Texts only sends on its own in Auto-send mode, after you type how many customers it will text. 📥 Check replies never sends anything, and only confirms appointments after you press Confirm.
 - Not affiliated with or endorsed by ServiceTitan.
 
 ## License

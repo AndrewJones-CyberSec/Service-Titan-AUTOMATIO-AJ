@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.6.4
+
+- **📱 Customer Texts: ✅ Confirm Appt folder** (new default; added once for anyone who already saved their folders). Its message: *Hey, this is {dispatcher} with AirSouth… remind you of your appointment you have with us tomorrow… Reply 'C' to confirm. Thank you!* Same-message-today repeat rule. Send it with the board on tomorrow and **＋ Everyone on the board**.
+- **📥 Check replies and confirm** (in Confirm Appt, or any folder with **✅ Customers confirm by replying C** ticked in 📁 Edit folders). It never sends anything. For each customer on the board's day (or only the jobs you picked) it finds the latest confirm text sent in the 3 days before, and the replies after it:
+  - **Only C, Yes, OK, Confirmed, 👍 and the like** (with or without "thanks", and iPhone 👍/❤️ reactions): their appointments that day are confirmed when you press Confirm, with the same request as the job panel's ⋮ → Confirm, then read back to make sure it stuck.
+  - **Anything else** (a question, "C but…", STOP, a yes followed by something else), a confirm text that failed, a Done or canceled appointment, or a confirm that didn't stick: listed under **⚠️ Needs a look** with what they said. Nothing is tagged or changed for them.
+  - **No reply yet** and **Not texted** are listed too.
+  - Right before a customer is confirmed, their conversation is looked at once more; a message that came in since the check sends them to Needs a look instead.
+  - Unread conversations stay unread. Reading the data shouldn't mark them read, but the first unread one is checked right after, and if ServiceTitan did mark it read, no other unread conversation is read that time (they're listed instead).
+  - Replies to other folders' texts (OutReach, Holds…) are never read as a confirmation.
+- Tests: new `tests/test_confirm_replies.py`. The fake board now has appointment numbers, the confirmed flag, and the job panel's confirm request.
+
 ## 1.6.3
 
 - **Safer with two tabs open (💬 Tech Messages and 📱 Customer Texts).** Each tab used to load your 🛡️ *Who can be messaged* and 🚫 *Never text* lists once, when the Toolbox opened. So with the Toolbox open in two tabs:

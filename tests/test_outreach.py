@@ -138,7 +138,8 @@ with sync_playwright() as p:
     # Someone who already saved their own folders gets OutReach once, at the end
     open_board(page, OLD)
     names = folder_names(page)
-    check(names == ['⏸️ Holds', '🚚 Tech Updates', '📅 Reschedule', '📣 OutReach'], 'OutReach added to saved folders: %s' % names)
+    # (1.6.4 adds ✅ Confirm Appt the same way, after it.)
+    check(names == ['⏸️ Holds', '🚚 Tech Updates', '📅 Reschedule', '📣 OutReach', '✅ Confirm Appt'], 'OutReach added to saved folders: %s' % names)
     saved = json.loads(page.evaluate("() => localStorage.getItem('stCtFolders')"))
     check(saved[0]['msgs'][0][0] == 'My hold text', 'their own messages are kept')
     page.evaluate("() => window.__stToolbox.close()")
