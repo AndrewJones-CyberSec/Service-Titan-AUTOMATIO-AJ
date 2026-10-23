@@ -14,7 +14,7 @@ python3 tests/run_all.py
 |---|---|
 | `test_notes.py` | 📝 Notes: note first or job first, a job panel still loading, a merged customer ("Page Could Not Be Found") |
 | `test_business_unit.py` | 🏢 Business Unit: picking, check, change, put back, locked jobs, errors, pop-ups, Stop |
-| `test_job_notifications.py` | 🔕 Job Notifications: a tech's jobs, picked jobs, turning off and on, a switch that won't stay on, no job-record access, the job list, scrolling, highlights |
+| `test_job_notifications.py` | 🔕 Job Notifications: one list (board, job list, typed, a tech from the list, a tech's name on the board, ＋ Whole board with jobs scrolled out of view, Unassigned, canceled and other days), each job's setting read as it's added (🔔 / 🔕 in the list, dashed on the board, no pages opened), buttons that count what they'd change, turning off and on (only the jobs that need it are opened), results as cards, a switch that won't stay on (⚠️ card, Open job, Try again), job data unreadable (❔, ↻ Check opens each job), no job-record access, scrolling, highlights |
 | `test_tech_messages.py` | 💬 Tech Messages: picking techs on the board, 🛡️ rules, highlights |
 | `test_customer_texts.py` | 📱 Customer Texts: holds, filters, numbers, repeat rules, STOP, Type only, Auto-send, ＋ Everyone on the board |
 | `test_outreach.py` | 📣 OutReach: a default folder, added once to saved folders (and not again after deleting it), its 30-day rule and opt-out line; the look-ahead at the next customer (one quick read at their turn, a STOP after the look-ahead is still caught, a stale one is taken again) |
@@ -26,6 +26,6 @@ python3 tests/run_all.py
 | `test_when.py` | `{when}`: today, tomorrow, a week out, a day that has passed, a typed job from another day (its own appointment date), a job with no upcoming appointment, holds; the 1.6.4 Confirm Appt message updated once (and not one you changed); Check replies counting a dated confirm text for that date only (a week ahead, another date, 10/30 style), and undated "today" / "tomorrow" texts only for the day they mean |
 | `test_concurrency.py` | Several reads at once: Stop and Cancel mid-read, slow and timed-out answers, sign-out, failing answers, the board changing during a run |
 | `test_review_fixes.py` | From the Oct 21 2026 review (1.6.3): 🛡️ / 🚫 lists changed in another tab (before the check, mid-run, and when saving settings) in Tech Messages and Customer Texts, no Back-button step per text, the Toolbox put back after Tech Messages moves it aside (and left alone if you dragged it), job and tech IDs that aren't numbers, STOP / START at the same time |
-| `board*.html` | The fake pages the tests run on (`board_send.html` adds a fake Send Message panel for Tech Messages) |
+| `board*.html` | The fake pages the tests run on (`board_send.html` adds a fake Send Message panel for Tech Messages; `board.html?full` adds the board's own data: the day, every assignment with its techs, and the Unassigned list) |
 
 Run them before every update. If one fails, the update isn't ready.

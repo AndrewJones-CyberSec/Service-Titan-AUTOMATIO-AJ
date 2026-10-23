@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.7
+
+- **🔕 Job Notifications, reworked to be quicker to use.** The two modes (*A tech's jobs* / *Jobs I pick*) are gone: there's one list, and every way of adding jobs fills it.
+  - **Click a tech's name on the board** (with 🖱️ Pick on board on) to add their whole day; click it again to take it off. Clicking jobs, the Unassigned / Hold list, **+ All in the list** and typed job numbers work as before.
+  - **＋ Whole board**: every job on the day the board shows, the timeline plus the whole Unassigned list (all pages, your board's branches), the same set 📱 Customer Texts' ＋ Everyone on the board uses (now shared code). Holds, canceled appointments and other days are left out. The message says how many came from each.
+  - **＋ A tech's jobs…** list: picking a tech adds their day to the list. Counts and jobs come from the board's own data plus the bubbles showing, so a job scrolled out of view isn't missed. The list updates itself when you point at it.
+  - **Each job's setting is read as soon as it's added** (a few at a time, from ServiceTitan's job data, no pages opened): 🔔 or 🔕 next to it in the list, and a **gray dashed** outline on the board for jobs that are off (orange for on). A line adds it up: *🔔 11 on · 🔕 3 off*. A job taken off the list forgets its reading, and a reading older than 10 minutes is read again. Jobs that can't be read show ❔.
+  - **The buttons count what they'd change:** *🔕 Turn off (11)*, *🔔 Turn on (3)*, and stay grayed out when there's nothing to change. The confirm says how many are already that way (left alone), how many haven't been read yet, and about how long it will take.
+  - **Turning off / on works exactly as before:** every job is read fresh at the start, only the ones that need it are opened one at a time, the switch is flipped and checked against ServiceTitan's data, and problem jobs get one more try at the end.
+  - **Results are customer cards** (the shared cards from 📥 Check replies, without the phone line): ⚠️ Problems first, each with **🔗 Open job** (opens it in a new tab), then *Turned off*, then *Already off*. Long sections start folded. **↻ Try the problem jobs again** reruns the list (finished jobs are only read). The step-by-step log is under **📜 Details**; **Copy results** copies the cards and the log.
+  - **Jobs stay on the list after a run**, showing their new setting, so the board shows at a glance what's off. **Clear** starts over.
+  - **↻ Check** replaces *Check jobs (changes nothing)*: reads every job again and lists them as cards (opening a job only if its data can't be read).
+  - **No permission to open job records:** the tool says so as soon as the jobs are read, and the turn buttons stay off.
+  - The tool scrolls when a long list and the results are taller than the window.
+- **Shared pieces:** the job picker can take tech-name clicks, show a mark next to each job and add its own board highlighting; the customer cards can leave out the phone line; ＋ Everyone on the board's loading moved to shared code (📱 Customer Texts behaves the same).
+- Tests: `tests/test_job_notifications.py` rewritten for the new tool, with a whole-board section; `tests/board.html?full` adds the board's own data (the day, assignments with their techs, a job not drawn, canceled and next-day appointments, and the Unassigned list).
+
 ## 1.6.5
 
 - **📱 Customer Texts: `{when}` fill-in.** It becomes **today**, **tomorrow**, or the date (**on Friday, October 30**) by comparing the appointment's day on the board with today's date when the text goes out. Today and tomorrow stay plain words; anything later is the date. Jobs on the board's day (the timeline, or **＋ Everyone on the board**, which also adds that day's Unassigned list) use the board's day; a job picked from another tab of the job list or typed in gets its next appointment read from ServiceTitan (the same list the job panel shows). Holds are skipped with the reason, and so is a day that has already passed.

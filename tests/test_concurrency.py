@@ -17,6 +17,16 @@ def B(page, t): return page.locator('#st-toolbox button:visible', has_text=t).fi
 def T(page): return page.locator('#st-toolbox').inner_text()
 def ev(page, js, arg=None): return page.evaluate(js, arg)
 def log_text(page): return ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox pre')).filter(p => p.offsetParent).map(p => p.textContent).join('\\n')")
+# Job Notifications keeps its step-by-step log folded away (📜 Details): read it even when hidden.
+def notify_log(page): return ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox pre')).map(p => p.textContent).join('\\n')")
+def settled(page, t=30):
+    """Job Notifications reads each job as it's added: wait until that's done."""
+    end = time.time() + t
+    while time.time() < end:
+        s = ev(page, "() => { const b = Array.from(document.querySelectorAll('#st-toolbox button')).find(b => b.offsetParent && /Check$/.test(b.textContent)); return b ? b.parentElement.innerText : ''; }")
+        if s and 'reading' not in s and '⏳' not in s: return s
+        time.sleep(0.1)
+    return ''
 def busy(page): return ev(page, "() => !!Array.from(document.querySelectorAll('#st-toolbox button')).find(b => b.offsetParent && /^Stop/.test(b.textContent))")
 def wait_done(page, t=120):
     time.sleep(0.4); end = time.time() + t
@@ -62,17 +72,19 @@ with sync_playwright() as p:
     # Stop while it's still reading (ServiceTitan slow: 3 s per read)
     page, errors = fresh(b, BOARD)
     open_tool(page, 'Job Notifications')
-    page.locator('#st-toolbox label:visible', has_text='Jobs I pick').locator('input').check()
-    type_jobs(page, JOBS8)
     ev(page, "() => { window.API_DELAY = 3000; window.apiCalls = 0; }")
-    B(page, 'Check jobs').click()
+    type_jobs(page, JOBS8)
+    time.sleep(0.8)   # the list starts reading the jobs by itself (slow)
+    before = ev(page, "() => window.apiCalls")
+    B(page, '↻ Check').click()
     time.sleep(0.6)
     took = stop_quickly(page)
     calls = ev(page, "() => window.apiCalls")
     check(took < 1.5, 'Notify: Stop during reading takes effect at once (%.1fs)' % took)
-    check('Stopped' in log_text(page), 'Notify: the log says it stopped')
+    check('Stopped' in notify_log(page), 'Notify: the log says it stopped')
+    check(before <= 4 and calls - before <= 4, 'Notify: the list read a few at a time, then the check did (%d, then %d)' % (before, calls - before))
     time.sleep(3.5)
-    check(ev(page, "() => window.apiCalls") == calls and calls <= 4, 'Notify: no more reads after Stop (%d made)' % calls)
+    check(ev(page, "() => window.apiCalls") == calls, 'Notify: no more reads after Stop (%d made)' % calls)
     check(not ev(page, "() => (window.indexOpened || []).length"), 'Notify: no job pages opened after Stop')
     check(errors == [], 'Notify: no page errors: %s' % errors)
     page.close()
@@ -80,10 +92,9 @@ with sync_playwright() as p:
     # Signed out: stops with a clear message, opens nothing, changes nothing
     page, errors = fresh(b, BOARD)
     open_tool(page, 'Job Notifications')
-    page.locator('#st-toolbox label:visible', has_text='Jobs I pick').locator('input').check()
     type_jobs(page, '111111 222222 333333')
     ev(page, "() => { window.API_401 = true; window.apiCalls = 0; }")
-    B(page, 'Turn off notifications').click(); B(page, 'Yes, turn them off').click()
+    B(page, 'Turn off').click(); B(page, 'Yes, turn them off').click()
     check(wait_done(page, 60), 'Notify signed out: run ends')
     t = T(page)
     check('signed you out' in t, 'Notify signed out: says ServiceTitan signed you out')
@@ -96,12 +107,14 @@ with sync_playwright() as p:
     # ServiceTitan keeps failing: it stops asking after a few, then opens jobs one at a time
     page, errors = fresh(b, BOARD)
     open_tool(page, 'Job Notifications')
-    page.locator('#st-toolbox label:visible', has_text='Jobs I pick').locator('input').check()
+    ev(page, "() => { window.API_DOWN = true; window.NOTIF = { '444444': false }; }")
     type_jobs(page, JOBS8)
-    ev(page, "() => { window.API_DOWN = true; window.apiCalls = 0; window.NOTIF = { '444444': false }; }")
-    B(page, 'Check jobs').click()
+    s = settled(page)
+    check('❔ 8 not read' in s and ev(page, "() => window.apiCalls") <= 4, 'Notify failing: the list stops asking after a few failures too (%s)' % s)
+    ev(page, "() => { window.apiCalls = 0; }")
+    B(page, '↻ Check').click()
     check(wait_done(page, 120), 'Notify failing: run ends')
-    lg = log_text(page); print(lg)
+    lg = notify_log(page); print(lg)
     calls = ev(page, "() => window.apiCalls")
     check(calls <= 4, 'Notify failing: stopped asking after a few failures (%d reads)' % calls)
     check(lg.count('ON (left alone)') == 7 and '444444: already off' in lg, 'Notify failing: every job still checked, on its page')
@@ -111,15 +124,14 @@ with sync_playwright() as p:
     # The board changes during a real run: decisions use what's true at that job's turn
     page, errors = fresh(b, BOARD)
     open_tool(page, 'Job Notifications')
-    page.locator('#st-toolbox label:visible', has_text='Jobs I pick').locator('input').check()
     type_jobs(page, '111111 222222 333333 444444 555555')
     ev(page, "() => { window.NOTIF = { '555555': false }; }")
-    B(page, 'Turn off notifications').click(); B(page, 'Yes, turn them off').click()
+    B(page, 'Turn off').click(); B(page, 'Yes, turn them off').click()
     time.sleep(1.5)
     # Meanwhile, someone else turns 555555 back on and 444444 off.
     ev(page, "() => { window.NOTIF['555555'] = true; window.NOTIF['444444'] = false; }")
     check(wait_done(page, 120), 'Notify stale: run ends')
-    lg = log_text(page); print(lg)
+    lg = notify_log(page); print(lg)
     check('444444: already off' in lg, 'Notify stale: a job someone turned off meanwhile is left alone')
     check('555555: turned off' in lg and ev(page, "() => window.NOTIF['555555']") is False, 'Notify stale: a job someone turned back on meanwhile is turned off (not reported "already off")')
     check(errors == [], 'Notify stale: no page errors: %s' % errors)

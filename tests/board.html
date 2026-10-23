@@ -51,15 +51,41 @@
     const t = setTimeout(res, ms);
     if (signal) signal.addEventListener('abort', () => { clearTimeout(t); rej(new DOMException('The user aborted a request.', 'AbortError')); });
   });
+  // ?full: the board's own data too (the day, every assignment with its techs, the Unassigned list),
+  // a second tech, a job of Tech One's that isn't drawn (scrolled out of view), and canceled ones.
+  window.FULL = location.search.indexOf('full') > -1;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const at = h => { const d = new Date(today); d.setHours(h); return d; };
+  const T1 = { Id: 1, Name: 'Tech One' }, T2 = { Id: 2, Name: 'Tech Two' };
+  window.FULL_ASSIGNMENTS = [111111, 222222, 333333, 444444, 555555, 666666, 777777, 888888].map((j, i) => ({ Id: 7000 + i, JobId: j, Customer: 'Cust ' + j, CustomerId: j, Start: at(8 + i % 8), Technicians: [T1], FirstName: 'Tech' }))
+    .concat([
+      { Id: 7100, JobId: 912345, Customer: 'Hidden Cust', CustomerId: 5, Start: at(17), Technicians: [T1] },
+      { Id: 7101, JobId: 901001, Customer: 'Two Cust A', CustomerId: 6, Start: at(9), Technicians: [T2] },
+      { Id: 7102, JobId: 901002, Customer: 'Two Cust B', CustomerId: 7, Start: at(11), Technicians: [T2] },
+      { Id: 7103, JobId: 901005, Customer: 'Canceled Cust', CustomerId: 8, Start: at(13), Technicians: [T2], AppointmentStatus: 5 },
+      { Id: 7104, JobId: 901006, Customer: 'Tomorrow Cust', CustomerId: 9, Start: new Date(at(9).getTime() + 86400000), Technicians: [T2] }
+    ]);
+  window.FULL_UNASSIGNED = [
+    { JobId: 930001, Customer: 'Unas One', CustomerId: 11 },
+    { JobId: 930002, Customer: 'Unas Two', CustomerId: 12 },
+    { JobId: 930003, Customer: 'Unas Canceled', CustomerId: 13, AppointmentStatus: 5 },
+    { JobId: 901001, Customer: 'Two Cust A', CustomerId: 6 }
+  ];
   window.fetch = async (url, opts) => {
     const u = String(url);
     const json = (o, st) => new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    if (u.indexOf('/Dispatch/GetJobs') === 0) {
+      const b = JSON.parse((opts && opts.body) || '{}');
+      window.lastGetJobs = b;
+      const rows = b.JobType === 'Unassigned' && window.FULL ? window.FULL_UNASSIGNED : [];
+      return json({ Count: rows.length, Jobs: rows.slice(b.QueryFilter.Skip, b.QueryFilter.Skip + b.QueryFilter.Take) });
+    }
     // Every signed-in user can read this (asked after a 401 to tell "signed out" from "not allowed").
     if (u.indexOf('/api/cp/settings/special/permission-settings') === 0) return window.API_401 ? new Response('', { status: 401 }) : json({ Settings: [] });
     let m = /^\/Job\/Edit\/(\d+)/.exec(u) || /^\/Job\/Index\/\?id=(\d+)/.exec(u);
     if (!m) return realFetch(url, opts);
     // JOB_NO_PERMISSION = true: this login can't open job records (401 while still signed in).
-    if (window.JOB_NO_PERMISSION) return new Response('', { status: 401 });
+    if (window.JOB_NO_PERMISSION) { window.noPermCalls = (window.noPermCalls || 0) + 1; return new Response('', { status: 401 }); }
     window.apiCalls++; window.apiActive++; window.apiMax = Math.max(window.apiMax, window.apiActive);
     try { await pause(window.API_DELAY || 40, opts && opts.signal); } finally { window.apiActive--; }
     if (window.API_401) return new Response('', { status: 401 });
@@ -82,7 +108,10 @@
       root.innerHTML = '<div class="team-container"><div class="team-name">Install HVAC</div>' +
         '<div class="technician" data-technician-id="1"><span class="name">Tech One</span></div></div>' +
         '<div id="team-timeline-row-1">' + Object.keys(DB).filter(j => j < 900000).map(j =>
-          '<a class="appointment" data-job-id="' + j + '" data-technician-id="1"><span>Quote</span> Cust ' + j + ' - 39180</a>').join('') + '</div>';
+          '<a class="appointment" data-job-id="' + j + '" data-technician-id="1"><span>Quote</span> Cust ' + j + ' - 39180</a>').join('') + '</div>' +
+        (window.FULL ? '<div class="team-container"><div class="technician" data-technician-id="2"><span class="name">Tech Two</span></div></div>' +
+          '<div id="team-timeline-row-2"><a class="appointment" data-job-id="901001" data-technician-id="2">Two Cust A</a><a class="appointment" data-job-id="901002" data-technician-id="2">Two Cust B</a></div>' : '');
+      root.querySelectorAll('.technician').forEach(t => t.addEventListener('click', () => { window.techOpened = (window.techOpened || 0) + 1; }));
       root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => { window.opened.push(a.getAttribute('data-job-id')); }));
       const jl = document.createElement('div'); jl.className = 'job-list';
       const filler = [];
@@ -94,6 +123,7 @@
       const tbl = jl.querySelector('table');
       tbl.addEventListener('mousedown', () => { tbl.focus({ preventScroll: true }); const top = tbl.getBoundingClientRect().top; if (top < 0) window.scrollTo(0, top + window.scrollY - 40); });
       if (window.ko) jl.__vm = { JobList: { View: ko.observable({ Caption: 'Hold' }), AllVisibleJobs: ko.observable([{ JobId: 901003, Customer: 'Tray Cust 901003 ', CustomerId: 3 }, { JobId: 901004, Customer: 'Tray Cust 901004', CustomerId: 4 }]) } };
+      if (window.ko && window.FULL) Object.assign(jl.__vm, { Date: ko.observable(today), Assignments: ko.observable(window.FULL_ASSIGNMENTS), BusinessUnitFilter: { getIds: () => [621842244] } });
       root.appendChild(jl);
     } else if ((m = /^#\/Job\/Edit\/(\d+)/.exec(h))) {
       const j = m[1], job = DB[j];

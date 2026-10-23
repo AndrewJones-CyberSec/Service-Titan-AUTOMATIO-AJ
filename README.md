@@ -14,20 +14,21 @@ Ready-made notes sorted into folders: **📞 Updates** (no answer, left a voicem
 - Edits are saved in your own browser. Notes from before folders were added are in **Updates**.
 
 **🔕 Job Notifications**
-On the Dispatch board, choose which jobs:
+One list of jobs, filled any way you like (picked jobs get an orange outline on the board):
 
-- **👷 A tech's jobs**: pick a tech from the list (it only shows techs with jobs on the day shown).
-- **🖱️ Jobs I pick**: click jobs on the board or in the Unassigned / Hold list at the bottom (they get an orange outline), add every job in the list tab that's open with **+ All in the list**, or type job numbers.
+- **🖱️ Pick on board**: click jobs on the timeline or in the Unassigned / Hold list at the bottom. Click a **tech's name** to add their whole day (click it again to take it off).
+- **＋ Whole board**: every job on the day the board shows, the timeline plus the whole Unassigned list (all pages, your board's branches). Holds and canceled appointments aren't included.
+- **＋ A tech's jobs…**: pick a tech from the list (only techs with jobs that day, with how many).
+- **+ All in the list** (the list tab that's open at the bottom), or type job numbers.
 
-Then:
+Each job's setting is read as soon as it's added, without opening anything: **🔔 on** or **🔕 off** shows next to it in the list, and on the board off jobs get a **gray dashed** outline instead of orange. The line above the buttons adds it up (*🔔 11 on · 🔕 3 off*).
 
-- **Check jobs**: shows whether each of their jobs has notifications on. Changes nothing. It reads ServiceTitan's job data directly, so it takes seconds, not minutes.
-- **Turn off notifications**: switches them off on each job, after you confirm. Jobs that are already off are skipped without opening them.
-- **Turn on notifications**: switches them back on on each job, after you confirm. Jobs that are already on are skipped without opening them. Those customers will get ServiceTitan's automatic job notifications again.
+- **🔕 Turn off (11)** / **🔔 Turn on (3)**: each button says how many jobs it would change. The confirm says how many are already that way (left alone) and about how long it takes. Every job is read fresh, and only the ones that need it are opened, one at a time, to flip the switch and make sure it stuck. Turning on means those customers get ServiceTitan's automatic job notifications again.
+- **↻ Check**: reads every job again and lists them (changes nothing). If ServiceTitan's job data can't be read, it opens each job instead.
+
+Results come back as cards: **⚠️ Problems** first (with **🔗 Open job** to look at it yourself), then what was turned off or on, then what was already that way. Any job that has a problem gets one more try after the rest of the run, and **↻ Try the problem jobs again** runs it once more. Jobs stay on the list showing their new setting; **Clear** starts over. **📜 Details** shows the step-by-step log, and **Copy results** copies everything.
 
 Your ServiceTitan login needs permission to open job records. Without it, the tool says so and changes nothing.
-
-Any job that has a problem gets one more try after the rest of the run is done. Shows progress as it goes, with a Stop button and a copyable list of results.
 
 **💬 Tech Messages**
 Send a saved message (for example Good Morning or ETA) to the techs you pick. It opens each tech's Send Message panel, types the message, and either waits for you to press Send (**Type only**) or sends it for you (**Auto-send**).
@@ -86,7 +87,7 @@ Pick jobs with **🖱️ Pick on board**, **+ All in the list**, typed job numbe
 - Right before each job it takes one more look: if its techs aren't exactly what the review saw, it's left for you to look at. Each change is confirmed from ServiceTitan's data, problem jobs get one more try, and there's a Stop button and a copyable list of results. If ServiceTitan's answer gets lost, the Toolbox reads the job to see what really happened instead of guessing.
 - **↩ Put back** returns the jobs from the last run to exactly the techs they had before the run touched them (even after a retry or a lost answer). It's reviewed like any move: a tech booked elsewhere since, or a job that's no longer Scheduled, gets a warning to tick. A job someone changed since is left alone, and one whose change couldn't be confirmed is listed for you to check. It's saved in your browser for a day, so closing the Toolbox or reloading the page doesn't lose it.
 - If the board doesn't show a move after a couple of seconds, Move Jobs refreshes the board for you (same day and filters).
-- **🔕 Notifications for these jobs…** opens Job Notifications with the moved jobs already picked, to turn their notifications off. That part needs permission to open job records.
+- **🔕 Notifications for these jobs…** opens Job Notifications with the moved jobs added to its list, to turn their notifications off. That part needs permission to open job records.
 
 It sends the same requests the job panel's ⋮ → Assign/Unassign sends. Up to three jobs are worked on at once (each one step by step: checked, new tech added and confirmed, old tech taken off and confirmed), so a run takes a fraction of a second to a couple of seconds per job, where clicking through the panel takes several. Two visits of the same job, and a two-job swap, go one after the other. Up to 300 jobs per run.
 
