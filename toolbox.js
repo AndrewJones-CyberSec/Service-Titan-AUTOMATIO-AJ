@@ -21,6 +21,7 @@
 (() => {
   const VERSION = '1.6.4';
   const WHATS_NEW = {
+    '1.6.4': 'New in 📱 Customer Texts: a ✅ Confirm Appt folder with the "Reply \'C\' to confirm" reminder for tomorrow\'s customers, and 📥 Check replies and confirm. It reads the replies to any text asking for a C (yours, a coworker\'s, or ServiceTitan\'s automatic reminder) and confirms the appointments of everyone who answered C, yes or 👍 when you press Confirm. Everyone else is a card under Needs a look, No reply yet or Not texted, with what they said, their number, copy buttons, and ✅ Add to confirm for the ones you decide are a yes. It never sends anything.',
     '1.6.3': 'Safer with two tabs open: 💬 Tech Messages and 📱 Customer Texts now check your 🛡️ / 🚫 never lists as saved right now, before the list, Start and each person, so someone you block in another tab is never messaged from this one, and saving settings in one tab no longer undoes blocks made in another. A Customer Texts run no longer fills the Back button with every conversation it opened. Tech Messages puts the Toolbox back where it was after moving it aside for the message panel.',
     '1.6.2': 'Faster 🔀 Move Jobs: it now works on up to three jobs at once, so moving jobs from one tech to another takes about a third of the time (Unassigned moves, whole-day swaps and Put back are faster too). A run also ends as soon as the board shows the changes, instead of always waiting 2.5 seconds. Each job is still done the same careful way: checked again right before, the new tech added first and confirmed, then the old one taken off and confirmed. Stop lets the jobs already started finish.',
     '1.6.1': 'New in 📱 Customer Texts: ＋ Everyone on the board (under Jobs I pick) adds every job on the board for the day it shows, the timeline plus the whole Unassigned list, one text per customer. New 📣 OutReach folder with a heater reminder (skips anyone who got it in the last 30 days). Big runs are faster: the next customer is checked while the current text goes out.',
@@ -374,6 +375,7 @@
   //   render(sections, notes): sections = [{ key, title, tone, open, items }], each item
   //     { customer, phone (10 digits or ''), jobs: [job numbers], status, said: [replies] or null }.
   //     A status starting with "replied" is shown as the label over the replies. tone: one of TONES.
+  //     An item can carry actions: [{ label, title, style, onClick }], shown as its first buttons.
   //     notes: lines shown above the sections (or nothing).
   //   text(): the same, as plain text (for Copy results).
   const fmtPhone = n => { n = last10(n); return n.length === 10 ? '(' + n.slice(0, 3) + ') ' + n.slice(3, 6) + '-' + n.slice(6) : ''; };
@@ -385,8 +387,8 @@
     const openState = {};
     let shown = [], shownNotes = [];
     const cap = t => t ? t.charAt(0).toUpperCase() + t.slice(1) : '';
-    const pill = (label, onClick, title) => {
-      const b = smallBtn(label, onClick, 'padding:3px 7px');
+    const pill = (label, onClick, title, style) => {
+      const b = smallBtn(label, onClick, 'padding:3px 7px;' + (style || ''));
       if (title) b.title = title;
       b.addEventListener('mousedown', e => e.preventDefault());
       return b;
@@ -414,6 +416,7 @@
       if (said && !replied) c.appendChild(el('div', 'margin-top:3px;color:#555', 'They replied:'));
       (said || []).forEach(t => c.appendChild(el('div', 'margin-top:3px;padding:5px 7px;background:#fff;border-left:3px solid ' + line + ';border-radius:4px;font-size:13px;line-height:1.35;white-space:pre-wrap;word-break:break-word;user-select:text', t)));
       const btns = el('div', 'display:flex;gap:5px;flex-wrap:wrap;margin-top:6px');
+      (x.actions || []).forEach(a => btns.appendChild(pill(a.label, a.onClick, a.title, a.style)));
       if (x.customer) btns.appendChild(copyPill('📋 Name', x.customer));
       if (x.phone) {
         btns.appendChild(copyPill('📋 Phone', fmtPhone(x.phone)));
@@ -425,6 +428,7 @@
     const render = (sections, notes) => {
       shown = (sections || []).filter(s => s.items.length);
       shownNotes = (notes || []).filter(Boolean);
+      const keep = box.scrollTop;
       box.textContent = '';
       shownNotes.forEach(t => box.appendChild(el('div', 'font-size:12px;color:#444;background:#f1f4f8;border-radius:6px;padding:5px 7px;margin-bottom:6px;white-space:pre-wrap', t)));
       shown.forEach(s => {
@@ -444,6 +448,7 @@
         box.appendChild(sec);
       });
       box.style.display = shown.length || shownNotes.length ? 'block' : 'none';
+      box.scrollTop = keep;
     };
     const line = x => '• ' + (x.customer || 'job #' + (x.jobs[0] || '?')) + (x.phone ? '  ' + fmtPhone(x.phone) : '') + (x.jobs.length ? '  (#' + x.jobs.join(', #') + ')' : '') +
       (x.status ? ': ' + x.status : '') + (x.said && x.said.length ? ' ' + x.said.map(t => '"' + t + '"').join(' then ') : '');
@@ -4077,21 +4082,49 @@
         P.yes = P.yes.filter(cu => { cu.todo = cu.todo.filter(a => !a.confirmed); if (cu.todo.length) return true; P.already.push(cu); return false; });
       }
       rPlan = P;
-      const todo = P.yes.reduce((n, x) => n + x.todo.length, 0);
-      const notes = [];
-      if (ctx.markRead) notes.push('ℹ️ ServiceTitan marked a conversation read when its replies were read (…' + ctx.markedNum.slice(-4) + '), so other unread ones were left unread and are under Needs a look.');
-      if (!custs.length) notes.push('No appointments' + (picked.length ? ' for the jobs you picked' : '') + ' on ' + dayText + '.');
-      if (notOnDay.length) notes.push('Picked jobs not on ' + dayText + ': #' + notOnDay.join(', #'));
-      const fromDay = textsFrom(day).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      P.notes = [];
+      if (ctx.markRead) P.notes.push('ℹ️ ServiceTitan marked a conversation read when its replies were read (…' + ctx.markedNum.slice(-4) + '), so other unread ones were left unread and are under Needs a look.');
+      if (!custs.length) P.notes.push('No appointments' + (picked.length ? ' for the jobs you picked' : '') + ' on ' + dayText + '.');
+      if (notOnDay.length) P.notes.push('Picked jobs not on ' + dayText + ': #' + notOnDay.join(', #'));
+      P.fromDay = textsFrom(day).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      P.checked = 'Checked ' + s1(custs.length, 'customer') + ' in ' + Math.max(1, Math.round((Date.now() - t0) / 1000)) + 's.';
+      showPlan(P);
+    };
+    // The check's report, before Confirm. Needs a look, No reply yet and Not texted cards have
+    // ✅ Add to confirm, for when you decide they're a yes ("C call before you come", or they
+    // confirmed by phone): the card moves to Will confirm, with ↩ Take off to put it back. Nothing
+    // is confirmed until you press Confirm. A card you added is still looked at once more before
+    // it's confirmed: if a new message came in since the check, it isn't.
+    const todoOf = cu => (cu.appts || []).filter(a => !a.confirmed);
+    const showPlan = P => {
+      const todo = P.yes.reduce((k, x) => k + x.todo.length, 0);
+      const move = (cu, from, to) => {
+        if (rBusy || rPlan !== P) return;
+        const i = P[from].indexOf(cu);
+        if (i < 0) return;
+        P[from].splice(i, 1);
+        if (to === 'yes') { cu.manual = from; cu.todo = todoOf(cu); P.yes.push(cu); }
+        else { delete cu.manual; P[to].push(cu); }
+        showPlan(P);
+      };
+      const addable = (from, x, status) => {
+        const it = item(x, status);
+        if (todoOf(x).length) it.actions = [{ label: '✅ Add to confirm', style: 'border-color:#2e7d32;color:#1b5e20;font-weight:600',
+          title: 'Puts them on the list to confirm. Nothing is confirmed until you press Confirm at the bottom.', onClick: () => move(x, from, 'yes') }];
+        return it;
+      };
       cards.render([
-        { key: 'look', title: '⚠️ Needs a look', tone: 'warn', open: true, items: P.look.map(x => item(x, x.why)) },
-        { key: 'yes', title: '✅ Answered yes: will confirm ' + s1(todo, 'appointment'), tone: 'good', open: true, items: P.yes.map(x => item(x, 'Will be confirmed when you press Confirm', x.todo.map(a => a.jobId))) },
+        { key: 'look', title: '⚠️ Needs a look', tone: 'warn', open: true, items: P.look.map(x => addable('look', x, x.why)) },
+        { key: 'yes', title: '✅ Will confirm ' + s1(todo, 'appointment'), tone: 'good', open: true, items: P.yes.map(x => {
+          const it = item(x, (x.manual ? 'Added by you. ' : '') + 'Will be confirmed when you press Confirm', x.todo.map(a => a.jobId));
+          if (x.manual) it.actions = [{ label: '↩ Take off', title: 'Puts them back where they were. They won\'t be confirmed.', onClick: () => move(x, 'yes', x.manual) }];
+          return it;
+        }) },
         { key: 'already', title: '☑️ Answered yes, already confirmed', tone: 'done', items: P.already.map(x => item(x, 'Already confirmed')) },
-        { key: 'noReply', title: '💤 No reply yet', tone: 'quiet', items: P.noReply.map(x => item(x, 'No reply yet')) },
-        { key: 'notTexted', title: '📭 Not texted (no confirm text since ' + fromDay + ')', tone: 'faint', items: P.notTexted.map(x => item(x, 'No confirm text since ' + fromDay)) }
-      ], notes);
-      repMsg.textContent = 'Checked ' + s1(custs.length, 'customer') + ' in ' + Math.max(1, Math.round((Date.now() - t0) / 1000)) + 's. ' +
-        (todo ? 'Nothing is confirmed until you press Confirm.' : 'Nothing to confirm.');
+        { key: 'noReply', title: '💤 No reply yet', tone: 'quiet', items: P.noReply.map(x => addable('noReply', x, 'No reply yet')) },
+        { key: 'notTexted', title: '📭 Not texted (no confirm text since ' + P.fromDay + ')', tone: 'faint', items: P.notTexted.map(x => addable('notTexted', x, 'No confirm text since ' + P.fromDay)) }
+      ], P.notes);
+      repMsg.textContent = P.checked + ' ' + (todo ? 'Nothing is confirmed until you press Confirm.' : 'Nothing to confirm.');
       repGo.textContent = 'Confirm ' + s1(todo, 'appointment');
       showRep(todo > 0, false);
     };
@@ -4109,7 +4142,7 @@
       const one = async cu => {
         // Anything new in their conversation since the check? Then you read it first.
         const nums = Object.keys(cu.sigs || {});
-        let changed = !nums.length, unknown = false;
+        let changed = !nums.length && !cu.manual, unknown = false;
         for (const num of nums) {
           if (!cu.sigs[num]) { unknown = true; continue; }
           if (replySig(await st.chatThread(num)) !== cu.sigs[num]) changed = true;

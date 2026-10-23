@@ -146,8 +146,8 @@ with sync_playwright() as p:
     })
     page.evaluate("() => { window.CONFIRM_POSTS.length = 0; }")
     log = run_check(page); print(log)
-    yes = section(log, '✅ Answered yes')
-    check('Kim Wu' in yes and '#6001, #7102' in yes and 'will confirm 3 appointments' in log, 'Kim (C, two jobs) and Pia (yes 👍 to the boss\'s text) will be confirmed')
+    yes = section(log, '✅ Will confirm')
+    check('Kim Wu' in yes and '#6001, #7102' in yes and 'Will confirm 3 appointments' in log, 'Kim (C, two jobs) and Pia (yes 👍 to the boss\'s text) will be confirmed')
     check('Pia Lane' in yes, 'a confirm text sent by someone else (the boss) counts')
     check('Lou Ng' in section(log, '⚠️ Needs a look') and 'Can he come after 2?' in log, 'Lou asked a question: needs a look, with what he said')
     check('Mo Day' in section(log, '💤 No reply yet'), 'Mo: no reply yet')
@@ -212,7 +212,7 @@ with sync_playwright() as p:
         MO: {'unread': False, 'msgs': [{'Body': CONFIRM, 'IsOutbound': True, 'CreatedOn': at_edge(30)}, {'Body': 'C', 'IsInbound': True, 'CreatedOn': at_edge(40)}]},
     })
     log = run_check(page)
-    check('Kim Wu' in section(log, '📭 Not texted') and 'Mo Day' in section(log, '✅ Answered yes'), 'a text from before the last weekday before the day doesn\'t count; one sent on it does')
+    check('Kim Wu' in section(log, '📭 Not texted') and 'Mo Day' in section(log, '✅ Will confirm'), 'a text from before the last weekday before the day doesn\'t count; one sent on it does')
     back(page)
 
     # Someone reading the reply between the check and Confirm isn't a new message.
@@ -223,7 +223,7 @@ with sync_playwright() as p:
     })
     page.evaluate("() => { Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); }")
     log = run_check(page)
-    check('will confirm 3 appointments' in log, 'Kim (two) and Mo to confirm')
+    check('Will confirm 3 appointments' in log, 'Kim (two) and Mo to confirm')
     page.evaluate("() => { window.CHATS['6015550020'].unread = false; window.APPT_START[106003] = new Date(Date.now() + 3 * 86400000).toISOString(); }")
     CB(page, 'Confirm 3 appointments').click()
     finish_confirm(page)
@@ -243,7 +243,7 @@ with sync_playwright() as p:
     })
     page.evaluate("() => { window.CONFIRM_POSTS.length = 0; window.CONFIRM_IGNORE[106003] = true; window.APPT_STATUS[107101] = 4; }")
     log = run_check(page)
-    check('will confirm 5 appointments' in log, 'c, Confirmed., ok and an iPhone 👍 reaction all count as yes')
+    check('Will confirm 5 appointments' in log, 'c, Confirmed., ok and an iPhone 👍 reaction all count as yes')
     page.evaluate("n => window.CHATS[n].msgs.push({ Body: 'wait what time?', IsInbound: true, CreatedOn: new Date().toISOString() })", KIM)
     CB(page, 'Confirm 5 appointments').click()
     finish_confirm(page)
@@ -264,7 +264,7 @@ with sync_playwright() as p:
         chats(page, {MO: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg(reply, hours=2)]}})
         lg = run_check(page)
         back(page)
-        return 'yes' if 'Mo Day' in section(lg, '✅ Answered yes') else 'look' if 'Mo Day' in section(lg, '⚠️ Needs a look') else '?'
+        return 'yes' if 'Mo Day' in section(lg, '✅ Will confirm') else 'look' if 'Mo Day' in section(lg, '⚠️ Needs a look') else '?'
     bad_yes = [r for r in YES if kind_of(r) != 'yes']
     check(not bad_yes, 'counted as yes: ' + ', '.join(YES) + ('  MISSED: %s' % bad_yes if bad_yes else ''))
     bad_no = [r for r in NO if kind_of(r) != 'look']
@@ -283,7 +283,7 @@ with sync_playwright() as p:
         PIA: {'unread': False, 'msgs': [msg(CONFIRM, True, 5), msg('c', hours=4), msg(AUTO, True, 3, IsNotification=True)]},
     })
     log = run_check(page); print(log)
-    yes = section(log, '✅ Answered yes')
+    yes = section(log, '✅ Will confirm')
     check('Kim Wu' in yes, '"Air South" (with a space) still counts as the confirm text')
     check('Lou Ng' in yes, 'a coworker\'s own wording that asks for a "C" counts')
     check('Mo Day' in section(log, '⚠️ Needs a look') and 'Can he come before 10?' in log, 'a question answering ServiceTitan\'s automatic reminder: needs a look')
@@ -295,6 +295,49 @@ with sync_playwright() as p:
     log = run_check(page)
     check('Mo Day' in section(log, '☑️ Answered yes, already confirmed'), 'a C to the automatic reminder shows as already confirmed')
     page.evaluate("() => { delete window.CONFIRMED[106003]; }")
+    back(page)
+
+    # ✅ Add to confirm: you decide a Needs a look / No reply / Not texted customer is a yes.
+    page.evaluate("() => { Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); window.CONFIRM_POSTS.length = 0; }")
+    chats(page, {
+        KIM: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('C', hours=2)]},
+        LOU: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('C call before you come so I can be home', hours=2)]},
+        MO: {'unread': False, 'msgs': [msg(CONFIRM, True, 3)]},
+    })
+    log = run_check(page)
+    check('Will confirm 2 appointments' in log and CB(page, 'Confirm 2 appointments').count() == 1, 'Kim (two jobs) to confirm')
+    card = lambda name: page.locator('#st-toolbox .st-cust-card:visible').filter(has_text=name).first
+    check(card('Lou Ng').locator('button', has_text='Add to confirm').count() == 1, 'Needs a look cards have ✅ Add to confirm')
+    check(card('Kim Wu').locator('button', has_text='Add to confirm').count() == 0, 'cards already on the list don\'t')
+    card('Lou Ng').locator('button', has_text='Add to confirm').click()
+    log = log_text(page)
+    check('Lou Ng' in section(log, '✅ Will confirm') and 'Added by you' in section(log, '✅ Will confirm') and 'Lou Ng' not in section(log, '⚠️ Needs a look'), 'Lou moved to Will confirm, marked added by you')
+    check(CB(page, 'Confirm 3 appointments').count() == 1 and 'Will confirm 3 appointments' in log, 'the Confirm button counts him')
+    card('Lou Ng').locator('button', has_text='Take off').click()
+    log = log_text(page)
+    check('Lou Ng' in section(log, '⚠️ Needs a look') and CB(page, 'Confirm 2 appointments').count() == 1, '↩ Take off puts him back')
+    card('Lou Ng').locator('button', has_text='Add to confirm').click()
+    page.locator('#st-toolbox button:visible', has_text='No reply yet').first.click()
+    card('Mo Day').locator('button', has_text='Add to confirm').click()
+    page.locator('#st-toolbox button:visible', has_text='📭 Not texted').first.click()
+    card('Pia Lane').locator('button', has_text='Add to confirm').click()
+    check(CB(page, 'Confirm 5 appointments').count() == 1, 'No reply and Not texted customers can be added too (they confirmed by phone)')
+    CB(page, 'Confirm 5 appointments').click()
+    finish_confirm(page)
+    check(confirmed(page) == [106001, 106002, 106003, 107101, 107102], 'all five confirmed: %s' % confirmed(page))
+    check(page.locator('#st-toolbox .st-cust-card button', has_text='Add to confirm').count() == 0, 'no Add buttons on the results')
+    back(page)
+
+    # Added, but a new message comes in before Confirm: not confirmed.
+    page.evaluate("() => { Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); }")
+    chats(page, {LOU: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('C call before you come', hours=2)]}})
+    run_check(page)
+    card('Lou Ng').locator('button', has_text='Add to confirm').click()
+    page.evaluate("n => window.CHATS[n].msgs.push({ Body: 'actually cancel it', IsInbound: true, CreatedOn: new Date().toISOString() })", LOU)
+    CB(page, 'Confirm 1 appointment').click()
+    finish_confirm(page)
+    log = log_text(page)
+    check(106002 not in confirmed(page) and 'new message came in' in section(log, '⚠️ Needs a look'), 'a card you added still isn\'t confirmed if a new message came in')
     back(page)
 
     # Jobs picked: only those are checked.
