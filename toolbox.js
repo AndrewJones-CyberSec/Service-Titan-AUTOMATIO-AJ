@@ -359,7 +359,7 @@
       const a = d && Array.isArray(d.jobAppointments) ? d.jobAppointments.find(x => x && String(x.id) === String(apptId)) : null;
       if (!a) throw fail('bad', 'the appointment wasn\'t found');
       if (typeof a.isConfirmed !== 'boolean') throw fail('bad', 'the appointment came back in a shape the Toolbox doesn\'t know (no confirmed flag)');
-      return { confirmed: a.isConfirmed, status: a.jobAppointmentStatus };
+      return { confirmed: a.isConfirmed, status: a.jobAppointmentStatus, start: a.start || null };
     };
     const setConfirmed = (apptId, on) => getJSON('/dispatch/job-edit-flyout/UpdateJobAppointmentIsConfirmed', 20000, { jobAppointmentId: apptId, isConfirmed: !!on });
     return { getJSON, pool, NOT_RUN, haltNote, SIGNED_OUT, isSignedOut, isNoPermission, job, jobEdit, chatThread, chatMessages, customerPhones, code,
@@ -3754,7 +3754,14 @@
     // customer's appointments are confirmed, their conversation is looked at once more: if anything
     // new came in since the check, they go to "Needs a look" instead.
     // ===================================================================
-    const REPLY_DAYS = 3;   // a confirm text sent up to this many days before the board's day counts
+    // Which confirm texts count for the board's day: the message says "tomorrow", so one sent on
+    // the last weekday before it (a Monday's reaches back to Friday, through the weekend) or on the
+    // day itself. An older text was for an earlier appointment, so a C to it doesn't count.
+    const textsFrom = day => {
+      const d = new Date(day.getFullYear(), day.getMonth(), day.getDate() - 1);
+      while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
+      return d;
+    };
     const escRe = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // A saved message as a pattern that matches it once sent (fill-ins can be any short text).
     const tmplMatcher = tmpl => new RegExp('^' + norm(tmpl).split(/(\{(?:dispatcher|first|tech)\})/i)
@@ -3826,16 +3833,24 @@
           .sort((a, b) => timeOf(b) - timeOf(a) || idOf(b) - idOf(a))[0];
         if (!sent || (best && timeOf(best.sent) >= timeOf(sent))) continue;
         const after = m => timeOf(m) > timeOf(sent) || (timeOf(m) === timeOf(sent) && idOf(m) > idOf(sent));
-        best = { num, sent, sig: threadSig(t), replies: msgs.filter(m => m.IsInbound && after(m)).sort((a, b) => timeOf(a) - timeOf(b) || idOf(a) - idOf(b)) };
+        best = { num, sent, sig: replySig(t), replies: msgs.filter(m => m.IsInbound && after(m)).sort((a, b) => timeOf(a) - timeOf(b) || idOf(a) - idOf(b)) };
       }
       if (!best) return unreadLeft ? { kind: 'look', why: 'has an unread message. Read it in the Chat Center' } : { kind: 'notTexted' };
       const base = { num: best.num, sig: best.sig };
       if (best.sent.SmsSendErrorCode || best.sent.HasNotBeenDelivered) return Object.assign(base, { kind: 'look', why: 'the confirm text didn\'t go through' });
       if (!best.replies.length) return Object.assign(base, { kind: 'noReply' });
       const said = best.replies.map(m => norm(m.Body) || '(a picture or empty message)');
-      if (optedOut(best.replies)) return Object.assign(base, { kind: 'look', why: 'replied STOP', said });
+      if (optedOut(best.replies)) return Object.assign(base, { kind: 'look', why: 'replied STOP / Cancel', said });
       if (best.replies.every(m => isYes(m.Body))) return Object.assign(base, { kind: 'yes', said });
       return Object.assign(base, { kind: 'look', why: 'replied', said });
+    };
+    // What the conversation's newest message is, ignoring read/unread (you or a coworker reading
+    // the reply in the Chat Center isn't something new). null if it can't be told.
+    const replySig = t => {
+      if (!t) return 'none';
+      const m = Array.isArray(t.Messages) && t.Messages.length ? t.Messages[t.Messages.length - 1] : null;
+      if (!m || (m.SmsId == null && !m.CreatedOn)) return null;
+      return [t.ThreadId, t.BlockedStatus, m.SmsId, m.CreatedOn].join('|');
     };
     const quote = said => said.map(x => '"' + (x.length > 90 ? x.slice(0, 87) + '…' : x) + '"').join(' then ');
 
@@ -3894,7 +3909,8 @@
       });
       const custs = Array.from(byCust.values());
       repMsg.textContent = 'Reading replies from ' + s1(custs.length, 'customer') + '…';
-      const fromT = day.getTime() - REPLY_DAYS * 86400000, toT = day.getTime() + 86400000;
+      const toT = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1).getTime();
+      const fromT = textsFrom(day).getTime();
       // Reading an unread conversation must not mark it read in ServiceTitan (the Chat Center page
       // does that with a separate request, so reading the data shouldn't, but it's checked): the
       // first unread one read is looked at again right after. If it turned read, no other unread
@@ -3953,7 +3969,8 @@
       listOut(lines, '☑️ Answered yes, already confirmed', P.already, x => custLine(x, quote(x.said)));
       listOut(lines, '⚠️ Needs a look', P.look, x => custLine(x, x.why + (x.said ? ' ' + quote(x.said) : '')));
       listOut(lines, '💤 No reply yet', P.noReply, x => custLine(x));
-      listOut(lines, '— Not texted (no confirm text in the ' + REPLY_DAYS + ' days before)', P.notTexted, x => custLine(x), 60);
+      const fromDay = textsFrom(day).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      listOut(lines, '— Not texted (no confirm text since ' + fromDay + ')', P.notTexted, x => custLine(x), 60);
       if (notOnDay.length) lines.push('', 'Picked jobs not on ' + dayText + ': #' + notOnDay.join(', #'));
       repLog.textContent = lines.join('\n').trim();
       repMsg.textContent = 'Checked ' + s1(custs.length, 'customer') + ' in ' + Math.max(1, Math.round((Date.now() - t0) / 1000)) + 's. ' +
@@ -3975,14 +3992,18 @@
       const one = async cu => {
         // Anything new in their conversation since the check? Then you read it first.
         const t = await st.chatThread(cu.num);
-        if (!cu.sig || threadSig(t) !== cu.sig) { look.push(custLine(cu, 'a new message came in after the check. Read it, then check again')); n += cu.todo.length; return; }
-        for (const a of cu.todo) {
-          if (rStop || signedOut) return;
+        if (!cu.sig) { look.push(custLine(cu, 'not confirmed: couldn\'t tell whether a new message came in. Read their conversation')); n += cu.todo.length; return; }
+        if (replySig(t) !== cu.sig) { look.push(custLine(cu, 'a new message came in after the check. Read it, then check again')); n += cu.todo.length; return; }
+        for (let ai = 0; ai < cu.todo.length; ai++) {
+          const a = cu.todo[ai];
+          if (rStop || signedOut) { cu.todo.slice(ai).forEach(z => look.push('• ' + (cu.customer || '') + '  (#' + z.jobId + '): not confirmed (stopped)')); return; }
           n++; repMsg.textContent = 'Confirming ' + n + ' of ' + total + ': ' + (cu.customer || '#' + a.jobId);
           const lab = '• ' + (cu.customer || '') + '  (#' + a.jobId + ')';
           try {
             const now = await st.apptConfirmed(a.apptId);
             if (now.confirmed) { already.push(lab); continue; }
+            const sd = now.start ? new Date(now.start) : null;
+            if (sd && !isNaN(sd) && P.day && !sameDay(sd, P.day)) { look.push(lab + ': not confirmed, it was moved to ' + sd.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + ' after the check'); continue; }
             const s = now.status;
             if (s === 4 || s === 5 || (typeof s === 'string' && /^(done|completed|cancell?ed)$/i.test(norm(s)))) { look.push(lab + ': not confirmed, the appointment is ' + (s === 4 || /^(done|completed)$/i.test(String(s)) ? 'done' : 'canceled')); continue; }
             await st.setConfirmed(a.apptId, true);

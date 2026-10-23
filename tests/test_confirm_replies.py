@@ -168,7 +168,7 @@ with sync_playwright() as p:
     log = run_check(page); print(log)
     look = section(log, '⚠️ Needs a look')
     check('Kim Wu' in look and 'then "Actually can we move it?"' in look, 'C then a question: needs a look (both replies shown)')
-    check('Lou Ng' in look and 'replied STOP' in look, 'STOP: needs a look, never confirmed')
+    check('Lou Ng' in look and 'replied STOP / Cancel' in look, 'STOP: needs a look, never confirmed')
     check('Mo Day' in section(log, '— Not texted'), 'a C to an OutReach text is ignored (not texted with a confirm text)')
     check('Pia Lane' in look and 'didn\'t go through' in look, 'a confirm text that failed: needs a look')
     check(not B(page, 'Confirm ').is_visible(), 'nothing to confirm')
@@ -179,6 +179,37 @@ with sync_playwright() as p:
     log = run_check(page)
     check('Kim Wu' in section(log, '— Not texted'), 'a confirm text from 5 days ago doesn\'t count')
     back(page)
+
+    # Which confirm texts count: one sent on the last weekday before the board's day (or later).
+    # Just before that day starts: an earlier appointment's text, so a C to it doesn't count.
+    def at_edge(minutes):
+        return page.evaluate('''m => { const t = new Date(); t.setHours(0, 0, 0, 0); const d = new Date(t.getFullYear(), t.getMonth(), t.getDate() - 1);
+          while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1); return new Date(d.getTime() + m * 60000).toISOString(); }''', minutes)
+    chats(page, {
+        KIM: {'unread': False, 'msgs': [{'Body': CONFIRM, 'IsOutbound': True, 'CreatedOn': at_edge(-30)}, {'Body': 'C', 'IsInbound': True, 'CreatedOn': at_edge(-20)}]},
+        MO: {'unread': False, 'msgs': [{'Body': CONFIRM, 'IsOutbound': True, 'CreatedOn': at_edge(30)}, {'Body': 'C', 'IsInbound': True, 'CreatedOn': at_edge(40)}]},
+    })
+    log = run_check(page)
+    check('Kim Wu' in section(log, '— Not texted') and 'Mo Day' in section(log, '✅ Answered yes'), 'a text from before the last weekday before the day doesn\'t count; one sent on it does')
+    back(page)
+
+    # Someone reading the reply between the check and Confirm isn't a new message.
+    # An appointment moved to another day after the check isn't confirmed.
+    chats(page, {
+        KIM: {'unread': True, 'msgs': [msg(CONFIRM, True, 3), msg('C', hours=2)]},
+        MO: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('Yes', hours=2)]},
+    })
+    page.evaluate("() => { Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); }")
+    log = run_check(page)
+    check('will confirm 3 appointments' in log, 'Kim (two) and Mo to confirm')
+    page.evaluate("() => { window.CHATS['6015550020'].unread = false; window.APPT_START[106003] = new Date(Date.now() + 3 * 86400000).toISOString(); }")
+    B(page, 'Confirm 3 appointments').click()
+    finish_confirm(page)
+    log = log_text(page); print(log)
+    check(106001 in confirmed(page) and 107102 in confirmed(page), 'Kim confirmed even though her reply was read in the meantime')
+    check(106003 not in confirmed(page) and 'moved to' in section(log, '⚠️ Needs a look'), 'Mo\'s appointment moved to another day: not confirmed, listed')
+    back(page)
+    page.evaluate("() => { window.APPT_START = {}; Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); }")
 
     # A new message after the check: not confirmed. A confirm that doesn't stick: needs a look.
     # An appointment that's Done: not confirmed. Board already showing confirmed: skipped.

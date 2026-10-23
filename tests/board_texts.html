@@ -99,7 +99,7 @@
   // LIST_STATUS[job] the JobStatus the Hold list shows for it (like the real list, normally 'Hold').
   // apiCalls counts requests; apiLog lists them.
   window.apiCalls = 0; window.apiLog = []; window.JOB_STATUS = {}; window.LIST_STATUS = {};
-  window.CONFIRMED = {}; window.APPT_STATUS = {}; window.CONFIRM_IGNORE = {}; window.CONFIRM_POSTS = [];
+  window.CONFIRMED = {}; window.APPT_STATUS = {}; window.CONFIRM_IGNORE = {}; window.CONFIRM_POSTS = []; window.APPT_START = {};
   const pause = (ms, signal) => new Promise((res, rej) => {
     const t = setTimeout(res, ms);
     if (signal) signal.addEventListener('abort', () => { clearTimeout(t); rej(new DOMException('The user aborted a request.', 'AbortError')); });
@@ -142,7 +142,7 @@
     let fl = /^\/dispatch\/job-edit-flyout\/GetJobEditFlyoutData\?appointmentId=(\d+)/.exec(u);
     if (fl) {
       const a = Number(fl[1]);
-      return json({ jobId: a - 100000, jobAppointments: [{ id: a, isConfirmed: !!window.CONFIRMED[a], jobAppointmentStatus: window.APPT_STATUS[a] || 0, technicians: [] }] });
+      return json({ jobId: a - 100000, jobAppointments: [{ id: a, isConfirmed: !!window.CONFIRMED[a], jobAppointmentStatus: window.APPT_STATUS[a] || 0, start: window.APPT_START[a] || new Date(today.getTime() + 9 * 3600000).toISOString(), technicians: [] }] });
     }
     if (u.indexOf('/dispatch/job-edit-flyout/UpdateJobAppointmentIsConfirmed') === 0) {
       const b = JSON.parse(opts.body);
@@ -157,6 +157,7 @@
       const num = c[1], chat = CHATS[num];
       if (!chat) return json({ Threads: [], HasNoMore: true });
       const raw = rawMsgs(num, chat);
+      window.threadReads = (window.threadReads || 0) + 1;
       return json({ Threads: [{ ThreadId: Number(num), ContactNumber: '(' + num.slice(0, 3) + ') ' + num.slice(3, 6) + '-' + num.slice(6), ReadStatus: chat.unread ? -10 : 0, BlockedStatus: chat.blocked ? 10 : 0, Messages: raw.slice(-1) }], HasNoMore: true });
     }
     if ((c = /^\/GrowthChatCenter\/Messages\?threadId=(\d+)/.exec(u))) {
