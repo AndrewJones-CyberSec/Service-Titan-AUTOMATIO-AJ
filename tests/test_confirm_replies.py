@@ -25,8 +25,12 @@ def B(page, text):
 def panel_text(page):
     return page.locator('#st-toolbox').inner_text()
 
+# The report as text: the ⚠️ Needs a look cards (one line each), then the rest of the report.
 def log_text(page):
-    return page.evaluate("() => Array.from(document.querySelectorAll('#st-toolbox pre')).filter(p => p.offsetParent).map(p => p.textContent).join('\\n')")
+    return page.evaluate("""() => {
+      const cards = Array.from(document.querySelectorAll('#st-toolbox .st-look-card')).filter(c => c.offsetParent).map(c => '• ' + c.innerText.replace(/\\s*\\n\\s*/g, ' | '));
+      const pre = Array.from(document.querySelectorAll('#st-toolbox pre')).filter(p => p.offsetParent).map(p => p.textContent).join('\\n');
+      return (cards.length ? '⚠️ Needs a look (' + cards.length + ')\\n' + cards.join('\\n') + '\\n\\n' : '') + pre; }""")
 
 def open_board(page, saved=None, added=None, confirm=None):
     page.goto(URL + '#/DispatchBoard')
@@ -167,8 +171,8 @@ with sync_playwright() as p:
     })
     log = run_check(page); print(log)
     look = section(log, '⚠️ Needs a look')
-    check('Kim Wu' in look and 'then "Actually can we move it?"' in look, 'C then a question: needs a look (both replies shown)')
-    check('Lou Ng' in look and 'replied STOP / Cancel' in look, 'STOP: needs a look, never confirmed')
+    check('Kim Wu' in look and 'They replied: | C | Actually can we move it?' in look, 'C then a question: needs a look (both replies shown)')
+    check('Lou Ng' in look and 'Replied STOP / Cancel' in look, 'STOP: needs a look, never confirmed')
     check('Mo Day' in section(log, '— Not texted'), 'a C to an OutReach text is ignored (not texted with a confirm text)')
     check('Pia Lane' in look and 'didn\'t go through' in look, 'a confirm text that failed: needs a look')
     check(not B(page, 'Confirm ').is_visible(), 'nothing to confirm')
@@ -266,8 +270,33 @@ with sync_playwright() as p:
     page.evaluate("() => { window.MARK_READ_ON_FETCH = true; }")
     log = run_check(page); print(log)
     unread_left = page.evaluate("() => ['6015550020','6015550021','6015550022'].filter(n => window.CHATS[n].unread).length")
-    check(unread_left == 2 and 'marked a conversation read' in log and log.count('has an unread message') == 2, 'only one conversation turned read; the other two left unread and listed')
+    check(unread_left == 2 and 'marked a conversation read' in log and log.lower().count('has an unread message') == 2, 'only one conversation turned read; the other two left unread and listed')
     page.evaluate("() => { window.MARK_READ_ON_FETCH = false; }")
+    back(page)
+
+    # The Needs a look cards: what they said in full, the whole number, and copy / open buttons.
+    LONG = 'Good morning! I will be at work until 3 but my husband will be home after noon, can your guy call him at the number on file before coming out?'
+    chats(page, {LOU: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg(LONG, hours=2)]}})
+    page.evaluate('''() => { window.CLIP = []; window.OPENED = [];
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async t => { window.CLIP.push(t); } } });
+      window.open = u => { window.OPENED.push(u); return null; }; }''')
+    run_check(page)
+    card = page.locator('#st-toolbox .st-look-card:visible').filter(has_text='Lou Ng').first
+    ct = card.inner_text()
+    print(ct)
+    check(LONG in ct, 'the whole reply is shown, not cut short')
+    check('(601) 555-0021' in ct and '#6002' in ct, 'the full phone number and job number are on the card')
+    card.locator('button', has_text='Name').click()
+    card.locator('button', has_text='Phone').click()
+    page.wait_for_function("() => window.CLIP.length >= 2", timeout=5000)
+    check(page.evaluate("() => window.CLIP") == ['Lou Ng', '(601) 555-0021'], 'Copy name and Copy phone copy just that: %s' % page.evaluate("() => window.CLIP"))
+    check('✓ Copied' in card.inner_text(), 'the button says Copied')
+    card.locator('button', has_text='Open chat').click()
+    check(page.evaluate("() => window.OPENED.length === 1 && /#\\/ChatCenter\\/6015550021$/.test(window.OPENED[0])"), 'Open chat opens their conversation in a new tab')
+    page.evaluate("() => { window.CLIP = []; }")
+    B(page, 'Copy results').click()
+    page.wait_for_function("() => window.CLIP.length >= 1", timeout=5000)
+    check('Needs a look (1)' in page.evaluate("() => window.CLIP[0]") and LONG in page.evaluate("() => window.CLIP[0]"), 'Copy results includes Needs a look with the full reply')
     back(page)
 
     # Signed out during the check: nothing confirmed.

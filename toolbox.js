@@ -3826,7 +3826,7 @@
         const t = await st.chatThread(num);
         if (!t) continue;
         let raw;
-        if (t.ReadStatus === c.unread) { raw = await ctx.readUnread(t, num); if (!raw) { unreadLeft = true; continue; } }
+        if (t.ReadStatus === c.unread) { raw = await ctx.readUnread(t, num); if (!raw) { unreadLeft = unreadLeft || num; continue; } }
         else raw = await st.chatMessages(t.ThreadId, 60);
         const msgs = asPageMsgs(raw, c);
         const sent = msgs.filter(m => m.IsOutbound && !m.IsNotification && timeOf(m) >= fromT && timeOf(m) < toT && pats.some(re => re.test(norm(m.Body))))
@@ -3835,7 +3835,7 @@
         const after = m => timeOf(m) > timeOf(sent) || (timeOf(m) === timeOf(sent) && idOf(m) > idOf(sent));
         best = { num, sent, sig: replySig(t), replies: msgs.filter(m => m.IsInbound && after(m)).sort((a, b) => timeOf(a) - timeOf(b) || idOf(a) - idOf(b)) };
       }
-      if (!best) return unreadLeft ? { kind: 'look', why: 'has an unread message. Read it in the Chat Center' } : { kind: 'notTexted' };
+      if (!best) return unreadLeft ? { kind: 'look', why: 'has an unread message. Read it in the Chat Center', num: unreadLeft } : { kind: 'notTexted', num: nums[0] || '' };
       const base = { num: best.num, sig: best.sig };
       if (best.sent.SmsSendErrorCode || best.sent.HasNotBeenDelivered) return Object.assign(base, { kind: 'look', why: 'the confirm text didn\'t go through' });
       if (!best.replies.length) return Object.assign(base, { kind: 'noReply' });
@@ -3860,11 +3860,62 @@
     const repLog = el('pre', 'max-height:calc(100vh - 330px);overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
     const repGo = smallBtn('Confirm', () => confirmRun(), 'background:#2e7d32;color:#fff;border-color:#2e7d32;font-weight:600;');
     const repStop = smallBtn('Stop', () => { if (!rBusy) return; rStop = true; repStop.disabled = true; repStop.textContent = 'Stopping...'; });
-    const repCopy = smallBtn('Copy results', async () => { if (await copy(repMsg.textContent + '\n\n' + repLog.textContent)) repCopy.textContent = 'Copied'; });
+    const repCopy = smallBtn('Copy results', async () => {
+      const lk = lookShown.length ? '⚠️ Needs a look (' + lookShown.length + ')\n' + lookShown.map(lookText).join('\n') + '\n\n' : '';
+      if (await copy(repMsg.textContent + '\n\n' + lk + repLog.textContent)) repCopy.textContent = 'Copied';
+    });
     const repBack = smallBtn('← Back', () => { rCheckId++; sub('main'); renderMain(); });
     const repNav = row();
     repNav.append(repGo, repStop, repCopy, repBack);
-    vReplies.append(repHead, repMsg, repLog, repNav);
+    // ⚠️ Needs a look: one card each, with what they said in full and buttons to copy their
+    // name and number (or open their conversation in a new tab).
+    const repLook = el('div', 'display:none;max-height:46vh;overflow:auto;margin:0 -4px 8px;padding:0 4px');
+    vReplies.append(repHead, repMsg, repLook, repLog, repNav);
+    let lookShown = [];
+    const fmtPhone = n => n && n.length === 10 ? '(' + n.slice(0, 3) + ') ' + n.slice(3, 6) + '-' + n.slice(6) : '';
+    const jobsOf = cu => Array.from(new Set((cu.appts || []).map(a => a.jobId)));
+    const lookOf = (cu, why, jobs) => ({ customer: cu.customer || '', phone: cu.num || '', jobs: jobs || jobsOf(cu), why, said: cu.said || null });
+    const lookText = x => '• ' + (x.customer || 'job #' + x.jobs[0]) + (x.phone ? '  ' + fmtPhone(x.phone) : '') + '  (#' + x.jobs.join(', #') + '): ' + x.why + (x.said ? ' ' + x.said.map(t => '"' + t + '"').join(' then ') : '');
+    const copyPill = (label, text) => {
+      const b = smallBtn(label, async () => {
+        const ok = await copy(text);
+        b.textContent = ok ? '✓ Copied' : label;
+        setTimeout(() => { b.textContent = label; }, 1500);
+      }, 'padding:3px 7px');
+      b.title = text;
+      b.addEventListener('mousedown', e => e.preventDefault());
+      return b;
+    };
+    const renderLook = items => {
+      lookShown = items;
+      repLook.textContent = '';
+      repLook.style.display = items.length ? 'block' : 'none';
+      if (!items.length) return;
+      repLook.appendChild(el('div', 'font-weight:700;margin:2px 0 5px', '⚠️ Needs a look (' + items.length + ')'));
+      items.forEach(x => {
+        const card = el('div', 'border:1px solid #e3b65c;background:#fffaf0;border-radius:8px;padding:7px 8px;margin-bottom:6px;font-size:12px;color:#111');
+        card.className = 'st-look-card';
+        const top = el('div', 'display:flex;gap:6px;align-items:baseline');
+        top.append(el('div', 'flex:1;font-weight:700;font-size:13px;user-select:text;word-break:break-word', x.customer || 'Job #' + x.jobs[0]),
+          el('div', 'color:#666;white-space:nowrap;user-select:text', '#' + x.jobs.join(', #')));
+        card.appendChild(top);
+        card.appendChild(el('div', 'font-size:13px;margin-top:1px;user-select:text;color:' + (x.phone ? '#111' : '#888'), x.phone ? fmtPhone(x.phone) : 'no number found'));
+        const replied = /^replied/.test(x.why) && x.said;
+        card.appendChild(el('div', 'margin-top:4px;color:#8a5300;font-weight:600', replied ? (x.why === 'replied' ? '💬 They replied:' : '🛑 ' + x.why.charAt(0).toUpperCase() + x.why.slice(1) + ':') : x.why.charAt(0).toUpperCase() + x.why.slice(1)));
+        if (x.said && !replied) card.appendChild(el('div', 'margin-top:3px;color:#555', 'They replied:'));
+        (x.said || []).forEach(t => card.appendChild(el('div', 'margin-top:3px;padding:5px 7px;background:#fff;border-left:3px solid #e3b65c;border-radius:4px;font-size:13px;line-height:1.35;white-space:pre-wrap;word-break:break-word;user-select:text', t)));
+        const btns = el('div', 'display:flex;gap:5px;flex-wrap:wrap;margin-top:6px');
+        if (x.customer) btns.appendChild(copyPill('📋 Name', x.customer));
+        if (x.phone) {
+          btns.appendChild(copyPill('📋 Phone', fmtPhone(x.phone)));
+          const chat = smallBtn('💬 Open chat', () => { try { window.open(location.href.split('#')[0] + '#/ChatCenter/' + x.phone, '_blank'); } catch (e) {} }, 'padding:3px 7px');
+          chat.title = 'Opens their conversation in a new tab';
+          btns.appendChild(chat);
+        }
+        if (btns.childNodes.length) card.appendChild(btns);
+        repLook.appendChild(card);
+      });
+    };
     let rBusy = false, rStop = false, rCheckId = 0, rPlan = null;
     const showRep = (go, stop) => { repGo.style.display = go ? 'inline-block' : 'none'; repStop.style.display = stop ? 'inline-block' : 'none'; repBack.style.display = stop ? 'none' : 'inline-block'; repCopy.textContent = 'Copy results'; };
     const custLine = (x, extra) => '• ' + (x.customer || 'job #' + x.appts[0].jobId) + (x.num ? ' ' + showNum(x.num) : '') + '  (#' + Array.from(new Set(x.appts.map(a => a.jobId))).join(', #') + ')' + (extra ? ': ' + extra : '');
@@ -3888,7 +3939,7 @@
       const dayText = day ? day.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'the day shown';
       rPlan = null;
       repHead.textContent = '📥 Check replies: ' + dayText;
-      repMsg.textContent = 'Loading the appointments on ' + dayText + '…'; repLog.textContent = '';
+      repMsg.textContent = 'Loading the appointments on ' + dayText + '…'; repLog.textContent = ''; renderLook([]);
       showRep(false, false);
       sub('replies');
       const t0 = Date.now();
@@ -3967,12 +4018,13 @@
       if (!custs.length) lines.push('No appointments' + (picked.length ? ' for the jobs you picked' : '') + ' on ' + dayText + '.');
       listOut(lines, '✅ Answered yes: will confirm ' + s1(todo, 'appointment'), P.yes, x => custLine(x, quote(x.said)));
       listOut(lines, '☑️ Answered yes, already confirmed', P.already, x => custLine(x, quote(x.said)));
-      listOut(lines, '⚠️ Needs a look', P.look, x => custLine(x, x.why + (x.said ? ' ' + quote(x.said) : '')));
+      renderLook(P.look.map(x => lookOf(x, x.why)));
       listOut(lines, '💤 No reply yet', P.noReply, x => custLine(x));
       const fromDay = textsFrom(day).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
       listOut(lines, '— Not texted (no confirm text since ' + fromDay + ')', P.notTexted, x => custLine(x), 60);
       if (notOnDay.length) lines.push('', 'Picked jobs not on ' + dayText + ': #' + notOnDay.join(', #'));
       repLog.textContent = lines.join('\n').trim();
+      repLog.style.display = repLog.textContent ? 'block' : 'none';
       repMsg.textContent = 'Checked ' + s1(custs.length, 'customer') + ' in ' + Math.max(1, Math.round((Date.now() - t0) / 1000)) + 's. ' +
         (todo ? 'Nothing is confirmed until you press Confirm.' : 'Nothing to confirm.');
       repGo.textContent = 'Confirm ' + s1(todo, 'appointment');
@@ -3986,35 +4038,36 @@
       rBusy = true; rStop = false; lock = TOOL;
       repStop.disabled = false; repStop.textContent = 'Stop';
       showRep(false, true);
-      const done = [], already = [], look = [];
+      const done = [], already = [], look = [], notes = [];
       let signedOut = false, failsInRow = 0, n = 0;
       const total = P.yes.reduce((k, x) => k + x.todo.length, 0);
       const one = async cu => {
         // Anything new in their conversation since the check? Then you read it first.
         const t = await st.chatThread(cu.num);
-        if (!cu.sig) { look.push(custLine(cu, 'not confirmed: couldn\'t tell whether a new message came in. Read their conversation')); n += cu.todo.length; return; }
-        if (replySig(t) !== cu.sig) { look.push(custLine(cu, 'a new message came in after the check. Read it, then check again')); n += cu.todo.length; return; }
+        if (!cu.sig) { look.push(lookOf(cu, 'Not confirmed: couldn\'t tell whether a new message came in. Read their conversation')); n += cu.todo.length; return; }
+        if (replySig(t) !== cu.sig) { look.push(lookOf(cu, 'Not confirmed: a new message came in after the check. Read it, then check again')); n += cu.todo.length; return; }
         for (let ai = 0; ai < cu.todo.length; ai++) {
           const a = cu.todo[ai];
-          if (rStop || signedOut) { cu.todo.slice(ai).forEach(z => look.push('• ' + (cu.customer || '') + '  (#' + z.jobId + '): not confirmed (stopped)')); return; }
+          if (rStop || signedOut) { look.push(lookOf(cu, 'Not confirmed (stopped)', cu.todo.slice(ai).map(z => z.jobId))); return; }
           n++; repMsg.textContent = 'Confirming ' + n + ' of ' + total + ': ' + (cu.customer || '#' + a.jobId);
+          const bad = why => look.push(lookOf(cu, why, [a.jobId]));
           const lab = '• ' + (cu.customer || '') + '  (#' + a.jobId + ')';
           try {
             const now = await st.apptConfirmed(a.apptId);
             if (now.confirmed) { already.push(lab); continue; }
             const sd = now.start ? new Date(now.start) : null;
-            if (sd && !isNaN(sd) && P.day && !sameDay(sd, P.day)) { look.push(lab + ': not confirmed, it was moved to ' + sd.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + ' after the check'); continue; }
+            if (sd && !isNaN(sd) && P.day && !sameDay(sd, P.day)) { bad('Not confirmed: it was moved to ' + sd.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + ' after the check'); continue; }
             const s = now.status;
-            if (s === 4 || s === 5 || (typeof s === 'string' && /^(done|completed|cancell?ed)$/i.test(norm(s)))) { look.push(lab + ': not confirmed, the appointment is ' + (s === 4 || /^(done|completed)$/i.test(String(s)) ? 'done' : 'canceled')); continue; }
+            if (s === 4 || s === 5 || (typeof s === 'string' && /^(done|completed|cancell?ed)$/i.test(norm(s)))) { bad('Not confirmed: the appointment is ' + (s === 4 || /^(done|completed)$/i.test(String(s)) ? 'done' : 'canceled')); continue; }
             await st.setConfirmed(a.apptId, true);
             let stuck = false;
             for (let k = 0; k < 3 && !stuck; k++) { if (k) await wait(500); stuck = (await st.apptConfirmed(a.apptId, 8000)).confirmed; }
             if (stuck) { done.push(lab); failsInRow = 0; }
-            else { look.push(lab + ': ServiceTitan didn\'t keep it confirmed'); if (++failsInRow >= 3) { rStop = true; look.push('3 problems in a row. Stopped to be safe.'); } }
+            else { bad('ServiceTitan didn\'t keep it confirmed'); if (++failsInRow >= 3) { rStop = true; notes.push('3 problems in a row. Stopped to be safe.'); } }
           } catch (e) {
             if (st.isSignedOut(e)) { signedOut = true; return; }
-            look.push(lab + ': ' + errText(e));
-            if (++failsInRow >= 3) { rStop = true; look.push('3 problems in a row. Stopped to be safe.'); }
+            bad('Not confirmed: ' + errText(e));
+            if (++failsInRow >= 3) { rStop = true; notes.push('3 problems in a row. Stopped to be safe.'); }
           }
         }
       };
@@ -4025,18 +4078,19 @@
           while (next < P.yes.length && !rStop && !signedOut) {
             const cu = P.yes[next++];
             try { await one(cu); }
-            catch (e) { if (st.isSignedOut(e)) { signedOut = true; break; } look.push(custLine(cu, errText(e))); }
+            catch (e) { if (st.isSignedOut(e)) { signedOut = true; break; } look.push(lookOf(cu, 'Not confirmed: ' + errText(e))); }
           }
         };
         await Promise.all([worker(), worker(), worker()]);
-        const notDone = P.yes.slice(next).map(cu => custLine(cu, 'not confirmed (stopped)'));
-        const lines = [];
+        const notDone = P.yes.slice(next).map(cu => lookOf(cu, 'Not confirmed (stopped)', cu.todo.map(a => a.jobId)));
+        const lines = notes.slice();
         listOut(lines, '✅ Confirmed', done, x => x);
         listOut(lines, '☑️ Already confirmed', already.concat(P.already.map(x => custLine(x))), x => x);
-        listOut(lines, '⚠️ Needs a look', look.concat(notDone, P.look.map(x => custLine(x, x.why + (x.said ? ' ' + quote(x.said) : '')))), x => x);
+        renderLook(look.concat(notDone, P.look.map(x => lookOf(x, x.why))));
         listOut(lines, '💤 No reply yet', P.noReply, x => custLine(x));
         listOut(lines, '— Not texted', P.notTexted, x => custLine(x), 60);
         repLog.textContent = lines.join('\n').trim();
+        repLog.style.display = repLog.textContent ? 'block' : 'none';
         const sum = s1(done.length, 'appointment') + ' confirmed' + (look.length + notDone.length + P.look.length ? ', ' + (look.length + notDone.length + P.look.length) + ' need a look' : '') + ', ' + P.noReply.length + ' no reply yet';
         repMsg.textContent = signedOut ? '⚠️ ' + st.SIGNED_OUT + ' (Before that: ' + sum + '.)' : (rStop ? 'Stopped: ' : 'Done: ') + sum + '.';
       } catch (e) {
