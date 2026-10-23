@@ -13,7 +13,10 @@ def check(cond, what):
     if not cond: fails.append(what)
 
 CONFIRM = "Hey, this is Andrew with AirSouth Cooling, Heating, Plumbing, and Electrical. I'm reaching out to remind you of your appointment you have with us tomorrow. If you have any questions, please call (601) 847-9941. Reply 'C' to confirm. Thank you!"
-BOSS = CONFIRM.replace('Andrew', 'Jeff')
+# The confirm texts customers got in these tests: no "today" / "tomorrow", so they count for the
+# board's day whatever time the tests run (test_when.py checks those words).
+SENT = CONFIRM.replace('with us tomorrow.', 'with us.')
+BOSS = SENT.replace('Andrew', 'Jeff')
 OUTREACH = 'Hey, this is Andrew with AirSouth Cooling, Heating, Plumbing and Electrical. Cooler weather is on the way, so here is a friendly reminder to switch your thermostat to heat and let it run for a few minutes before the first cold night. Reply STOP to opt out.'
 # Board: Kim Wu 6001 + 7102 (unassigned), Lou Ng 6002, Mo Day 6003, Pia Lane 7101 (unassigned).
 # 6004 and 7103 are canceled, 6005 is yesterday's. Appointment ids are job + 100000.
@@ -139,9 +142,9 @@ with sync_playwright() as p:
     open_board(page)
     B(page, '✅ Confirm Appt').click()
     chats(page, {
-        KIM: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('C', hours=2)]},
-        LOU: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('Can he come after 2?', hours=2)]},
-        MO: {'unread': False, 'msgs': [msg(CONFIRM, True, 3)]},
+        KIM: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('C', hours=2)]},
+        LOU: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('Can he come after 2?', hours=2)]},
+        MO: {'unread': False, 'msgs': [msg(SENT, True, 3)]},
         PIA: {'unread': True, 'msgs': [msg(BOSS, True, 3), msg('Yes 👍 thanks', hours=1)]},
     })
     page.evaluate("() => { window.CONFIRM_POSTS.length = 0; }")
@@ -176,10 +179,10 @@ with sync_playwright() as p:
     # STOP, a yes then a question, a C to a different folder's text, a failed confirm text.
     page.evaluate("() => { Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); }")
     chats(page, {
-        KIM: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('C', hours=2), msg('Actually can we move it?', hours=1)]},
-        LOU: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('STOP', hours=2)]},
+        KIM: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('C', hours=2), msg('Actually can we move it?', hours=1)]},
+        LOU: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('STOP', hours=2)]},
         MO: {'unread': False, 'msgs': [msg(OUTREACH, True, 3), msg('C', hours=2)]},
-        PIA: {'unread': False, 'msgs': [msg(CONFIRM, True, 3, SmsSendErrorCode=21610)]},
+        PIA: {'unread': False, 'msgs': [msg(SENT, True, 3, SmsSendErrorCode=21610)]},
     })
     log = run_check(page); print(log)
     look = section(log, '⚠️ Needs a look')
@@ -197,7 +200,7 @@ with sync_playwright() as p:
     back(page)
 
     # An old confirm text (more than 3 days before the day) doesn't count.
-    chats(page, {KIM: {'unread': False, 'msgs': [msg(CONFIRM, True, 24 * 5), msg('C', hours=24 * 5 - 1)]}})
+    chats(page, {KIM: {'unread': False, 'msgs': [msg(SENT, True, 24 * 5), msg('C', hours=24 * 5 - 1)]}})
     log = run_check(page)
     check('Kim Wu' in section(log, '📭 Not texted'), 'a confirm text from 5 days ago doesn\'t count')
     back(page)
@@ -218,8 +221,8 @@ with sync_playwright() as p:
     # Someone reading the reply between the check and Confirm isn't a new message.
     # An appointment moved to another day after the check isn't confirmed.
     chats(page, {
-        KIM: {'unread': True, 'msgs': [msg(CONFIRM, True, 3), msg('C', hours=2)]},
-        MO: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('Yes', hours=2)]},
+        KIM: {'unread': True, 'msgs': [msg(SENT, True, 3), msg('C', hours=2)]},
+        MO: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('Yes', hours=2)]},
     })
     page.evaluate("() => { Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); }")
     log = run_check(page)
@@ -236,10 +239,10 @@ with sync_playwright() as p:
     # A new message after the check: not confirmed. A confirm that doesn't stick: needs a look.
     # An appointment that's Done: not confirmed. Board already showing confirmed: skipped.
     chats(page, {
-        KIM: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('c', hours=2)]},
-        LOU: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('Confirmed.', hours=2)]},
-        MO: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('ok', hours=2)]},
-        PIA: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('Liked “Hey, this is Andrew…”', hours=2)]},
+        KIM: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('c', hours=2)]},
+        LOU: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('Confirmed.', hours=2)]},
+        MO: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('ok', hours=2)]},
+        PIA: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('Liked “Hey, this is Andrew…”', hours=2)]},
     })
     page.evaluate("() => { window.CONFIRM_POSTS.length = 0; window.CONFIRM_IGNORE[106003] = true; window.APPT_STATUS[107101] = 4; }")
     log = run_check(page)
@@ -261,7 +264,7 @@ with sync_playwright() as p:
     NO = ['No', 'C?', 'Can you call me', 'Cancel', 'Who is this', 'C but can he come after 2', 'reschedule please', '😡', 'Questioned “Hey…”', 'yes but late']
     def kind_of(reply):
         page.evaluate("() => { Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); }")
-        chats(page, {MO: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg(reply, hours=2)]}})
+        chats(page, {MO: {'unread': False, 'msgs': [msg(SENT, True, 3), msg(reply, hours=2)]}})
         lg = run_check(page)
         back(page)
         return 'yes' if 'Mo Day' in section(lg, '✅ Will confirm') else 'look' if 'Mo Day' in section(lg, '⚠️ Needs a look') else '?'
@@ -272,15 +275,15 @@ with sync_playwright() as p:
 
     # Confirm texts worded differently still count: a coworker typing "Air South", another
     # coworker's own wording, and ServiceTitan's automatic reminder. Replies count from the first.
-    AIR_SOUTH = CONFIRM.replace('Andrew', 'Jasmin').replace('AirSouth', 'Air South')
+    AIR_SOUTH = SENT.replace('Andrew', 'Jasmin').replace('AirSouth', 'Air South')
     OWN = 'Good evening! this is Harlee with AirSouth Cooling, Heating, Plumbing, & Electrical. I was reaching out to remind you of your appointment tomorrow! An expert will be arriving at your home, and it\'s important that all decision-makers and homeowners are present. Please respond to this chat with a, "C" to CONFIRM your appointment or give us a call at 601-847-9941. Thank you for being the best part of AirSouth!'
     AUTO = "Reminder from AirSouth Cooling, Heating, Plumbing, & Electrical: A Service Expert will be arriving tomorrow. Please call us at 601-847-9941 if you have any questions. We look forward to seeing you. Reply 'C' to confirm."
     page.evaluate("() => { Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); }")
     chats(page, {
         KIM: {'unread': False, 'msgs': [msg(AIR_SOUTH, True, 3), msg('C', hours=2)]},
-        LOU: {'unread': False, 'msgs': [msg(OWN, True, 3), msg('Yes', hours=2)]},
-        MO: {'unread': False, 'msgs': [msg(AUTO, True, 4, IsNotification=True), msg('Can he come before 10?', hours=3)]},
-        PIA: {'unread': False, 'msgs': [msg(CONFIRM, True, 5), msg('c', hours=4), msg(AUTO, True, 3, IsNotification=True)]},
+        LOU: {'unread': False, 'msgs': [{'Body': OWN, 'IsOutbound': True, 'CreatedOn': at_edge(600)}, {'Body': 'Yes', 'IsInbound': True, 'CreatedOn': at_edge(660)}]},
+        MO: {'unread': False, 'msgs': [{'Body': AUTO, 'IsOutbound': True, 'IsNotification': True, 'CreatedOn': at_edge(600)}, {'Body': 'Can he come before 10?', 'IsInbound': True, 'CreatedOn': at_edge(660)}]},
+        PIA: {'unread': False, 'msgs': [{'Body': SENT, 'IsOutbound': True, 'CreatedOn': at_edge(540)}, {'Body': 'c', 'IsInbound': True, 'CreatedOn': at_edge(570)}, {'Body': AUTO, 'IsOutbound': True, 'IsNotification': True, 'CreatedOn': at_edge(600)}]},
     })
     log = run_check(page); print(log)
     yes = section(log, '✅ Will confirm')
@@ -290,7 +293,7 @@ with sync_playwright() as p:
     check('Pia Lane' in yes, 'replies count from the first confirm text (a reminder sent after her C doesn\'t hide it)')
     back(page)
     # A C to ServiceTitan's automatic reminder: ServiceTitan confirms it itself.
-    chats(page, {MO: {'unread': False, 'msgs': [msg(AUTO, True, 4, IsNotification=True), msg('C', hours=3), msg('Your appointment with AirSouth LLC has been confirmed', True, 3)]}})
+    chats(page, {MO: {'unread': False, 'msgs': [{'Body': AUTO, 'IsOutbound': True, 'IsNotification': True, 'CreatedOn': at_edge(600)}, {'Body': 'C', 'IsInbound': True, 'CreatedOn': at_edge(660)}, {'Body': 'Your appointment with AirSouth LLC has been confirmed', 'IsOutbound': True, 'CreatedOn': at_edge(661)}]}})
     page.evaluate("() => { window.CONFIRMED[106003] = true; }")
     log = run_check(page)
     check('Mo Day' in section(log, '☑️ Answered yes, already confirmed'), 'a C to the automatic reminder shows as already confirmed')
@@ -300,15 +303,21 @@ with sync_playwright() as p:
     # ✅ Add to confirm: you decide a Needs a look / No reply / Not texted customer is a yes.
     page.evaluate("() => { Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); window.CONFIRM_POSTS.length = 0; }")
     chats(page, {
-        KIM: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('C', hours=2)]},
-        LOU: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('C call before you come so I can be home', hours=2)]},
-        MO: {'unread': False, 'msgs': [msg(CONFIRM, True, 3)]},
+        KIM: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('C', hours=2)]},
+        LOU: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('C call before you come so I can be home', hours=2)]},
+        MO: {'unread': False, 'msgs': [msg(SENT, True, 3)]},
     })
     log = run_check(page)
     check('Will confirm 2 appointments' in log and CB(page, 'Confirm 2 appointments').count() == 1, 'Kim (two jobs) to confirm')
     card = lambda name: page.locator('#st-toolbox .st-cust-card:visible').filter(has_text=name).first
     check(card('Lou Ng').locator('button', has_text='Add to confirm').count() == 1, 'Needs a look cards have ✅ Add to confirm')
-    check(card('Kim Wu').locator('button', has_text='Add to confirm').count() == 0, 'cards already on the list don\'t')
+    check(card('Kim Wu').locator('button', has_text='Add to confirm').count() == 0 and card('Kim Wu').locator('button', has_text='Take off').count() == 1, 'cards on the list have ↩ Take off instead (even ones the tool put there)')
+    # Taking off someone who answered yes: to Needs a look, saying so; Add puts them back.
+    card('Kim Wu').locator('button', has_text='Take off').click()
+    log = log_text(page)
+    check('Kim Wu' in section(log, '⚠️ Needs a look') and 'Taken off the list by you' in section(log, '⚠️ Needs a look') and CB(page, 'Confirm ').count() == 0, 'Kim taken off: to Needs a look, nothing left to confirm')
+    card('Kim Wu').locator('button', has_text='Add to confirm').click()
+    check(CB(page, 'Confirm 2 appointments').count() == 1, 'and added back')
     card('Lou Ng').locator('button', has_text='Add to confirm').click()
     log = log_text(page)
     check('Lou Ng' in section(log, '✅ Will confirm') and 'Added by you' in section(log, '✅ Will confirm') and 'Lou Ng' not in section(log, '⚠️ Needs a look'), 'Lou moved to Will confirm, marked added by you')
@@ -328,9 +337,18 @@ with sync_playwright() as p:
     check(page.locator('#st-toolbox .st-cust-card button', has_text='Add to confirm').count() == 0, 'no Add buttons on the results')
     back(page)
 
+    # A Needs a look card whose appointment is already confirmed in ServiceTitan: no Add, says why.
+    page.evaluate("() => { Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); window.CONFIRMED[106002] = true; }")
+    page.evaluate("() => { const vm = document.querySelector('.job-list').__vm; vm.Assignments(vm.Assignments().map(a => Object.assign({}, a, { IsConfirmed: !!window.CONFIRMED[a.Id] }))); }")
+    chats(page, {LOU: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('What time?', hours=2)]}})
+    run_check(page)
+    check(card('Lou Ng').locator('button', has_text='Add to confirm').count() == 0 and 'Already confirmed in ServiceTitan' in card('Lou Ng').inner_text(), 'already confirmed in ServiceTitan: no Add button, and the card says why')
+    back(page)
+    page.evaluate("() => { delete window.CONFIRMED[106002]; const vm = document.querySelector('.job-list').__vm; vm.Assignments(vm.Assignments().map(a => Object.assign({}, a, { IsConfirmed: false }))); }")
+
     # Added, but a new message comes in before Confirm: not confirmed.
     page.evaluate("() => { Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); }")
-    chats(page, {LOU: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('C call before you come', hours=2)]}})
+    chats(page, {LOU: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('C call before you come', hours=2)]}})
     run_check(page)
     card('Lou Ng').locator('button', has_text='Add to confirm').click()
     page.evaluate("n => window.CHATS[n].msgs.push({ Body: 'actually cancel it', IsInbound: true, CreatedOn: new Date().toISOString() })", LOU)
@@ -341,7 +359,7 @@ with sync_playwright() as p:
     back(page)
 
     # Jobs picked: only those are checked.
-    chats(page, {KIM: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('C', hours=2)]}, MO: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg('C', hours=2)]}})
+    chats(page, {KIM: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('C', hours=2)]}, MO: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('C', hours=2)]}})
     page.fill('#st-toolbox input:visible[placeholder^="Or type job"]', '6003 9999')
     page.locator('#st-toolbox button:visible', has_text='Add').filter(has_not_text='note').filter(has_not_text='folder').first.click()
     log = run_check(page)
@@ -351,9 +369,9 @@ with sync_playwright() as p:
 
     # ServiceTitan marks a conversation read when its messages are read: the others stay unread.
     chats(page, {
-        KIM: {'unread': True, 'msgs': [msg(CONFIRM, True, 3), msg('C', hours=2)]},
-        LOU: {'unread': True, 'msgs': [msg(CONFIRM, True, 3), msg('C', hours=2)]},
-        MO: {'unread': True, 'msgs': [msg(CONFIRM, True, 3), msg('C', hours=2)]},
+        KIM: {'unread': True, 'msgs': [msg(SENT, True, 3), msg('C', hours=2)]},
+        LOU: {'unread': True, 'msgs': [msg(SENT, True, 3), msg('C', hours=2)]},
+        MO: {'unread': True, 'msgs': [msg(SENT, True, 3), msg('C', hours=2)]},
     })
     page.evaluate("() => { window.MARK_READ_ON_FETCH = true; }")
     log = run_check(page); print(log)
@@ -364,7 +382,7 @@ with sync_playwright() as p:
 
     # The Needs a look cards: what they said in full, the whole number, and copy / open buttons.
     LONG = 'Good morning! I will be at work until 3 but my husband will be home after noon, can your guy call him at the number on file before coming out?'
-    chats(page, {LOU: {'unread': False, 'msgs': [msg(CONFIRM, True, 3), msg(LONG, hours=2)]}})
+    chats(page, {LOU: {'unread': False, 'msgs': [msg(SENT, True, 3), msg(LONG, hours=2)]}})
     page.evaluate('''() => { window.CLIP = []; window.OPENED = [];
       Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async t => { window.CLIP.push(t); } } });
       window.open = u => { window.OPENED.push(u); return null; }; }''')

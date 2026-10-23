@@ -21,7 +21,7 @@
 (() => {
   const VERSION = '1.6.5';
   const WHATS_NEW = {
-    '1.6.5': 'New fill-in for 📱 Customer Texts: {when} says "today", "tomorrow", or the date ("on Friday, October 30") from the appointment\'s day on the board and today\'s date. ✅ Confirm Appt uses it, so the same message works the day before, the morning of, or a week ahead. 📥 Check replies is smarter too: a confirm text that names a date only counts for that date.',
+    '1.6.5': 'New fill-in for 📱 Customer Texts: {when} says "today", "tomorrow", or the date ("on Friday, October 30") from the appointment\'s day on the board and today\'s date. ✅ Confirm Appt uses it, so the same message works the day before, the morning of, or a week ahead. 📥 Check replies is smarter too: a confirm text that names a date only counts for that date. A card without ✅ Add to confirm now says why (already confirmed in ServiceTitan), and every card on the Will confirm list has ↩ Take off.',
     '1.6.4': 'New in 📱 Customer Texts: a ✅ Confirm Appt folder with the "Reply \'C\' to confirm" reminder for tomorrow\'s customers, and 📥 Check replies and confirm. It reads the replies to any text asking for a C (yours, a coworker\'s, or ServiceTitan\'s automatic reminder) and confirms the appointments of everyone who answered C, yes or 👍 when you press Confirm. Everyone else is a card under Needs a look, No reply yet or Not texted, with what they said, their number, copy buttons, and ✅ Add to confirm for the ones you decide are a yes. It never sends anything.',
     '1.6.3': 'Safer with two tabs open: 💬 Tech Messages and 📱 Customer Texts now check your 🛡️ / 🚫 never lists as saved right now, before the list, Start and each person, so someone you block in another tab is never messaged from this one, and saving settings in one tab no longer undoes blocks made in another. A Customer Texts run no longer fills the Back button with every conversation it opened. Tech Messages puts the Toolbox back where it was after moving it aside for the message panel.',
     '1.6.2': 'Faster 🔀 Move Jobs: it now works on up to three jobs at once, so moving jobs from one tech to another takes about a third of the time (Unassigned moves, whole-day swaps and Put back are faster too). A run also ends as soon as the board shows the changes, instead of always waiting 2.5 seconds. Each job is still done the same careful way: checked again right before, the new tech added first and confirmed, then the old one taken off and confirmed. Stop lets the jobs already started finish.',
@@ -383,7 +383,8 @@
   //   render(sections, notes): sections = [{ key, title, tone, open, items }], each item
   //     { customer, phone (10 digits or ''), jobs: [job numbers], status, said: [replies] or null }.
   //     A status starting with "replied" is shown as the label over the replies. tone: one of TONES.
-  //     An item can carry actions: [{ label, title, style, onClick }], shown as its first buttons.
+  //     An item can carry actions: [{ label, title, style, onClick }], shown as its first buttons,
+  //     and a note: a short line shown under the status (in blue).
   //     notes: lines shown above the sections (or nothing).
   //   text(): the same, as plain text (for Copy results).
   const fmtPhone = n => { n = last10(n); return n.length === 10 ? '(' + n.slice(0, 3) + ') ' + n.slice(3, 6) + '-' + n.slice(6) : ''; };
@@ -421,6 +422,7 @@
       const said = x.said && x.said.length ? x.said : null;
       const replied = said && /^replied/i.test(x.status);
       if (x.status) c.appendChild(el('div', 'margin-top:4px;color:' + ink + ';font-weight:600', replied ? (/^replied$/i.test(x.status) ? '💬 They replied:' : '🛑 ' + cap(x.status) + ':') : cap(x.status)));
+      if (x.note) c.appendChild(el('div', 'margin-top:3px;color:#1a4f8a;font-weight:600', x.note));
       if (said && !replied) c.appendChild(el('div', 'margin-top:3px;color:#555', 'They replied:'));
       (said || []).forEach(t => c.appendChild(el('div', 'margin-top:3px;padding:5px 7px;background:#fff;border-left:3px solid ' + line + ';border-radius:4px;font-size:13px;line-height:1.35;white-space:pre-wrap;word-break:break-word;user-select:text', t)));
       const btns = el('div', 'display:flex;gap:5px;flex-wrap:wrap;margin-top:6px');
@@ -459,7 +461,7 @@
       box.scrollTop = keep;
     };
     const line = x => '• ' + (x.customer || 'job #' + (x.jobs[0] || '?')) + (x.phone ? '  ' + fmtPhone(x.phone) : '') + (x.jobs.length ? '  (#' + x.jobs.join(', #') + ')' : '') +
-      (x.status ? ': ' + x.status : '') + (x.said && x.said.length ? ' ' + x.said.map(t => '"' + t + '"').join(' then ') : '');
+      (x.status ? ': ' + x.status : '') + (x.note ? ' (' + x.note + ')' : '') + (x.said && x.said.length ? ' ' + x.said.map(t => '"' + t + '"').join(' then ') : '');
     const text = () => shownNotes.concat(shown.map(s => s.title + ' (' + s.items.length + ')\n' + s.items.map(line).join('\n'))).join('\n\n');
     // Cards for the same customer with the same status become one (their job numbers together).
     const merge = items => {
@@ -4212,20 +4214,28 @@
         if (i < 0) return;
         P[from].splice(i, 1);
         if (to === 'yes') { cu.manual = from; cu.todo = todoOf(cu); P.yes.push(cu); }
-        else { delete cu.manual; P[to].push(cu); }
+        else {
+          // Someone who answered yes and you took off goes to Needs a look, saying so.
+          if (!cu.manual) cu.why = 'Taken off the list by you';
+          delete cu.manual;
+          P[to].push(cu);
+        }
         showPlan(P);
       };
+      // Not on the list: ✅ Add to confirm, or, when every appointment of theirs that day is already
+      // confirmed in ServiceTitan (a C to ServiceTitan's own reminder, or a coworker), a note saying so.
       const addable = (from, x, status) => {
         const it = item(x, status);
         if (todoOf(x).length) it.actions = [{ label: '✅ Add to confirm', style: 'border-color:#2e7d32;color:#1b5e20;font-weight:600',
           title: 'Puts them on the list to confirm. Nothing is confirmed until you press Confirm at the bottom.', onClick: () => move(x, from, 'yes') }];
+        else it.note = '☑️ Already confirmed in ServiceTitan';
         return it;
       };
       cards.render([
         { key: 'look', title: '⚠️ Needs a look', tone: 'warn', open: true, items: P.look.map(x => addable('look', x, x.why)) },
         { key: 'yes', title: '✅ Will confirm ' + s1(todo, 'appointment'), tone: 'good', open: true, items: P.yes.map(x => {
           const it = item(x, (x.manual ? 'Added by you. ' : '') + 'Will be confirmed when you press Confirm', x.todo.map(a => a.jobId));
-          if (x.manual) it.actions = [{ label: '↩ Take off', title: 'Puts them back where they were. They won\'t be confirmed.', onClick: () => move(x, 'yes', x.manual) }];
+          it.actions = [{ label: '↩ Take off', title: x.manual ? 'Puts them back where they were. They won\'t be confirmed.' : 'Takes them off the list (to Needs a look). They won\'t be confirmed.', onClick: () => move(x, 'yes', x.manual || 'look') }];
           return it;
         }) },
         { key: 'already', title: '☑️ Answered yes, already confirmed', tone: 'done', items: P.already.map(x => item(x, 'Already confirmed')) },

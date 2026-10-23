@@ -50,6 +50,10 @@ def everyone(page):
 def ago(h):
     return (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=h)).strftime('%Y-%m-%dT%H:%M:%S.000Z')
 
+# A time on today's date: minutes after midnight (negative: the evening before).
+def at_today(page, minutes):
+    return page.evaluate("m => { const t = new Date(); t.setHours(0, 0, 0, 0); return new Date(t.getTime() + m * 60000).toISOString(); }", minutes)
+
 def chats(page, d):
     page.evaluate("d => { Object.keys(window.CHATS).forEach(k => delete window.CHATS[k]); Object.assign(window.CHATS, d); }", d)
 
@@ -143,7 +147,7 @@ with sync_playwright() as p:
         KIM: {'unread': False, 'msgs': [{'Body': ahead, 'IsOutbound': True, 'CreatedOn': ago(24 * 6)}, {'Body': 'C', 'IsInbound': True, 'CreatedOn': ago(24 * 6 - 1)}]},
         LOU: {'unread': False, 'msgs': [{'Body': other, 'IsOutbound': True, 'CreatedOn': ago(2)}, {'Body': 'C', 'IsInbound': True, 'CreatedOn': ago(1)}]},
         MO: {'unread': False, 'msgs': [{'Body': 'Reply C to confirm your ' + md + ' appointment with AirSouth', 'IsOutbound': True, 'CreatedOn': ago(24 * 5)}, {'Body': 'yes', 'IsInbound': True, 'CreatedOn': ago(24 * 5 - 1)}]},
-        PIA: {'unread': False, 'msgs': [{'Body': NEW.replace('{dispatcher}', 'Jasmin').replace('{when}', 'today'), 'IsOutbound': True, 'CreatedOn': ago(1)}, {'Body': 'c', 'IsInbound': True, 'CreatedOn': ago(0.5)}]},
+        PIA: {'unread': False, 'msgs': [{'Body': NEW.replace('{dispatcher}', 'Jasmin').replace('{when}', 'today'), 'IsOutbound': True, 'CreatedOn': at_today(page, 1)}, {'Body': 'c', 'IsInbound': True, 'CreatedOn': at_today(page, 2)}]},
     })
     log = check_text(page); print(log)
     yes = section(log, '✅ Will confirm')
@@ -155,9 +159,9 @@ with sync_playwright() as p:
     # Texts without a date: "today" sent yesterday was about yesterday; "tomorrow" sent today is
     # about tomorrow. Neither counts for today. "tomorrow" sent yesterday does.
     chats(page, {
-        KIM: {'unread': False, 'msgs': [{'Body': NEW.replace('{dispatcher}', 'Andrew').replace('{when}', 'today'), 'IsOutbound': True, 'CreatedOn': ago(24)}, {'Body': 'C', 'IsInbound': True, 'CreatedOn': ago(23)}]},
-        LOU: {'unread': False, 'msgs': [{'Body': OLD.replace('{dispatcher}', 'Andrew'), 'IsOutbound': True, 'CreatedOn': ago(1)}, {'Body': 'C', 'IsInbound': True, 'CreatedOn': ago(0.5)}]},
-        MO: {'unread': False, 'msgs': [{'Body': OLD.replace('{dispatcher}', 'Andrew'), 'IsOutbound': True, 'CreatedOn': ago(24)}, {'Body': 'C', 'IsInbound': True, 'CreatedOn': ago(23)}]},
+        KIM: {'unread': False, 'msgs': [{'Body': NEW.replace('{dispatcher}', 'Andrew').replace('{when}', 'today'), 'IsOutbound': True, 'CreatedOn': at_today(page, -60)}, {'Body': 'C', 'IsInbound': True, 'CreatedOn': at_today(page, -50)}]},
+        LOU: {'unread': False, 'msgs': [{'Body': OLD.replace('{dispatcher}', 'Andrew'), 'IsOutbound': True, 'CreatedOn': at_today(page, 1)}, {'Body': 'C', 'IsInbound': True, 'CreatedOn': at_today(page, 2)}]},
+        MO: {'unread': False, 'msgs': [{'Body': OLD.replace('{dispatcher}', 'Andrew'), 'IsOutbound': True, 'CreatedOn': at_today(page, -60)}, {'Body': 'C', 'IsInbound': True, 'CreatedOn': at_today(page, -50)}]},
     })
     log = check_text(page); print(log)
     nt = section(log, '📭 Not texted')
