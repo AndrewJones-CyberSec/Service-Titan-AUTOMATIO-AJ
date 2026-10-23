@@ -366,6 +366,103 @@
       appointment, jobSkills, technicians, techsBooked, daySchedule, assignTechs, unassignTechs, apptConfirmed, setConfirmed };
   })();
 
+  // Customer cards: customers in sections (Needs a look, Confirmed, No reply…), one card each with
+  // their name, job numbers, full phone number, a status line and anything they replied, plus
+  // buttons to copy their name or number and to open their conversation in a new tab. A section
+  // folds open or shut by its header (and stays that way while the panel is open). Used by
+  // 📱 Customer Texts → 📥 Check replies, and meant to be reused by other tools.
+  //   render(sections, notes): sections = [{ key, title, tone, open, items }], each item
+  //     { customer, phone (10 digits or ''), jobs: [job numbers], status, said: [replies] or null }.
+  //     A status starting with "replied" is shown as the label over the replies. tone: one of TONES.
+  //     notes: lines shown above the sections (or nothing).
+  //   text(): the same, as plain text (for Copy results).
+  const fmtPhone = n => { n = last10(n); return n.length === 10 ? '(' + n.slice(0, 3) + ') ' + n.slice(3, 6) + '-' + n.slice(6) : ''; };
+  const customerCards = () => {
+    // border, background, status text
+    const TONES = { warn: ['#e3b65c', '#fffaf0', '#8a5300'], good: ['#86c08a', '#f3faf3', '#1b5e20'], done: ['#9bb7d4', '#f4f8fc', '#1a4f8a'],
+      quiet: ['#cfcfcf', '#fafafa', '#555'], faint: ['#e2e2e2', '#fff', '#777'] };
+    const box = el('div', 'max-height:calc(100vh - 290px);overflow:auto;margin:0 -4px 8px;padding:0 4px');
+    const openState = {};
+    let shown = [], shownNotes = [];
+    const cap = t => t ? t.charAt(0).toUpperCase() + t.slice(1) : '';
+    const pill = (label, onClick, title) => {
+      const b = smallBtn(label, onClick, 'padding:3px 7px');
+      if (title) b.title = title;
+      b.addEventListener('mousedown', e => e.preventDefault());
+      return b;
+    };
+    const copyPill = (label, text) => {
+      const b = pill(label, async () => {
+        const ok = await copy(text);
+        b.textContent = ok ? '✓ Copied' : label;
+        setTimeout(() => { b.textContent = label; }, 1500);
+      }, text);
+      return b;
+    };
+    const card = (x, tone) => {
+      const [line, bg, ink] = TONES[tone] || TONES.quiet;
+      const c = el('div', 'border:1px solid ' + line + ';background:' + bg + ';border-radius:8px;padding:7px 8px;margin-bottom:6px;font-size:12px;color:#111');
+      c.className = 'st-cust-card';
+      const top = el('div', 'display:flex;gap:6px;align-items:baseline');
+      top.append(el('div', 'flex:1;font-weight:700;font-size:13px;user-select:text;word-break:break-word', x.customer || 'Job #' + (x.jobs[0] || '?')),
+        el('div', 'color:#666;white-space:nowrap;user-select:text', x.jobs.length ? '#' + x.jobs.join(', #') : ''));
+      c.appendChild(top);
+      c.appendChild(el('div', 'font-size:13px;margin-top:1px;user-select:text;color:' + (x.phone ? '#111' : '#888'), x.phone ? fmtPhone(x.phone) : 'no number found'));
+      const said = x.said && x.said.length ? x.said : null;
+      const replied = said && /^replied/i.test(x.status);
+      if (x.status) c.appendChild(el('div', 'margin-top:4px;color:' + ink + ';font-weight:600', replied ? (/^replied$/i.test(x.status) ? '💬 They replied:' : '🛑 ' + cap(x.status) + ':') : cap(x.status)));
+      if (said && !replied) c.appendChild(el('div', 'margin-top:3px;color:#555', 'They replied:'));
+      (said || []).forEach(t => c.appendChild(el('div', 'margin-top:3px;padding:5px 7px;background:#fff;border-left:3px solid ' + line + ';border-radius:4px;font-size:13px;line-height:1.35;white-space:pre-wrap;word-break:break-word;user-select:text', t)));
+      const btns = el('div', 'display:flex;gap:5px;flex-wrap:wrap;margin-top:6px');
+      if (x.customer) btns.appendChild(copyPill('📋 Name', x.customer));
+      if (x.phone) {
+        btns.appendChild(copyPill('📋 Phone', fmtPhone(x.phone)));
+        btns.appendChild(pill('💬 Open chat', () => { try { window.open(location.href.split('#')[0] + '#/ChatCenter/' + last10(x.phone), '_blank'); } catch (e) {} }, 'Opens their conversation in a new tab'));
+      }
+      if (btns.childNodes.length) c.appendChild(btns);
+      return c;
+    };
+    const render = (sections, notes) => {
+      shown = (sections || []).filter(s => s.items.length);
+      shownNotes = (notes || []).filter(Boolean);
+      box.textContent = '';
+      shownNotes.forEach(t => box.appendChild(el('div', 'font-size:12px;color:#444;background:#f1f4f8;border-radius:6px;padding:5px 7px;margin-bottom:6px;white-space:pre-wrap', t)));
+      shown.forEach(s => {
+        const sec = el('div', 'margin-bottom:4px');
+        sec.className = 'st-cust-section';
+        sec.setAttribute('data-title', s.title + ' (' + s.items.length + ')');
+        const isOpen = () => openState[s.key] != null ? openState[s.key] : !!s.open;
+        const body = el('div', 'display:' + (isOpen() ? 'block' : 'none'));
+        const hd = el('button', FULL + 'text-align:left;padding:5px 2px;border:none;background:transparent;cursor:pointer;font:inherit;font-weight:700;color:#111');
+        hd.type = 'button';
+        const label = () => { hd.textContent = (isOpen() ? '▾ ' : '▸ ') + s.title + ' (' + s.items.length + ')'; };
+        hd.onclick = () => { openState[s.key] = !isOpen(); body.style.display = isOpen() ? 'block' : 'none'; label(); };
+        hd.addEventListener('mousedown', e => e.preventDefault());
+        label();
+        s.items.forEach(x => body.appendChild(card(x, s.tone)));
+        sec.append(hd, body);
+        box.appendChild(sec);
+      });
+      box.style.display = shown.length || shownNotes.length ? 'block' : 'none';
+    };
+    const line = x => '• ' + (x.customer || 'job #' + (x.jobs[0] || '?')) + (x.phone ? '  ' + fmtPhone(x.phone) : '') + (x.jobs.length ? '  (#' + x.jobs.join(', #') + ')' : '') +
+      (x.status ? ': ' + x.status : '') + (x.said && x.said.length ? ' ' + x.said.map(t => '"' + t + '"').join(' then ') : '');
+    const text = () => shownNotes.concat(shown.map(s => s.title + ' (' + s.items.length + ')\n' + s.items.map(line).join('\n'))).join('\n\n');
+    // Cards for the same customer with the same status become one (their job numbers together).
+    const merge = items => {
+      const out = [], by = new Map();
+      items.forEach(x => {
+        const k = [x.customer, x.phone, x.status].join('|');
+        const had = by.get(k);
+        if (had) { x.jobs.forEach(j => { if (had.jobs.indexOf(j) < 0) had.jobs.push(j); }); return; }
+        const y = Object.assign({}, x, { jobs: x.jobs.slice() });
+        by.set(k, y); out.push(y);
+      });
+      return out;
+    };
+    return { box, render, text, merge };
+  };
+
   // The editable list used by ✏️ Edit notes and ✏️ Edit messages: a name and a text per item,
   // with ↑ ↓ to reorder and Delete. `word` is 'note' or 'message' (used in warnings).
   // opts.allowEmpty: an empty list is OK to save. opts.rowExtra(item): extra control for a row.
@@ -3852,79 +3949,24 @@
       if (!m || (m.SmsId == null && !m.CreatedOn)) return null;
       return [t.ThreadId, t.BlockedStatus, m.SmsId, m.CreatedOn].join('|');
     };
-    const quote = said => said.map(x => '"' + (x.length > 90 ? x.slice(0, 87) + '…' : x) + '"').join(' then ');
 
     const vReplies = mkView('replies');
     const repHead = head('📥 Check replies');
     const repMsg = el('div', 'font-size:12px;color:#444;margin-bottom:6px;min-height:16px;white-space:pre-wrap');
-    const repLog = el('pre', 'max-height:calc(100vh - 330px);overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
+    // The report: every customer as a card, in sections (customerCards, shared with other tools).
+    const cards = customerCards();
     const repGo = smallBtn('Confirm', () => confirmRun(), 'background:#2e7d32;color:#fff;border-color:#2e7d32;font-weight:600;');
     const repStop = smallBtn('Stop', () => { if (!rBusy) return; rStop = true; repStop.disabled = true; repStop.textContent = 'Stopping...'; });
-    const repCopy = smallBtn('Copy results', async () => {
-      const lk = lookShown.length ? '⚠️ Needs a look (' + lookShown.length + ')\n' + lookShown.map(lookText).join('\n') + '\n\n' : '';
-      if (await copy(repMsg.textContent + '\n\n' + lk + repLog.textContent)) repCopy.textContent = 'Copied';
-    });
+    const repCopy = smallBtn('Copy results', async () => { if (await copy(repMsg.textContent + '\n\n' + cards.text())) repCopy.textContent = 'Copied'; });
     const repBack = smallBtn('← Back', () => { rCheckId++; sub('main'); renderMain(); });
     const repNav = row();
     repNav.append(repGo, repStop, repCopy, repBack);
-    // ⚠️ Needs a look: one card each, with what they said in full and buttons to copy their
-    // name and number (or open their conversation in a new tab).
-    const repLook = el('div', 'display:none;max-height:46vh;overflow:auto;margin:0 -4px 8px;padding:0 4px');
-    vReplies.append(repHead, repMsg, repLook, repLog, repNav);
-    let lookShown = [];
-    const fmtPhone = n => n && n.length === 10 ? '(' + n.slice(0, 3) + ') ' + n.slice(3, 6) + '-' + n.slice(6) : '';
+    vReplies.append(repHead, repMsg, cards.box, repNav);
     const jobsOf = cu => Array.from(new Set((cu.appts || []).map(a => a.jobId)));
-    const lookOf = (cu, why, jobs) => ({ customer: cu.customer || '', phone: cu.num || '', jobs: jobs || jobsOf(cu), why, said: cu.said || null });
-    const lookText = x => '• ' + (x.customer || 'job #' + x.jobs[0]) + (x.phone ? '  ' + fmtPhone(x.phone) : '') + '  (#' + x.jobs.join(', #') + '): ' + x.why + (x.said ? ' ' + x.said.map(t => '"' + t + '"').join(' then ') : '');
-    const copyPill = (label, text) => {
-      const b = smallBtn(label, async () => {
-        const ok = await copy(text);
-        b.textContent = ok ? '✓ Copied' : label;
-        setTimeout(() => { b.textContent = label; }, 1500);
-      }, 'padding:3px 7px');
-      b.title = text;
-      b.addEventListener('mousedown', e => e.preventDefault());
-      return b;
-    };
-    const renderLook = items => {
-      lookShown = items;
-      repLook.textContent = '';
-      repLook.style.display = items.length ? 'block' : 'none';
-      if (!items.length) return;
-      repLook.appendChild(el('div', 'font-weight:700;margin:2px 0 5px', '⚠️ Needs a look (' + items.length + ')'));
-      items.forEach(x => {
-        const card = el('div', 'border:1px solid #e3b65c;background:#fffaf0;border-radius:8px;padding:7px 8px;margin-bottom:6px;font-size:12px;color:#111');
-        card.className = 'st-look-card';
-        const top = el('div', 'display:flex;gap:6px;align-items:baseline');
-        top.append(el('div', 'flex:1;font-weight:700;font-size:13px;user-select:text;word-break:break-word', x.customer || 'Job #' + x.jobs[0]),
-          el('div', 'color:#666;white-space:nowrap;user-select:text', '#' + x.jobs.join(', #')));
-        card.appendChild(top);
-        card.appendChild(el('div', 'font-size:13px;margin-top:1px;user-select:text;color:' + (x.phone ? '#111' : '#888'), x.phone ? fmtPhone(x.phone) : 'no number found'));
-        const replied = /^replied/.test(x.why) && x.said;
-        card.appendChild(el('div', 'margin-top:4px;color:#8a5300;font-weight:600', replied ? (x.why === 'replied' ? '💬 They replied:' : '🛑 ' + x.why.charAt(0).toUpperCase() + x.why.slice(1) + ':') : x.why.charAt(0).toUpperCase() + x.why.slice(1)));
-        if (x.said && !replied) card.appendChild(el('div', 'margin-top:3px;color:#555', 'They replied:'));
-        (x.said || []).forEach(t => card.appendChild(el('div', 'margin-top:3px;padding:5px 7px;background:#fff;border-left:3px solid #e3b65c;border-radius:4px;font-size:13px;line-height:1.35;white-space:pre-wrap;word-break:break-word;user-select:text', t)));
-        const btns = el('div', 'display:flex;gap:5px;flex-wrap:wrap;margin-top:6px');
-        if (x.customer) btns.appendChild(copyPill('📋 Name', x.customer));
-        if (x.phone) {
-          btns.appendChild(copyPill('📋 Phone', fmtPhone(x.phone)));
-          const chat = smallBtn('💬 Open chat', () => { try { window.open(location.href.split('#')[0] + '#/ChatCenter/' + x.phone, '_blank'); } catch (e) {} }, 'padding:3px 7px');
-          chat.title = 'Opens their conversation in a new tab';
-          btns.appendChild(chat);
-        }
-        if (btns.childNodes.length) card.appendChild(btns);
-        repLook.appendChild(card);
-      });
-    };
+    // A customer as a card: { customer, phone, jobs, status, said }.
+    const item = (cu, status, jobs) => ({ customer: cu.customer || '', phone: cu.num || '', jobs: jobs || jobsOf(cu), status: status || '', said: cu.said || null });
     let rBusy = false, rStop = false, rCheckId = 0, rPlan = null;
     const showRep = (go, stop) => { repGo.style.display = go ? 'inline-block' : 'none'; repStop.style.display = stop ? 'inline-block' : 'none'; repBack.style.display = stop ? 'none' : 'inline-block'; repCopy.textContent = 'Copy results'; };
-    const custLine = (x, extra) => '• ' + (x.customer || 'job #' + x.appts[0].jobId) + (x.num ? ' ' + showNum(x.num) : '') + '  (#' + Array.from(new Set(x.appts.map(a => a.jobId))).join(', #') + ')' + (extra ? ': ' + extra : '');
-    const listOut = (lines, title, items, fmt, max) => {
-      if (!items.length) return;
-      lines.push('', title + ' (' + items.length + ')');
-      items.slice(0, max || 200).forEach(x => lines.push(fmt(x)));
-      if (items.length > (max || 200)) lines.push('…and ' + (items.length - (max || 200)) + ' more');
-    };
 
     const openReplies = async () => {
       if (running || rBusy) return;
@@ -3939,7 +3981,7 @@
       const dayText = day ? day.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'the day shown';
       rPlan = null;
       repHead.textContent = '📥 Check replies: ' + dayText;
-      repMsg.textContent = 'Loading the appointments on ' + dayText + '…'; repLog.textContent = ''; renderLook([]);
+      repMsg.textContent = 'Loading the appointments on ' + dayText + '…'; cards.render([]);
       showRep(false, false);
       sub('replies');
       const t0 = Date.now();
@@ -4013,18 +4055,18 @@
       }
       rPlan = P;
       const todo = P.yes.reduce((n, x) => n + x.todo.length, 0);
-      const lines = [];
-      if (ctx.markRead) lines.push('ℹ️ ServiceTitan marked a conversation read when its replies were read (…' + ctx.markedNum.slice(-4) + '), so other unread ones were left unread and are under Needs a look.', '');
-      if (!custs.length) lines.push('No appointments' + (picked.length ? ' for the jobs you picked' : '') + ' on ' + dayText + '.');
-      listOut(lines, '✅ Answered yes: will confirm ' + s1(todo, 'appointment'), P.yes, x => custLine(x, quote(x.said)));
-      listOut(lines, '☑️ Answered yes, already confirmed', P.already, x => custLine(x, quote(x.said)));
-      renderLook(P.look.map(x => lookOf(x, x.why)));
-      listOut(lines, '💤 No reply yet', P.noReply, x => custLine(x));
+      const notes = [];
+      if (ctx.markRead) notes.push('ℹ️ ServiceTitan marked a conversation read when its replies were read (…' + ctx.markedNum.slice(-4) + '), so other unread ones were left unread and are under Needs a look.');
+      if (!custs.length) notes.push('No appointments' + (picked.length ? ' for the jobs you picked' : '') + ' on ' + dayText + '.');
+      if (notOnDay.length) notes.push('Picked jobs not on ' + dayText + ': #' + notOnDay.join(', #'));
       const fromDay = textsFrom(day).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-      listOut(lines, '— Not texted (no confirm text since ' + fromDay + ')', P.notTexted, x => custLine(x), 60);
-      if (notOnDay.length) lines.push('', 'Picked jobs not on ' + dayText + ': #' + notOnDay.join(', #'));
-      repLog.textContent = lines.join('\n').trim();
-      repLog.style.display = repLog.textContent ? 'block' : 'none';
+      cards.render([
+        { key: 'look', title: '⚠️ Needs a look', tone: 'warn', open: true, items: P.look.map(x => item(x, x.why)) },
+        { key: 'yes', title: '✅ Answered yes: will confirm ' + s1(todo, 'appointment'), tone: 'good', open: true, items: P.yes.map(x => item(x, 'Will be confirmed when you press Confirm', x.todo.map(a => a.jobId))) },
+        { key: 'already', title: '☑️ Answered yes, already confirmed', tone: 'done', items: P.already.map(x => item(x, 'Already confirmed')) },
+        { key: 'noReply', title: '💤 No reply yet', tone: 'quiet', items: P.noReply.map(x => item(x, 'No reply yet')) },
+        { key: 'notTexted', title: '📭 Not texted (no confirm text since ' + fromDay + ')', tone: 'faint', items: P.notTexted.map(x => item(x, 'No confirm text since ' + fromDay)) }
+      ], notes);
       repMsg.textContent = 'Checked ' + s1(custs.length, 'customer') + ' in ' + Math.max(1, Math.round((Date.now() - t0) / 1000)) + 's. ' +
         (todo ? 'Nothing is confirmed until you press Confirm.' : 'Nothing to confirm.');
       repGo.textContent = 'Confirm ' + s1(todo, 'appointment');
@@ -4044,17 +4086,16 @@
       const one = async cu => {
         // Anything new in their conversation since the check? Then you read it first.
         const t = await st.chatThread(cu.num);
-        if (!cu.sig) { look.push(lookOf(cu, 'Not confirmed: couldn\'t tell whether a new message came in. Read their conversation')); n += cu.todo.length; return; }
-        if (replySig(t) !== cu.sig) { look.push(lookOf(cu, 'Not confirmed: a new message came in after the check. Read it, then check again')); n += cu.todo.length; return; }
+        if (!cu.sig) { look.push(item(cu, 'Not confirmed: couldn\'t tell whether a new message came in. Read their conversation', cu.todo.map(a => a.jobId))); n += cu.todo.length; return; }
+        if (replySig(t) !== cu.sig) { look.push(item(cu, 'Not confirmed: a new message came in after the check. Read it, then check again', cu.todo.map(a => a.jobId))); n += cu.todo.length; return; }
         for (let ai = 0; ai < cu.todo.length; ai++) {
           const a = cu.todo[ai];
-          if (rStop || signedOut) { look.push(lookOf(cu, 'Not confirmed (stopped)', cu.todo.slice(ai).map(z => z.jobId))); return; }
+          if (rStop || signedOut) { look.push(item(cu, 'Not confirmed (stopped)', cu.todo.slice(ai).map(z => z.jobId))); return; }
           n++; repMsg.textContent = 'Confirming ' + n + ' of ' + total + ': ' + (cu.customer || '#' + a.jobId);
-          const bad = why => look.push(lookOf(cu, why, [a.jobId]));
-          const lab = '• ' + (cu.customer || '') + '  (#' + a.jobId + ')';
+          const bad = why => look.push(item(cu, why, [a.jobId]));
           try {
             const now = await st.apptConfirmed(a.apptId);
-            if (now.confirmed) { already.push(lab); continue; }
+            if (now.confirmed) { already.push(item(cu, 'Already confirmed', [a.jobId])); continue; }
             const sd = now.start ? new Date(now.start) : null;
             if (sd && !isNaN(sd) && P.day && !sameDay(sd, P.day)) { bad('Not confirmed: it was moved to ' + sd.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + ' after the check'); continue; }
             const s = now.status;
@@ -4062,7 +4103,7 @@
             await st.setConfirmed(a.apptId, true);
             let stuck = false;
             for (let k = 0; k < 3 && !stuck; k++) { if (k) await wait(500); stuck = (await st.apptConfirmed(a.apptId, 8000)).confirmed; }
-            if (stuck) { done.push(lab); failsInRow = 0; }
+            if (stuck) { done.push(item(cu, 'Confirmed', [a.jobId])); failsInRow = 0; }
             else { bad('ServiceTitan didn\'t keep it confirmed'); if (++failsInRow >= 3) { rStop = true; notes.push('3 problems in a row. Stopped to be safe.'); } }
           } catch (e) {
             if (st.isSignedOut(e)) { signedOut = true; return; }
@@ -4078,19 +4119,19 @@
           while (next < P.yes.length && !rStop && !signedOut) {
             const cu = P.yes[next++];
             try { await one(cu); }
-            catch (e) { if (st.isSignedOut(e)) { signedOut = true; break; } look.push(lookOf(cu, 'Not confirmed: ' + errText(e))); }
+            catch (e) { if (st.isSignedOut(e)) { signedOut = true; break; } look.push(item(cu, 'Not confirmed: ' + errText(e), cu.todo.map(a => a.jobId))); }
           }
         };
         await Promise.all([worker(), worker(), worker()]);
-        const notDone = P.yes.slice(next).map(cu => lookOf(cu, 'Not confirmed (stopped)', cu.todo.map(a => a.jobId)));
-        const lines = notes.slice();
-        listOut(lines, '✅ Confirmed', done, x => x);
-        listOut(lines, '☑️ Already confirmed', already.concat(P.already.map(x => custLine(x))), x => x);
-        renderLook(look.concat(notDone, P.look.map(x => lookOf(x, x.why))));
-        listOut(lines, '💤 No reply yet', P.noReply, x => custLine(x));
-        listOut(lines, '— Not texted', P.notTexted, x => custLine(x), 60);
-        repLog.textContent = lines.join('\n').trim();
-        repLog.style.display = repLog.textContent ? 'block' : 'none';
+        const notDone = P.yes.slice(next).map(cu => item(cu, 'Not confirmed (stopped)', cu.todo.map(a => a.jobId)));
+        const fromDay = textsFrom(P.day).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        cards.render([
+          { key: 'look', title: '⚠️ Needs a look', tone: 'warn', open: true, items: cards.merge(look.concat(notDone, P.look.map(x => item(x, x.why)))) },
+          { key: 'done', title: '✅ Confirmed', tone: 'good', open: true, items: cards.merge(done) },
+          { key: 'already', title: '☑️ Already confirmed', tone: 'done', items: cards.merge(already.concat(P.already.map(x => item(x, 'Already confirmed')))) },
+          { key: 'noReply', title: '💤 No reply yet', tone: 'quiet', items: P.noReply.map(x => item(x, 'No reply yet')) },
+          { key: 'notTexted', title: '📭 Not texted (no confirm text since ' + fromDay + ')', tone: 'faint', items: P.notTexted.map(x => item(x, 'No confirm text since ' + fromDay)) }
+        ], notes);
         const sum = s1(done.length, 'appointment') + ' confirmed' + (look.length + notDone.length + P.look.length ? ', ' + (look.length + notDone.length + P.look.length) + ' need a look' : '') + ', ' + P.noReply.length + ' no reply yet';
         repMsg.textContent = signedOut ? '⚠️ ' + st.SIGNED_OUT + ' (Before that: ' + sum + '.)' : (rStop ? 'Stopped: ' : 'Done: ') + sum + '.';
       } catch (e) {

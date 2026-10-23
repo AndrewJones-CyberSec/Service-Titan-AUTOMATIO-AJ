@@ -1,4 +1,4 @@
-import sys, time, pathlib, json
+import sys, time, pathlib, json, re
 from playwright.sync_api import sync_playwright
 
 # ✅ Confirm Appt folder and 📥 Check replies (new in 1.6.4): customers who answer C (or yes, OK,
@@ -22,15 +22,24 @@ KIM, LOU, MO, PIA = '6015550020', '6015550021', '6015550022', '6015550031'
 def B(page, text):
     return page.locator('#st-toolbox button:visible', has_text=text).first
 
+# The Confirm button (not a section header that also says "confirm").
+def CB(page, text):
+    return page.locator('#st-toolbox button:visible').filter(has_text=re.compile('^' + re.escape(text))).first
+
 def panel_text(page):
     return page.locator('#st-toolbox').inner_text()
 
-# The report as text: the ⚠️ Needs a look cards (one line each), then the rest of the report.
+# The report as text: the notes, then each section's title and one line per customer card
+# (folded sections too), the parts of a card joined by " | ".
 def log_text(page):
     return page.evaluate("""() => {
-      const cards = Array.from(document.querySelectorAll('#st-toolbox .st-look-card')).filter(c => c.offsetParent).map(c => '• ' + c.innerText.replace(/\\s*\\n\\s*/g, ' | '));
-      const pre = Array.from(document.querySelectorAll('#st-toolbox pre')).filter(p => p.offsetParent).map(p => p.textContent).join('\\n');
-      return (cards.length ? '⚠️ Needs a look (' + cards.length + ')\\n' + cards.join('\\n') + '\\n\\n' : '') + pre; }""")
+      const box = document.querySelector('#st-toolbox .st-cust-section') ? document.querySelector('#st-toolbox .st-cust-section').parentElement : null;
+      if (!box) return '';
+      return Array.from(box.children).map(ch => {
+        if (!ch.classList.contains('st-cust-section')) return ch.textContent.trim();
+        const cards = Array.from(ch.querySelectorAll('.st-cust-card')).map(c => '• ' + Array.from(c.querySelectorAll(':scope > div')).map(d => d.textContent.trim()).join(' | '));
+        return ch.getAttribute('data-title') + '\\n' + cards.join('\\n');
+      }).join('\\n\\n'); }""")
 
 def open_board(page, saved=None, added=None, confirm=None):
     page.goto(URL + '#/DispatchBoard')
@@ -145,8 +154,8 @@ with sync_playwright() as p:
     check('Oz Tate' not in log and 'Quin Hart' not in log, 'canceled appointments left out')
     check(page.evaluate("() => window.CONFIRM_POSTS.length") == 0, 'nothing confirmed by the check alone')
     check(page.evaluate("() => window.CHATS['6015550031'].unread") is True, 'reading Pia\'s unread reply left it unread')
-    check(B(page, 'Confirm 3 appointments').is_visible(), 'Confirm button says how many')
-    B(page, 'Confirm 3 appointments').click()
+    check(CB(page, 'Confirm 3 appointments').is_visible(), 'Confirm button says how many')
+    CB(page, 'Confirm 3 appointments').click()
     finish_confirm(page)
     log = log_text(page); print(log)
     check(confirmed(page) == [106001, 107101, 107102], 'confirmed exactly Kim\'s two and Pia\'s: %s' % confirmed(page))
@@ -154,11 +163,14 @@ with sync_playwright() as p:
     check(all(set(x.keys()) == {'jobAppointmentId', 'isConfirmed'} and x['isConfirmed'] is True for x in posts) and len(posts) == 3, 'the request is { jobAppointmentId, isConfirmed: true }: %s' % posts)
     check('3 appointments confirmed' in panel_text(page), 'summary says 3 confirmed')
     check('Lou Ng' in section(log, '⚠️ Needs a look') and 'Mo Day' in section(log, '💤 No reply yet'), 'final report keeps needs-a-look and no-reply lists')
+    conf = section(log, '✅ Confirmed')
+    check('Kim Wu' in conf and '#6001, #7102' in conf and conf.count('• ') == 2, 'Confirmed: one card per customer, Kim\'s two jobs together')
+    check(page.locator('#st-toolbox .st-cust-card:visible').filter(has_text='Kim Wu').count() == 1, 'Confirmed is open, with Kim\'s card showing')
 
     # Again: already confirmed now.
     back(page)
     log = run_check(page)
-    check('Kim Wu' in section(log, '☑️ Answered yes, already confirmed') and not B(page, 'Confirm ').is_visible(), 'second check: already confirmed, nothing to do')
+    check('Kim Wu' in section(log, '☑️ Answered yes, already confirmed') and CB(page, 'Confirm ').count() == 0, 'second check: already confirmed, nothing to do')
     back(page)
 
     # STOP, a yes then a question, a C to a different folder's text, a failed confirm text.
@@ -173,15 +185,21 @@ with sync_playwright() as p:
     look = section(log, '⚠️ Needs a look')
     check('Kim Wu' in look and 'They replied: | C | Actually can we move it?' in look, 'C then a question: needs a look (both replies shown)')
     check('Lou Ng' in look and 'Replied STOP / Cancel' in look, 'STOP: needs a look, never confirmed')
-    check('Mo Day' in section(log, '— Not texted'), 'a C to an OutReach text is ignored (not texted with a confirm text)')
+    check('Mo Day' in section(log, '📭 Not texted'), 'a C to an OutReach text is ignored (not texted with a confirm text)')
+    mo = page.locator('#st-toolbox .st-cust-card').filter(has_text='Mo Day').first
+    check(not mo.is_visible() and page.locator('#st-toolbox .st-cust-card:visible').filter(has_text='Kim Wu').count() == 1, 'Not texted starts folded; Needs a look starts open')
+    page.locator('#st-toolbox button:visible', has_text='📭 Not texted').first.click()
+    check(mo.is_visible() and '(601) 555-0022' in mo.inner_text() and 'No confirm text since' in mo.inner_text(), 'opening Not texted shows Mo\'s card, number and why')
+    page.locator('#st-toolbox button:visible', has_text='📭 Not texted').first.click()
+    check(not mo.is_visible(), 'and it folds shut again')
     check('Pia Lane' in look and 'didn\'t go through' in look, 'a confirm text that failed: needs a look')
-    check(not B(page, 'Confirm ').is_visible(), 'nothing to confirm')
+    check(CB(page, 'Confirm ').count() == 0, 'nothing to confirm')
     back(page)
 
     # An old confirm text (more than 3 days before the day) doesn't count.
     chats(page, {KIM: {'unread': False, 'msgs': [msg(CONFIRM, True, 24 * 5), msg('C', hours=24 * 5 - 1)]}})
     log = run_check(page)
-    check('Kim Wu' in section(log, '— Not texted'), 'a confirm text from 5 days ago doesn\'t count')
+    check('Kim Wu' in section(log, '📭 Not texted'), 'a confirm text from 5 days ago doesn\'t count')
     back(page)
 
     # Which confirm texts count: one sent on the last weekday before the board's day (or later).
@@ -194,7 +212,7 @@ with sync_playwright() as p:
         MO: {'unread': False, 'msgs': [{'Body': CONFIRM, 'IsOutbound': True, 'CreatedOn': at_edge(30)}, {'Body': 'C', 'IsInbound': True, 'CreatedOn': at_edge(40)}]},
     })
     log = run_check(page)
-    check('Kim Wu' in section(log, '— Not texted') and 'Mo Day' in section(log, '✅ Answered yes'), 'a text from before the last weekday before the day doesn\'t count; one sent on it does')
+    check('Kim Wu' in section(log, '📭 Not texted') and 'Mo Day' in section(log, '✅ Answered yes'), 'a text from before the last weekday before the day doesn\'t count; one sent on it does')
     back(page)
 
     # Someone reading the reply between the check and Confirm isn't a new message.
@@ -207,7 +225,7 @@ with sync_playwright() as p:
     log = run_check(page)
     check('will confirm 3 appointments' in log, 'Kim (two) and Mo to confirm')
     page.evaluate("() => { window.CHATS['6015550020'].unread = false; window.APPT_START[106003] = new Date(Date.now() + 3 * 86400000).toISOString(); }")
-    B(page, 'Confirm 3 appointments').click()
+    CB(page, 'Confirm 3 appointments').click()
     finish_confirm(page)
     log = log_text(page); print(log)
     check(106001 in confirmed(page) and 107102 in confirmed(page), 'Kim confirmed even though her reply was read in the meantime')
@@ -227,7 +245,7 @@ with sync_playwright() as p:
     log = run_check(page)
     check('will confirm 5 appointments' in log, 'c, Confirmed., ok and an iPhone 👍 reaction all count as yes')
     page.evaluate("n => window.CHATS[n].msgs.push({ Body: 'wait what time?', IsInbound: true, CreatedOn: new Date().toISOString() })", KIM)
-    B(page, 'Confirm 5 appointments').click()
+    CB(page, 'Confirm 5 appointments').click()
     finish_confirm(page)
     log = log_text(page); print(log)
     look = section(log, '⚠️ Needs a look')
@@ -281,7 +299,7 @@ with sync_playwright() as p:
       Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async t => { window.CLIP.push(t); } } });
       window.open = u => { window.OPENED.push(u); return null; }; }''')
     run_check(page)
-    card = page.locator('#st-toolbox .st-look-card:visible').filter(has_text='Lou Ng').first
+    card = page.locator('#st-toolbox .st-cust-card:visible').filter(has_text='Lou Ng').first
     ct = card.inner_text()
     print(ct)
     check(LONG in ct, 'the whole reply is shown, not cut short')
