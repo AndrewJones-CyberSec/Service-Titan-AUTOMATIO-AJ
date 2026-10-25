@@ -20,8 +20,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.7.1';
+  const VERSION = '1.7.2';
   const WHATS_NEW = {
+    '1.7.2': 'New in 📱 Customer Texts: ＋ A department… next to ＋ Everyone on the board adds just one team\'s customers for the day (Level 1 Service, Installers…) or just the Unassigned list. Pick another to add it too. 📥 Check replies then looks only at those customers.',
     '1.7.1': '📥 Check replies counts earlier confirm texts: a C to Saturday\'s text for Monday still counts after a newer reminder, if all they said after it was "already confirmed", "already did" or "thanks". A coworker\'s text that only says the weekday ("your appointment Monday") counts for that day, and one naming another day ("Saturday") no longer counts for Monday.',
     '1.7': 'Smarter 🔕 Job Notifications: one list instead of two modes. Add jobs by clicking them, clicking a tech\'s name on the board (their whole day), ＋ Whole board, or a tech from the list. Each job shows 🔔 on or 🔕 off as soon as it\'s added (off jobs get a gray dashed outline on the board), and the buttons say how many jobs they\'d change, like 🔕 Turn off (11). Results come back as cards, with problems first.',
     '1.6.5': 'New fill-in for 📱 Customer Texts: {when} says "today", "tomorrow", or the date ("on Friday, October 30") from the appointment\'s day on the board and today\'s date. ✅ Confirm Appt uses it, so the same message works the day before, the morning of, or a week ahead. 📥 Check replies is smarter too: a confirm text that names a date only counts for that date. A card without ✅ Add to confirm now says why (already confirmed in ServiceTitan), and every card on the Will confirm list has ↩ Take off.',
@@ -918,26 +919,120 @@
     // On the board's day? (No start time counts as yes.)
     const onDay = (a, d) => { const s = un(a.Start), sd = s ? new Date(s) : null; return !sd || isNaN(sd) || !d || sameDay(sd, d); };
 
+    // Teams (departments): the team header above a tech's row on the board (Level 1 Service,
+    // Installers…). A board filter can hide the headers, so each tech's team is remembered once
+    // seen (the same list 💬 Tech Messages keeps), and that's used when the header isn't showing.
+    const TEAM_MAP = 'stMsgTeamMap';
+    const NO_TEAM = 'Other (team not showing)';
+    const liveTeam = id => {
+      if (!/^\d+$/.test(String(id))) return null;
+      const row = document.getElementById('team-timeline-row-' + id) || document.querySelector('.technician[data-technician-id="' + id + '"]');
+      const tc = row && row.closest('.team-container');
+      let h = tc && tc.previousElementSibling;
+      while (h && !h.querySelector('.team-name')) h = h.previousElementSibling;
+      const tn = h && h.querySelector('.team-name');
+      return tn ? norm(tn.textContent) || null : null;
+    };
+    const savedTeams = () => { try { const m = JSON.parse(get(TEAM_MAP) || '{}'); return m && typeof m === 'object' && !Array.isArray(m) ? m : {}; } catch (e) { return {}; } };
+    // A team finder for one pass over the board: each tech looked up once, new findings saved.
+    const teamFinder = () => {
+      const saved = savedTeams(), seen = new Map();
+      let dirty = false;
+      const of = id => {
+        id = String(id);
+        if (!seen.has(id)) {
+          const t = liveTeam(id);
+          if (t && saved[id] !== t) {
+            // Re-read just before saving, so a tech another tab saved meanwhile isn't lost.
+            if (!dirty) Object.assign(saved, savedTeams(), saved);
+            saved[id] = t; dirty = true;
+          }
+          seen.set(id, t || (typeof saved[id] === 'string' ? saved[id] : null));
+        }
+        return seen.get(id);
+      };
+      return { of, save: () => { if (dirty) { set(TEAM_MAP, JSON.stringify(saved)); dirty = false; } } };
+    };
+    // The techs on each job: from the board's data, plus the bubbles drawn on the board.
+    const techIdsOf = (a, drawn) => {
+      const ids = new Set();
+      const t = un(a.TechnicianId);
+      if (t != null && /^\d+$/.test(String(t))) ids.add(String(t));
+      (un(a.Technicians) || []).forEach(x => { const i = x && un(x.Id); if (i != null && /^\d+$/.test(String(i))) ids.add(String(i)); });
+      (drawn.get(String(un(a.JobId))) || []).forEach(i => ids.add(i));
+      return Array.from(ids);
+    };
+    const drawnTechs = () => {
+      const m = new Map();
+      document.querySelectorAll('a.appointment[data-job-id][data-technician-id]').forEach(b => {
+        const j = b.getAttribute('data-job-id'), t = b.getAttribute('data-technician-id');
+        if (!/^\d+$/.test(t)) return;
+        if (!m.has(j)) m.set(j, []);
+        if (m.get(j).indexOf(t) < 0) m.get(j).push(t);
+      });
+      return m;
+    };
+    // Each job's teams. A job with two techs on different teams is in both; one whose techs' team
+    // can't be told is in NO_TEAM.
+    const jobTeamsOf = (a, drawn, finder) => {
+      const teams = Array.from(new Set(techIdsOf(a, drawn).map(finder.of).filter(Boolean)));
+      return teams.length ? teams : [NO_TEAM];
+    };
+    // The teams with jobs on the day the board shows, in the board's order, with their job count
+    // (canceled appointments left out): [{ name, n }].
+    const teams = () => {
+      const v = vm(), d = day();
+      if (!v || !d) return [];
+      const drawn = drawnTechs(), finder = teamFinder(), byJob = new Map(), skip = new Set();
+      (un(v.Assignments) || []).forEach(a => {
+        try {
+          const j = String(un(a.JobId));
+          if (!/^\d+$/.test(j) || skip.has(j) || !onDay(a, d)) return;
+          if (canceled(a)) { if (!byJob.has(j)) skip.add(j); return; }
+          if (!byJob.has(j)) byJob.set(j, new Set());
+          jobTeamsOf(a, drawn, finder).forEach(t => byJob.get(j).add(t));   // a two-tech job: both techs' teams
+        } catch (e) {}
+      });
+      finder.save();
+      const count = new Map();
+      byJob.forEach(ts => {
+        if (ts.size > 1) ts.delete(NO_TEAM);
+        ts.forEach(t => count.set(t, (count.get(t) || 0) + 1));
+      });
+      const order = Array.from(document.querySelectorAll('.team-name')).map(t => norm(t.textContent));
+      const rank = t => t === NO_TEAM ? 1e6 : (order.indexOf(t) < 0 ? 1e5 : order.indexOf(t));
+      return Array.from(count.entries()).map(([name, n]) => ({ name, n })).sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
+    };
+
     // Every job on the day the board shows: the timeline (with your board's filters) plus the whole
     // Unassigned list (all pages, for your board's branches). Holds aren't included. Canceled
     // appointments are left out. tool: the tool's name, for the yellow bar if the Unassigned list
     // comes back in a shape the Toolbox doesn't know.
-    // Returns { jobs: [{ jobId, customer, customerId, tech, day }], onTimeline, unassigned, canceled }.
+    // Returns { jobs: [{ jobId, customer, customerId, tech, day, teams, unassigned }], onTimeline,
+    // unassigned, canceled }. teams: the job's teams (timeline jobs only).
     const whole = async tool => {
       const v = vm(), d = day();
       if (!v || !d) throw new Error('open the Dispatch board first');
-      const jobs = [], seen = new Set();
+      const jobs = [], seen = new Set(), byJob = new Map();
+      const drawn = drawnTechs(), finder = teamFinder();
       let onTimeline = 0, unassignedN = 0, canceledN = 0;
       (un(v.Assignments) || []).forEach(a => {
         try {
           const j = String(un(a.JobId));
-          if (!/^\d+$/.test(j) || seen.has(j)) return;   // a two-tech job is on the board twice
+          if (!/^\d+$/.test(j)) return;
+          // A two-tech job can be on the board twice: its teams are both techs' teams.
+          if (seen.has(j)) { const x = byJob.get(j); if (x && onDay(a, d)) jobTeamsOf(a, drawn, finder).forEach(t => { if (x.teams.indexOf(t) < 0) x.teams.push(t); }); return; }
           if (!onDay(a, d)) return;
           if (canceled(a)) { canceledN++; seen.add(j); return; }
           seen.add(j); onTimeline++;
-          jobs.push({ jobId: j, customer: norm(un(a.Customer)), customerId: un(a.CustomerId) || null, tech: titleCase(firstWord(un(a.FirstName) || un(a.TechnicianName))), day: d });
+          const x = { jobId: j, customer: norm(un(a.Customer)), customerId: un(a.CustomerId) || null, tech: titleCase(firstWord(un(a.FirstName) || un(a.TechnicianName))), day: d, teams: jobTeamsOf(a, drawn, finder), unassigned: false };
+          byJob.set(j, x);
+          jobs.push(x);
         } catch (e) {}
       });
+      // A job with a known team isn't also "team not showing".
+      jobs.forEach(x => { if (x.teams.length > 1) x.teams = x.teams.filter(t => t !== NO_TEAM); });
+      finder.save();
       const PAGE = 500;
       const page = skip => st.getJSON('/Dispatch/GetJobs', 30000, { JobType: 'Unassigned', Date: dayISO(d), QueryFilter: { Skip: skip, Take: PAGE, Start: {}, Created: {}, BusinessUnitIds: bus() } });
       const first = await page(0);
@@ -954,7 +1049,7 @@
         seen.add(j);
         if (canceled(x)) { canceledN++; return; }
         unassignedN++;
-        jobs.push({ jobId: j, customer: norm(x.Customer), customerId: x.CustomerId || null, tech: '', day: d });
+        jobs.push({ jobId: j, customer: norm(x.Customer), customerId: x.CustomerId || null, tech: '', day: d, teams: [], unassigned: true });
       });
       health.clear(tool);
       return { jobs, onTimeline, unassigned: unassignedN, canceled: canceledN };
@@ -976,7 +1071,7 @@
       });
       return out;
     };
-    return { whole, techJobs, day };
+    return { whole, techJobs, day, teams, NO_TEAM };
   })();
 
   // Same look as the note buttons.
@@ -3534,14 +3629,60 @@
 
     const everyoneBtn = smallBtn('＋ Everyone on the board', () => addEveryone());
     everyoneBtn.title = 'Adds every job on the board for the day it shows: the timeline and the whole Unassigned list (all pages, your board\'s branches). Holds aren\'t included. Take anyone off with ✕.';
-    const everyoneRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap;margin-top:5px');
-    everyoneRow.appendChild(everyoneBtn);
+    // ＋ A department…: everyone on one team's schedule (the team names on the board, like Level 1
+    // Service or Installers), or the Unassigned list. Pick more than one to add them all.
+    const deptSel = el('select', 'padding:4px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-size:12px;color:#111;background:#fff;max-width:100%;cursor:pointer');
+    deptSel.title = 'Adds the jobs of one department (a team on the board, like Level 1 Service or Installers) on the day the board shows, or the whole Unassigned list. Pick another to add it too. Take anyone off with ✕.';
+    const UNASSIGNED_OPT = '\u0001unassigned';
+    let deptKey = null;
+    const fillDepts = force => {
+      if (running || everyoneLoading) return;
+      const rows = onBoard() ? boardData.teams() : [];
+      const key = onBoard() ? (boardDay() ? boardDay().toDateString() : '') + '|' + rows.map(r => r.name + ':' + r.n).join(',') : 'off';
+      if (!force && key === deptKey) return;   // nothing changed: leave the list alone (it may be open)
+      deptKey = key;
+      deptSel.textContent = '';
+      const top = el('option', '', onBoard() ? '＋ A department…' : '＋ A department (open the board)');
+      top.value = '';
+      deptSel.appendChild(top);
+      rows.forEach(r => { const o = el('option', '', r.name + '  (' + s1(r.n, 'job') + ')'); o.value = r.name; deptSel.appendChild(o); });
+      if (onBoard()) { const o = el('option', '', 'Unassigned list'); o.value = UNASSIGNED_OPT; deptSel.appendChild(o); }
+      deptSel.value = '';
+    };
+    // Read again when you point at it or tab to it, so it matches the board.
+    deptSel.addEventListener('mouseenter', () => fillDepts());
+    deptSel.addEventListener('focus', () => fillDepts());
+    deptSel.onchange = () => { const v = deptSel.value; deptSel.value = ''; if (v) addDept(v); };
+    const everyoneRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap;margin-top:5px;align-items:center');
+    everyoneRow.append(everyoneBtn, deptSel);
     const renderPicked = () => {
       whoBox.textContent = '';
-      everyoneBtn.textContent = everyoneLoading ? 'Loading everyone…' : '＋ Everyone on the board';
+      everyoneBtn.textContent = everyoneLoading ? 'Loading…' : '＋ Everyone on the board';
       everyoneBtn.disabled = everyoneLoading;
       everyoneBtn.style.opacity = everyoneLoading ? '.5' : '1';
+      deptSel.disabled = everyoneLoading;
+      deptSel.style.opacity = everyoneLoading ? '.5' : '1';
+      fillDepts();
       whoBox.append(picker.box, everyoneRow);
+    };
+    const addDept = async name => {
+      if (everyoneLoading || running) return;
+      if (!onBoard()) { say('Open the Dispatch board first.'); return; }
+      const what = name === UNASSIGNED_OPT ? 'the Unassigned list' : name;
+      everyoneLoading = true; renderMain();
+      say('Loading ' + what + '…');
+      try {
+        const r = await loadEveryone();
+        r.jobs.forEach(x => { boardInfo.set(x.jobId, x); });
+        const jobs = r.jobs.filter(x => name === UNASSIGNED_OPT ? x.unassigned : (x.teams || []).indexOf(name) > -1);
+        if (!jobs.length) { say('No jobs ' + (name === UNASSIGNED_OPT ? 'in the Unassigned list' : 'for ' + name) + ' on ' + boardDay().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + '.'); return; }
+        const labels = {};
+        jobs.forEach(x => { labels[x.jobId] = x.customer; });
+        const n = picker.addMany(jobs.map(x => x.jobId), labels);
+        say('Added ' + s1(n, 'job') + ' from ' + what + (n < jobs.length ? ' (' + (jobs.length - n) + ' already picked)' : '') +
+          '. That\'s ' + s1(recipients().length, 'customer') + ' in the list (one text each). Take anyone off with ✕.');
+      } catch (e) { say('⚠️ Couldn\'t load ' + what + ': ' + errText(e)); }
+      finally { everyoneLoading = false; deptKey = null; renderMain(); }
     };
     const addEveryone = async () => {
       if (everyoneLoading || running) return;

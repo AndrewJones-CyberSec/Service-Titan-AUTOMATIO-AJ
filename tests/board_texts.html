@@ -190,8 +190,18 @@
     root.innerHTML = '';
     let m;
     if (/^#\/DispatchBoard/.test(h)) {
-      root.innerHTML = '<div class="team-container"><div class="team-name">Install HVAC</div><div class="technician" data-technician-id="1"><span class="name">Paxton T</span></div></div>' +
-        '<div id="team-timeline-row-1">' + Object.keys(BOARD).map(j => '<a class="appointment" data-job-id="' + j + '" data-technician-id="1">Quote ' + C[BOARD[j][0]].name + '</a>').join('') + '</div>' +
+      // ?teams: the board laid out like the real one, a team header above each team's techs:
+      // Level 1 Service (Paxton: 6001, 6003, 6005) and Installers (Ivan: 6003 with Paxton, 6004;
+      // 6002 is his too but scrolled out of view, so only the board's data says so).
+      const TEAMS_MODE = location.search.indexOf('teams') > -1;
+      const bubble = (j, t) => '<a class="appointment" data-job-id="' + j + '" data-technician-id="' + t + '">Quote ' + C[BOARD[j][0]].name + '</a>';
+      root.innerHTML = (TEAMS_MODE
+        ? '<div class="team-header"><span class="team-name">Level 1 Service</span></div><div class="team-container"><div class="technician" data-technician-id="1"><span class="name">Paxton T</span></div>' +
+          '<div id="team-timeline-row-1">' + [6001, 6003, 6005].map(j => bubble(j, 1)).join('') + '</div></div>' +
+          '<div class="team-header"><span class="team-name">Installers</span></div><div class="team-container"><div class="technician" data-technician-id="2"><span class="name">Ivan I</span></div>' +
+          '<div id="team-timeline-row-2">' + [6003, 6004].map(j => bubble(j, 2)).join('') + '</div></div>'
+        : '<div class="team-container"><div class="team-name">Install HVAC</div><div class="technician" data-technician-id="1"><span class="name">Paxton T</span></div></div>' +
+          '<div id="team-timeline-row-1">' + Object.keys(BOARD).map(j => bubble(j, 1)).join('') + '</div>') +
         '<div class="job-list"><div class="toolbar">Hold (13)</div><div><table class="k-grid-table"><tbody>' +
         [5002, 5006].map(j => '<tr class="row__BK7JR qa-job-' + j + '"><td>Quote</td><td>' + C[JOBCUST[j]].name + '</td></tr>').join('') + '</tbody></table></div></div>';
       const jl = root.querySelector('.job-list');
@@ -200,7 +210,7 @@
         JobList: { AllVisibleJobs: ko.observable([5002, 5006].map(j => ({ JobId: j, Customer: C[JOBCUST[j]].name + ' ', CustomerId: JOBCUST[j] }))) },
         Date: ko.observable(today),
         BusinessUnitFilter: { getIds: () => [621842244] },
-        Assignments: ko.observable(Object.keys(BOARD).map(j => Object.assign({ Id: Number(j) + 100000, IsConfirmed: !!window.CONFIRMED[Number(j) + 100000], JobId: Number(j), Customer: C[BOARD[j][0]].name, CustomerId: BOARD[j][0], FirstName: BOARD[j][1] || null, TechnicianName: BOARD[j][1] ? BOARD[j][1] + ' T' : null }, BOARD_EXTRA[j] || {})))
+        Assignments: ko.observable(Object.keys(BOARD).map(j => Object.assign({ Id: Number(j) + 100000, IsConfirmed: !!window.CONFIRMED[Number(j) + 100000], JobId: Number(j), Customer: C[BOARD[j][0]].name, CustomerId: BOARD[j][0], FirstName: BOARD[j][1] || null, TechnicianName: BOARD[j][1] ? BOARD[j][1] + ' T' : null }, BOARD_EXTRA[j] || {}, TEAMS_MODE && j === '6002' ? { Technicians: [{ Id: 2, Name: 'Ivan I' }] } : {})))
       };
       root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => window.opened.push(a.getAttribute('data-job-id'))));
     } else if ((m = /^#\/ChatCenter\/(\d+)/.exec(h))) {

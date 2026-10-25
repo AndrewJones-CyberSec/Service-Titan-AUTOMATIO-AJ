@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.2
+
+- **📱 Customer Texts: ＋ A department…** next to ＋ Everyone on the board. It lists each team on the board (Level 1 Service, Installers… in the board's order) with how many jobs it has on the day the board shows, plus the **Unassigned list**. Picking one adds that team's jobs (canceled appointments left out); pick another to add it too, and take anyone off with ✕. A job with two techs on different teams is in both. Jobs only in the board's data (scrolled out of view) are found too.
+  - The team is the team header above each tech's row. Each tech's team is remembered once seen (the same list 💬 Tech Messages keeps), so a board filter that hides the headers doesn't lose them. Techs whose team can't be told are under *Other (team not showing)*.
+  - 📥 Check replies already looks only at the jobs in the list, so texting one department and checking replies stays on that department.
+- Shared: the board's whole-day loader now gives each job its teams (🔕 Job Notifications' ＋ Whole board is unchanged).
+- Tests: new `tests/test_departments.py`; `tests/board_texts.html?teams` lays the board out with team headers like the real one.
+
 ## 1.7.1
 
 - **📥 Check replies: earlier confirm texts about the same appointment count.**
