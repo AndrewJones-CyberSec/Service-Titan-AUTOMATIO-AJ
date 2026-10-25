@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.1
+
+- **📥 Check replies: earlier confirm texts about the same appointment count.**
+  - **A C stays a yes.** Someone who answered C to Saturday's text for Monday and then got another reminder Sunday is confirmed if all they said after their C was another yes, *I already confirmed*, *Already did*, *Done*, or just *Thanks*. A question, a change of plans or anything else after it still goes to Needs a look, with what they said. *Thanks* with no yes before it is still Needs a look.
+  - **Texts that name only the weekday** (a coworker's *…your appointment Monday…*, sent Thursday or Saturday) count for the next one, however early they went out. Before, only texts with a date counted from before the last weekday before the board's day.
+  - **A text naming another day doesn't count**, even if it was sent recently: Friday's *…your appointment Saturday…* is no longer read as a confirm for Monday. Texts naming no day (or more than one weekday) work as before.
+- Tests: new `tests/test_older_texts.py` (the board on the next Monday, so it works any day of the week).
+
 ## 1.7
 
 - **🔕 Job Notifications, reworked to be quicker to use.** The two modes (*A tech's jobs* / *Jobs I pick*) are gone: there's one list, and every way of adding jobs fills it.

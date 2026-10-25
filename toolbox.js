@@ -20,8 +20,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.7';
+  const VERSION = '1.7.1';
   const WHATS_NEW = {
+    '1.7.1': '📥 Check replies counts earlier confirm texts: a C to Saturday\'s text for Monday still counts after a newer reminder, if all they said after it was "already confirmed", "already did" or "thanks". A coworker\'s text that only says the weekday ("your appointment Monday") counts for that day, and one naming another day ("Saturday") no longer counts for Monday.',
     '1.7': 'Smarter 🔕 Job Notifications: one list instead of two modes. Add jobs by clicking them, clicking a tech\'s name on the board (their whole day), ＋ Whole board, or a tech from the list. Each job shows 🔔 on or 🔕 off as soon as it\'s added (off jobs get a gray dashed outline on the board), and the buttons say how many jobs they\'d change, like 🔕 Turn off (11). Results come back as cards, with problems first.',
     '1.6.5': 'New fill-in for 📱 Customer Texts: {when} says "today", "tomorrow", or the date ("on Friday, October 30") from the appointment\'s day on the board and today\'s date. ✅ Confirm Appt uses it, so the same message works the day before, the morning of, or a week ahead. 📥 Check replies is smarter too: a confirm text that names a date only counts for that date. A card without ✅ Add to confirm now says why (already confirmed in ServiceTitan), and every card on the Will confirm list has ↩ Take off.',
     '1.6.4': 'New in 📱 Customer Texts: a ✅ Confirm Appt folder with the "Reply \'C\' to confirm" reminder for tomorrow\'s customers, and 📥 Check replies and confirm. It reads the replies to any text asking for a C (yours, a coworker\'s, or ServiceTitan\'s automatic reminder) and confirms the appointments of everyone who answered C, yes or 👍 when you press Confirm. Everyone else is a card under Needs a look, No reply yet or Not texted, with what they said, their number, copy buttons, and ✅ Add to confirm for the ones you decide are a yes. It never sends anything.',
@@ -4265,9 +4266,10 @@
 
     // ===================================================================
     // 📥 Check replies (folders whose texts ask customers to reply C)
-    // Reads each customer's conversation (nothing is sent), finds the latest text from a confirm
-    // folder sent in the few days before the board's day, and the replies after it:
+    // Reads each customer's conversation (nothing is sent), finds the confirm texts about the
+    // board's day (one sent days ahead that names the day counts too), and the replies after them:
     //   - only C, Yes, OK, 👍 and the like -> their appointments on the board's day get confirmed
+    //     (after a C, "already did" or "thanks" to a newer reminder still counts as a yes)
     //   - anything else, or STOP           -> "Needs a look", with what they said
     //   - no reply yet, or never texted    -> listed; nothing is changed for them
     // You see the list first. Nothing is confirmed until you press Confirm. Each appointment is
@@ -4314,6 +4316,18 @@
       if (d.getTime() < sent.getTime() - 7 * 86400000) d = new Date(sent.getFullYear() + 1, mo, dd);
       return d;
     };
+    // The day a text names by weekday only ("your appointment Monday", sent Thursday or Saturday):
+    // the next one after the day it was sent. null when it names no weekday, more than one, or the
+    // weekday it was sent on (that could be the same day or a week later).
+    const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const namedWeekday = (body, sent) => {
+      const found = Array.from(new Set((String(body == null ? '' : body).toLowerCase().match(/\b(sun|mon|tues|wednes|thurs|fri|satur)day\b/g) || [])));
+      if (found.length !== 1) return null;
+      const wd = WEEKDAYS.indexOf(found[0]);
+      const ahead = (wd - sent.getDay() + 7) % 7;
+      if (!ahead) return null;
+      return new Date(sent.getFullYear(), sent.getMonth(), sent.getDate() + ahead);
+    };
     const isConfirmText = (m, pats) => !!m && m.IsOutbound && (ASKS_FOR_C.test(norm(m.Body)) || (!m.IsNotification && pats.some(p => p.test(m.Body))));
     // Is this reply a yes? C, Yes, OK, Confirmed, 👍 and the like, with or without "thanks". A
     // question, a second sentence or anything else is not: those are read by you.
@@ -4329,6 +4343,17 @@
       b = b.replace(/\s*\b(thanks|thank you|thank u|thankyou|thx|ty|tysm)( so much| very much)?$/, '').trim();
       if (!b) return yesEmoji;
       return YES_WORDS.test(b);
+    };
+    // After they've already said yes, a newer reminder often gets "I already confirmed", "Already
+    // did" or just "Thanks". That's still a yes. Anything else (a question, a change of plans) isn't.
+    const ALREADY_WORDS = /^(yes |yep |yeah |ok |okay )?(i |we )?(have |had )?(already )?(did|did that|did it|done|confirmed|confirmed it|confirmed that|replied|responded|answered|said yes|said c|sent c|sent it|texted c|replied c|responded c)( it| that)?( already)?( yesterday| earlier| last night| this morning| on (sun|mon|tues|wednes|thurs|fri|satur)day| (sun|mon|tues|wednes|thurs|fri|satur)day)?$/;
+    const isAlready = body => {
+      if (isYes(body)) return true;
+      let b = norm(body).toLowerCase().replace(/[‘’`´]/g, '\'');
+      if (!b || b.indexOf('?') > -1) return false;
+      b = b.replace(EMOJI_RE, ' ').replace(/'/g, '').replace(/[.!,;:~*"()-]/g, ' ').replace(/\s+/g, ' ').trim();
+      b = b.replace(/\s*\b(thanks|thank you|thank u|thankyou|thx|ty|tysm)( so much| very much)?$/, '').trim();
+      return !b || b === 'already' || b === 'yes already' || ALREADY_WORDS.test(b);
     };
     // Every appointment on the board's day (timeline and the whole Unassigned list), canceled ones
     // left out: [{ apptId, jobId, customer, customerId, confirmed }].
@@ -4384,13 +4409,15 @@
         else raw = await st.chatMessages(t.ThreadId, 60);
         const msgs = asPageMsgs(raw, c).sort((a, b) => timeOf(a) - timeOf(b) || idOf(a) - idOf(b));
         // A text that names a date counts for that date only (a reminder sent a week ahead, or one
-        // for a different appointment). One that doesn't counts when it was sent since the last
-        // weekday before the day, except that "today" only counts if sent on the day itself and
-        // "tomorrow" doesn't if sent on the day itself (each is about another appointment).
+        // for a different appointment), however long ago it went out. So does one that names only
+        // the weekday ("Monday", sent Thursday or Saturday): it's for the next one. One that names
+        // neither counts when it was sent since the last weekday before the day, except that
+        // "today" only counts if sent on the day itself and "tomorrow" doesn't if sent on the day
+        // itself (each is about another appointment).
         const forDay = m => {
           const t = timeOf(m);
           if (t >= toT) return false;
-          const named = namedDay(m.Body, new Date(t));
+          const named = namedDay(m.Body, new Date(t)) || namedWeekday(m.Body, new Date(t));
           if (named) return sameDay(named, day);
           if (t < fromT) return false;
           const b = String(m.Body == null ? '' : m.Body).toLowerCase();
@@ -4417,7 +4444,10 @@
       if (!replies.length) return Object.assign(base, { kind: 'noReply' });
       const said = replies.map(m => norm(m.Body) || '(a picture or empty message)');
       if (optedOut(replies)) return Object.assign(base, { kind: 'look', why: 'replied STOP / Cancel', said });
-      if (replies.every(m => isYes(m.Body))) return Object.assign(base, { kind: 'yes', said });
+      // A yes to any confirm text for the day (Saturday's for Monday, say) stands when all that came
+      // after it is another yes, "already did" or "thanks" (to a newer reminder, say).
+      let saidYes = false;
+      if (replies.every(m => { if (isYes(m.Body)) { saidYes = true; return true; } return saidYes && isAlready(m.Body); })) return Object.assign(base, { kind: 'yes', said });
       return Object.assign(base, { kind: 'look', why: 'replied', said });
     };
     // What the conversation's newest message is, ignoring read/unread (you or a coworker reading
