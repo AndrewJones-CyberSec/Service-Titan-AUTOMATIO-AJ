@@ -2,6 +2,8 @@
 
 A small panel of time-savers for the ServiceTitan Dispatch board. It runs from a browser bookmark, works in Chrome, Edge, Firefox and Safari, and updates itself: everyone who installs it gets the newest version the next time they click the bookmark.
 
+It works on ServiceTitan's new Dispatch board (Oct 2026) and the old one. On the new board, Send Message is a right-click on a tech's name, and the board only draws the rows on screen, so the Toolbox reads the board's whole day (its day and filter) from ServiceTitan and scrolls to a tech when it needs their menu.
+
 ## Tools
 
 **📝 Notes**

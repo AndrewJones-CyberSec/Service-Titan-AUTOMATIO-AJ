@@ -1,0 +1,523 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Mock ServiceTitan new Dispatch board</title>
+<style>
+  body{font:13px sans-serif;margin:0}
+  .Drawer{position:fixed;top:60px;left:20px;width:320px;background:#fff;border:1px solid #333;padding:10px;z-index:5}
+  .modal{display:none}
+  .modal.in{display:block;position:fixed;top:30%;left:30%;background:#fff;border:2px solid #333;padding:20px}
+  .chat{position:fixed;left:0;top:0;bottom:0;width:320px;background:#eef;padding:8px}
+</style>
+<script>
+  // A stand-in for ServiceTitan's new Dispatch board (Oct 2026): #/widget-app/dispatch-center, a
+  // component with its own page inside it (an open shadow root) that only draws the tech rows on
+  // screen. Laid out like the real one:
+  //   [data-mfe-name="servicetitan-dispatch-center"] (shadow root)
+  //     header: [data-auto-sel="dc-header-date-picker"] "Wed, Oct 28, 2026", prev/next/today, Refresh
+  //     [data-testid="timeline-scroll-viewport"]: team groups [data-cy^="ddb-team-group-"] (no text),
+  //       tech names [data-cy="ddb-technician-header-<id>"][data-technician-id] <p>Name</p>,
+  //       job bubbles [data-cy="wdb-job-appt-card"][data-job-appointment-id][data-technician-id]
+  //       (the job behind each one is in the page's props: __reactFiber… memoizedProps.jobAppointment)
+  //     a right-click on a tech's name: [data-cy="ddb-technician-menu"] with [data-cy="tmi-send-message"]
+  //     the Activity Center (Send Message) inside it, with its own shadow root
+  //     the Jobs Tray: tabs [data-cy^="custom-tab-item-"], [data-cy="dc-jt-unassigned-table"] rows
+  //       tr.k-master-row with [data-cy="dc-jt-job-appointment-cell"] "8001-1" (props: dataItem)
+  //   The address: #/widget-app/dispatch-center?date=YYYY-MM-DD&dispatchFilterCode=CODE&… (no date:
+  //   today). #/DispatchBoard goes there. The code is decoded by /dispatch-center/decoding.
+  // Plus the pages the tools visit: a job's page (notifications switch), its Edit page (Business
+  // Unit), a customer's page (Add Note) and a conversation (Chat Center).
+  // Test switches: BOARD_STUCK (the board doesn't redraw after a change until Refresh), DRIFT
+  // ('noTechId', 'noApptId', 'noDate'), DECODE_DOWN, DISPATCH_DRIFT.
+  (function () {
+    const obs = v => { const f = function (x) { if (arguments.length) { v = x; return f; } return v; }; f.__obs = true; return f; };
+    const toJS = v => { if (v && v.__obs) v = v(); if (Array.isArray(v)) return v.map(toJS); if (v && typeof v === 'object' && !(v instanceof Date)) { const o = {}; Object.keys(v).forEach(k => { o[k] = toJS(v[k]); }); return o; } return v; };
+    window.ko = { observable: obs, isObservable: f => !!(f && f.__obs), unwrap: v => (v && v.__obs) ? v() : v, toJS,
+      dataFor: e => { while (e) { if (e.__vm) return e.__vm; e = e.parentElement; } return undefined; } };
+  })();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const at = (h, m) => { const d = new Date(today); d.setHours(h, m || 0, 0, 0); return d; };
+  const tomorrow = h => { const d = at(h); d.setDate(d.getDate() + 1); return d; };
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const same = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  window.App = {
+    Notifications: { store: { userId: 42 } },
+    Data: { EnableSkillsManagement: true, BusinessUnits: [{ Id: 1, Name: 'Mendenhall Branch', Active: true }, { Id: 2, Name: 'Other Branch', Active: true }], Technicians: [],
+      Users: [{ Id: 42, Name: 'andrewj' }], Employees: [{ Id: 901, Name: 'andrew Jones', UserId: 42 }] }
+  };
+  window.ZIPS = {
+    '39114': [31.952, -89.825], '39111': [31.873, -89.733], '39044': [32.010, -89.980], '39149': [31.840, -90.020],
+    '39073': [32.150, -90.130], '39201': [32.290, -90.180], '39151': [32.200, -89.950], '39120': [31.560, -91.400],
+    '39440': [31.690, -89.130], '39208': [32.270, -90.100], '39180': [32.350, -90.880]
+  };
+  // Teams, in the board's order, with their IDs (the team filter uses them).
+  window.TEAMS = [[501, 'Level 1 Service'], [502, 'Level 2 Service'], [503, 'Installers'], [504, 'Sales/ Service - Dustin J'], [505, 'Project Coordinator - Dustin J'], [506, 'Dispatch']];
+  window.TECHS = [
+    { id: 201, name: 'Ana R', team: 'Level 1 Service', home: [31.90, -89.75], addr: '12 Oak St, Magee, MS 39111 USA', active: true },
+    { id: 202, name: 'Ben T', team: 'Level 1 Service', home: [32.05, -89.90], addr: '9 Pine Rd, BRAXTON, MS 39044 USA', active: true },
+    { id: 205, name: 'Eli G', team: 'Level 1 Service', home: null, addr: '', active: true },
+    { id: 207, name: 'Gus K', team: 'Level 1 Service', home: [32.20, -89.95], addr: '8 Birch Ct, Puckett, MS 39151 USA', active: true },
+    { id: 203, name: 'Cal M', team: 'Installers', home: [31.70, -90.00], addr: '5 Elm Dr, Pinola, MS 39149 USA', active: true },
+    { id: 204, name: 'Dee F', team: 'Installers', home: null, addr: '77 Cedar Ln, Apt 2, Florence, MS 39073 USA', active: true },
+    { id: 206, name: 'Fay H', team: 'Installers', home: [31.80, -89.95], addr: '3 Ash St, Pinola, MS 39149 USA', active: true },
+    { id: 211, name: 'Kim S', team: 'Sales/ Service - Dustin J', home: [31.69, -89.13], addr: '6 Bay Ct, Laurel, MS 39440 USA', active: true },
+    { id: 212, name: 'Lou P', team: 'Project Coordinator - Dustin J', home: [32.29, -90.18], addr: '2 Lake Dr, Jackson, MS 39201 USA', active: true },
+    { id: 208, name: 'Hal L', team: 'Dispatch', home: [32.30, -90.18], addr: '1 Main St, Jackson, MS 39201 USA', active: true, managed: false },
+    { id: 209, name: 'Ivy N', team: 'Dispatch', home: [31.95, -89.82], addr: '4 Gone Way, Mendenhall, MS 39114 USA', active: false }
+  ];
+  // Thirty more techs in Level 2 Service, so most rows are off screen (the board only draws ~8).
+  for (let i = 1; i <= 30; i++) TECHS.push({ id: 300 + i, name: 'Fill ' + pad(i) + ' Z', team: 'Level 2 Service', home: [32.40, -90.60], addr: '1 Far Rd, Vicksburg, MS 39180 USA', active: true });
+  const teamId = name => (TEAMS.find(t => t[1] === name) || [0])[0];
+  const tname = id => (TECHS.find(t => t.id === id) || {}).name || ('#' + id);
+  const STATUS_NUM = { Scheduled: 0, Dispatched: 1, Working: 2, Hold: 3, Done: 4, Canceled: 5 };
+  const MAINT = 'Maintenance - Fall - Residential', INSTALL = 'Install - Generator', SALES = 'Sales - Comfort Advisor';
+  // Appointments: appointment id -> job, visit, customer, time, techs, status, zip, city, type, priority, branch.
+  window.APPTS = {
+    9801: { job: 8001, n: 1, cust: 'Kay Lin', s: at(13), e: at(15), techs: [], status: 'Scheduled', zip: '39111', city: 'Magee', type: MAINT, prio: 'Normal' },
+    9802: { job: 8002, n: 1, cust: 'Lee Moe', s: at(8), e: at(10), techs: [205], status: 'Working', zip: '39111', city: 'Magee', type: MAINT },
+    9803: { job: 8003, n: 1, cust: 'Mo Nash', s: at(9), e: at(11), techs: [206], status: 'Dispatched', zip: '39149', city: 'Pinola', type: INSTALL },
+    9804: { job: 8004, n: 1, cust: 'Ned Orr', s: at(7), e: at(8), techs: [207], status: 'Done', zip: '39044', city: 'Braxton', type: MAINT },
+    9805: { job: 8005, n: 1, cust: 'Oli Park', s: at(14), e: at(16), techs: [207], status: 'Scheduled', zip: '39201', city: 'Jackson', type: MAINT },
+    9807: { job: 8007, n: 1, cust: 'Quin Ray', s: at(15), e: at(16), techs: [201], status: 'Scheduled', zip: '39114', city: 'Mendenhall', type: MAINT },
+    9808: { job: 8008, n: 1, cust: 'Ria Shaw', s: at(9), e: at(10), techs: [201], status: 'Scheduled', zip: '39114', city: 'Mendenhall', type: MAINT },
+    9810: { job: 8010, n: 1, cust: 'Rae Sun', s: tomorrow(9), e: tomorrow(11), techs: [], status: 'Scheduled', zip: '39073', city: 'Florence', type: MAINT },
+    9812: { job: 8012, n: 1, cust: 'Tia Uhl', s: tomorrow(10), e: tomorrow(12), techs: [202], status: 'Scheduled', zip: '39044', city: 'Braxton', type: MAINT },
+    9820: { job: 8020, n: 1, cust: 'Uma Vale', s: at(14), e: at(16), techs: [], status: 'Scheduled', zip: '39201', city: 'JACKSON', type: INSTALL, prio: 'Normal' },
+    9821: { job: 8021, n: 1, cust: 'Vic Wade', s: at(9), e: at(11), techs: [], status: 'Scheduled', zip: '39044', city: 'Braxton', type: MAINT, prio: 'High' },
+    9830: { job: 8030, n: 1, cust: 'Yul Zane', s: at(8), e: at(17), techs: [203], status: 'Scheduled', zip: '39149', city: 'Pinola', type: INSTALL },
+    9841: { job: 8041, n: 1, cust: 'Bo Cole', s: at(8), e: at(9), techs: [211], status: 'Scheduled', zip: '39201', city: 'Jackson', type: SALES },
+    9843: { job: 8043, n: 1, cust: 'Di Ernst', s: at(8), e: at(9), techs: [212], status: 'Scheduled', zip: '39208', city: 'Pearl', type: SALES },
+    // On the last filler tech (far down the board) and an unassigned one from another branch.
+    9850: { job: 8050, n: 1, cust: 'Zoe End', s: at(10), e: at(11), techs: [330], status: 'Scheduled', zip: '39114', city: 'Mendenhall', type: MAINT },
+    9851: { job: 8051, n: 1, cust: 'Ann Two', s: at(13), e: at(14), techs: [330], status: 'Scheduled', zip: '39114', city: 'Mendenhall', type: MAINT },
+    9860: { job: 8060, n: 1, cust: 'Oz Away', s: at(10), e: at(12), techs: [], status: 'Scheduled', zip: '39120', city: 'Natchez', type: MAINT, bu: 2 },
+    9861: { job: 8061, n: 1, cust: 'Pip Far', s: at(11), e: at(12), techs: [206], status: 'Scheduled', zip: '39120', city: 'Natchez', type: MAINT, bu: 2 }
+  };
+  Object.keys(APPTS).forEach(k => { const a = APPTS[k]; a.custId = a.job + 10000; if (!a.bu) a.bu = 1; });
+  // Holds (the Jobs Tray's Hold tab and the Hold list): job -> customer, type.
+  window.HOLDS = [[8101, 'Hal Hold', 'Quote - Generator'], [8102, 'Hope Hold', 'Quote - Water Heater']];
+  const HISTORY = { 211: [SALES, SALES], 212: [SALES, SALES], 201: [MAINT, MAINT], 202: [MAINT, MAINT], 205: [MAINT, MAINT], 207: [MAINT, MAINT], 203: [INSTALL, INSTALL], 204: [INSTALL, INSTALL], 206: [INSTALL, MAINT] };
+  // Customers: id -> name, mobile (10 digits). Every job's customer, and the holds'.
+  window.CUST = {};
+  Object.keys(APPTS).forEach(k => { const a = APPTS[k]; CUST[a.custId] = { name: a.cust, mobile: '601555' + String(a.job).slice(-4) }; });
+  HOLDS.forEach(h => { CUST[h[0] + 10000] = { name: h[1], mobile: '601555' + String(h[0]).slice(-4) }; });
+  const jobCust = j => { const k = Object.keys(APPTS).find(x => String(APPTS[x].job) === String(j)); if (k) return APPTS[k].custId; const h = HOLDS.find(x => String(x[0]) === String(j)); return h ? h[0] + 10000 : null; };
+  const BU_NAME = { 1: 'Mendenhall Branch', 2: 'Other Branch' };
+  window.JOB_BU = {};    // job -> branch (Business Unit tool), from the appointments
+  Object.keys(APPTS).forEach(k => { JOB_BU[APPTS[k].job] = APPTS[k].bu; });
+  HOLDS.forEach(h => { JOB_BU[h[0]] = 1; });
+  window.NOTIF = {};     // job -> notifications on (default true)
+  // The filter codes in the address, decoded.
+  window.CODES = {
+    MEND: { businessUnitIds: [1], teamIds: [], skillIds: [], shiftTypes: [] },
+    ALL: { businessUnitIds: [], teamIds: [], skillIds: [], shiftTypes: [] },
+    L1: { businessUnitIds: [1], teamIds: [501], skillIds: [], shiftTypes: [] }
+  };
+
+  window.mbCalls = []; window.zctaCalls = []; window.opened = []; window.calls = []; window.dataCalls = []; window.getJobsCalls = [];
+  window.decodeCalls = []; window.SENT = []; window.TEXTS = []; window.saves = []; window.custOpened = []; window.chatOpened = [];
+  window.refreshClicks = 0; window.CHATS = {};
+  window.open = (u) => { window.opened.push(String(u)); return null; };
+  const mi = (a, b) => { const R = 3958.8, r = x => x * Math.PI / 180; const h = Math.sin(r(b[0] - a[0]) / 2) ** 2 + Math.cos(r(a[0])) * Math.cos(r(b[0])) * Math.sin(r(b[1] - a[1]) / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
+  const realFetch = window.fetch;
+  // One appointment as ServiceTitan's data has it.
+  const rowFor = k => {
+    const a = APPTS[k];
+    return { Id: Number(k), JobId: a.job, AppointmentNumber: a.n, Customer: a.cust, CustomerId: a.custId, Start: a.s.toISOString(), End: a.e.toISOString(), BusinessUnitId: a.bu,
+      Zip: a.zip, City: a.city, Street: '55 Secret Rd', Type: a.type, TypeId: (a.type || '').length, Priority: a.prio || 'Normal', IsConfirmed: false,
+      Technicians: a.techs.map(id => ({ Id: id, Name: tname(id) })), TechnicianId: a.techs[0] || 0, AppointmentStatus: a.status, Status: a.status };
+  };
+  const activeTechs = () => TEAMS.reduce((out, t) => out.concat(TECHS.filter(x => x.active && x.team === t[1])), []);
+  window.fetch = async (url, opts) => {
+    const u = String(url);
+    const json = (o, st) => new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    const body = opts && opts.body ? JSON.parse(opts.body) : null;
+    await new Promise(r => setTimeout(r, 20));
+    let m;
+    if (u.indexOf('https://api.mapbox.com/') === 0) {
+      window.mbCalls.push({ url: u });
+      const leg = (a, b) => ({ s: mi(a, b) * 1.2 / 45 * 3600, d: mi(a, b) * 1.2 * 1609.34 });
+      const pts = str => str.split(';').map(x => { const [lon, lat] = x.split(',').map(Number); return [lat, lon]; });
+      if ((m = /directions-matrix\/v1\/mapbox\/([\w-]+)\/([^?]+)\?/.exec(u))) {
+        const p = pts(m[2]), q = new URL(u).searchParams;
+        if (p.length > (m[1] === 'driving-traffic' ? 10 : 25)) return json({ code: 'InvalidInput', message: 'too many coordinates' }, 422);
+        const src = q.get('sources').split(';').map(Number), dst = q.get('destinations').split(';').map(Number);
+        return json({ code: 'Ok', durations: src.map(i => dst.map(k => leg(p[i], p[k]).s)), distances: src.map(i => dst.map(k => leg(p[i], p[k]).d)) });
+      }
+      m = /driving(?:-traffic)?\/(-?[\d.]+),(-?[\d.]+);(-?[\d.]+),(-?[\d.]+)\?/.exec(u);
+      if (!m) return json({ code: 'InvalidInput' }, 422);
+      const l = leg([Number(m[2]), Number(m[1])], [Number(m[4]), Number(m[3])]);
+      return json({ code: 'Ok', routes: [{ duration: l.s, distance: l.d }] });
+    }
+    if (u.indexOf('https://tigerweb.geo.census.gov/') === 0) {
+      window.zctaCalls.push({ url: u });
+      const where = new URL(u).searchParams.get('where') || '';
+      const zips = (where.match(/'(\d{5})'/g) || []).map(z => z.slice(1, 6));
+      return json({ features: zips.filter(z => ZIPS[z]).map(z => ({ attributes: { ZCTA5: z, INTPTLAT: '+' + ZIPS[z][0].toFixed(7), INTPTLON: ZIPS[z][1].toFixed(7) } })) });
+    }
+    if (u.indexOf('/api/cp/settings/special/permission-settings') === 0) return json({ Settings: [] });
+    if (u.indexOf('/app/api/data/technicians') === 0) return json(TECHS.map(t => ({ id: t.id, name: t.name, active: t.active, isManagedTechnician: t.managed !== false, skillIds: [],
+      houseLatitude: t.home ? t.home[0] : null, houseLongitude: t.home ? t.home[1] : null, houseAddress: t.addr || null })));
+    if ((m = /^\/dispatch-center\/decoding\?Code=([^&]+)/.exec(u))) {
+      window.decodeCalls.push(decodeURIComponent(m[1]));
+      if (window.DECODE_DOWN) return json({ error: 'down' }, 500);
+      const c = CODES[decodeURIComponent(m[1])];
+      return c ? json({ item: c }) : json({ error: 'no such code' }, 404);
+    }
+    if (u.indexOf('/Dispatch/Data') === 0) {
+      window.dataCalls.push(body);
+      if (window.DISPATCH_DRIFT) return json({ technicians: [] });
+      const day = new Date(body.date);
+      const bus = (body.filter && body.filter.businessUnitIds) || [], teams = (body.filter && body.filter.teamIds) || [];
+      const techs = activeTechs().filter(t => !teams.length || teams.indexOf(teamId(t.team)) > -1);
+      if (day < today) {
+        let n = 0;
+        return json({ Technicians: techs.map(t => ({ Id: t.id, Name: t.name, Team: t.team, Status: 'Idle',
+          Assignments: (HISTORY[t.id] || []).map(type => { n++; const s = new Date(day); s.setHours(8 + n % 8); const e = new Date(s); e.setHours(s.getHours() + 1);
+            return { Id: 50000 + n, JobId: 60000 + t.id * 100 + n, Start: s.toISOString(), End: e.toISOString(), AppointmentStatus: 'Done', Status: 'Done', City: 'Mendenhall', Zip: '39114', Type: type, TypeId: type.length, Technicians: [{ Id: t.id, Name: t.name }] }; }) })) });
+      }
+      // Like the real data: each tech's appointments (Technicians left out; the Toolbox fills them in).
+      return json({ Technicians: techs.map(t => ({ Id: t.id, Name: t.name, Team: t.team, Status: 'Idle',
+        Assignments: Object.keys(APPTS).filter(k => APPTS[k].techs.indexOf(t.id) > -1 && same(APPTS[k].s, day) && (!bus.length || bus.indexOf(APPTS[k].bu) > -1))
+          .map(k => { const r = rowFor(k); if (APPTS[k].techs.length < 2) { delete r.Technicians; delete r.TechnicianId; } return r; }) })) });
+    }
+    if ((m = /GetJobAppointments\?jobId=(\d+)/.exec(u))) {
+      const ks = Object.keys(APPTS).filter(k => String(APPTS[k].job) === m[1]);
+      if (!ks.length) return json([]);
+      return json(ks.map(k => ({ id: Number(k), status: STATUS_NUM[APPTS[k].status], start: APPTS[k].s.toISOString() })));
+    }
+    if ((m = /GetJobEditFlyoutData\?appointmentId=(\d+)/.exec(u))) {
+      const a = APPTS[m[1]];
+      if (!a) return json({}, 404);
+      const visits = Object.keys(APPTS).filter(k => APPTS[k].job === a.job);
+      return json({ jobId: a.job, jobNumber: String(a.job), businessUnitId: a.bu, jobTotal: 0,
+        locationAddress: { id: 1, street: '55 Secret Rd', unit: null, city: a.city, state: 'MS', zip: a.zip },
+        jobAppointments: visits.map(k => ({ id: Number(k), number: APPTS[k].n, start: APPTS[k].s.toISOString(), end: APPTS[k].e.toISOString(),
+          technicians: APPTS[k].techs.map(id => ({ id, name: tname(id) })), jobAppointmentStatus: STATUS_NUM[APPTS[k].status], isConfirmed: false })) });
+    }
+    if ((m = /GetJobOverviewData\?jobId=(\d+)/.exec(u))) return json({ jobTags: [], skills: [], businessUnit: { id: 1, name: 'Mendenhall Branch' } });
+    if (u.indexOf('/Job/TechniciansAreBooked') === 0) {
+      const s0 = new Date(body.start), e0 = new Date(body.end);
+      const busy = id => Object.keys(APPTS).some(k => String(k) !== String(body.originalAppointmentId) && APPTS[k].status !== 'Canceled' && APPTS[k].techs.indexOf(id) > -1 && APPTS[k].s < e0 && s0 < APPTS[k].e);
+      return json(body.technicianIds.filter(busy).map(id => ({ TechnicianId: id, IsBookedForJob: true, IsBookedForNonJobEvent: false, IsBookedForRecurring: false })));
+    }
+    if ((m = /\/dispatch\/job-edit-flyout\/(Assign|Unassign)Technicians/.exec(u))) {
+      const a = APPTS[body.appointmentId];
+      if (!a) return json({}, 404);
+      window.calls.push([m[1].toLowerCase(), body.appointmentId, body.technicianIds.slice()]);
+      if (m[1] === 'Assign') a.techs = a.techs.concat(body.technicianIds.filter(id => a.techs.indexOf(id) < 0));
+      else a.techs = a.techs.filter(id => body.technicianIds.indexOf(id) < 0);
+      // The board shows changes by itself a moment later (unless BOARD_STUCK).
+      if (!window.BOARD_STUCK) setTimeout(() => { snapshot(); drawBoard(); }, 60);
+      return new Response('', { status: 200 });
+    }
+    if (u.indexOf('/Dispatch/GetJobs') === 0) {
+      window.getJobsCalls.push(body);
+      const day = new Date(body.Date), bus = body.QueryFilter.BusinessUnitIds || [];
+      let rows = [];
+      if (body.JobType === 'Unassigned') rows = Object.keys(APPTS).filter(k => !APPTS[k].techs.length && same(APPTS[k].s, day) && (!bus.length || bus.indexOf(APPTS[k].bu) > -1)).map(rowFor);
+      else if (body.JobType === 'Hold') rows = HOLDS.map(h => ({ JobId: h[0], Customer: h[1] + ' ', CustomerId: h[0] + 10000, Type: h[2], JobStatus: 'Hold', AppointmentStatus: 'Hold' }));
+      return json({ Jobs: rows.slice(body.QueryFilter.Skip, body.QueryFilter.Skip + body.QueryFilter.Take), Count: rows.length });
+    }
+    if ((m = /^\/app\/api\/contact-methods\/getContactMethods\?ownerId=(\d+)&ownerType=Customer/.exec(u))) {
+      const cu = CUST[m[1]];
+      if (!cu) return json([]);
+      return json([{ id: 10, type: 3, value: '(' + cu.mobile.slice(0, 3) + ') ' + cu.mobile.slice(3, 6) + '-' + cu.mobile.slice(6), memo: '' }]);
+    }
+    if ((m = /^\/GrowthChatCenter\/ChatThread\?number=(\d+)/.exec(u))) {
+      const chat = CHATS[m[1]];
+      if (!chat) return json({ Threads: [], HasNoMore: true });
+      return json({ Threads: [{ ThreadId: Number(m[1]), ContactNumber: m[1], ReadStatus: 0, BlockedStatus: 0, Messages: [] }], HasNoMore: true });
+    }
+    if ((m = /^\/GrowthChatCenter\/Messages\?threadId=(\d+)/.exec(u))) {
+      const chat = CHATS[m[1]];
+      return json({ Messages: chat ? chat.msgs.map((x, i) => ({ SmsId: i + 1, Body: x.Body, CreatedOn: x.CreatedOn, SmsDirection: 1, Channel: 3, SmsSendErrorCode: 0, SmsDeliveryStatus: 0 })) : [], HasNoMore: true });
+    }
+    if ((m = /^\/Job\/Edit\/(\d+)/.exec(u))) {
+      if (!(m[1] in JOB_BU)) return json({}, 404);
+      return json({ Id: Number(m[1]), BusinessUnitId: JOB_BU[m[1]], BusinessUnit: BU_NAME[JOB_BU[m[1]]], IsBusinessUnitReadOnly: false });
+    }
+    if ((m = /^\/Job\/Index\/\?id=(\d+)/.exec(u))) {
+      const cid = jobCust(m[1]);
+      if (!cid) return json({}, 404);
+      const cu = CUST[cid], hold = HOLDS.some(h => String(h[0]) === m[1]);
+      return json({ Id: Number(m[1]), NotificationsEnabled: m[1] in NOTIF ? NOTIF[m[1]] : true, BusinessUnit: BU_NAME[JOB_BU[m[1]]], Status: hold ? 'Hold' : 'Scheduled',
+        Customer: { Id: cid, Name: cu.name, Contacts: [{ Id: 1, Type: 'MobilePhone', Value: cu.mobile }] }, Location: { Contacts: [] } });
+    }
+    return realFetch(url, opts);
+  };
+
+  // ---------- The new Dispatch board ----------
+  const ROW = 44;
+  let host = null, sr = null, shown = {}, scrollTopKeep = 0, menu = null, ac = null, trayTab = 'unassigned';
+  const params = () => new URLSearchParams(location.hash.split('?')[1] || '');
+  const boardDay = () => { const d = params().get('date'); if (!d) return new Date(today); const [y, mo, da] = d.split('-').map(Number); return new Date(y, mo - 1, da); };
+  const boardCode = () => params().get('dispatchFilterCode') || '';
+  // What the board shows: a copy of every appointment's techs, taken when it draws.
+  const snapshot = () => { shown = {}; Object.keys(APPTS).forEach(k => { shown[k] = APPTS[k].techs.slice(); }); };
+  const fiber = (node, props) => { node['__reactFiber$x1y2z3'] = { memoizedProps: { className: node.className }, return: { memoizedProps: props, return: null } }; };
+  const setDay = d => { const p = params(); p.set('date', ymd(d)); location.hash = '#/widget-app/dispatch-center?' + p.toString(); };
+  const filterOf = () => CODES[boardCode()] || CODES.ALL;
+  const onBoardDay = k => same(APPTS[k].s, boardDay()) && (!filterOf().businessUnitIds.length || filterOf().businessUnitIds.indexOf(APPTS[k].bu) > -1);
+  const rows = () => {
+    const f = filterOf(), out = [];
+    TEAMS.forEach(t => {
+      if (f.teamIds.length && f.teamIds.indexOf(t[0]) < 0) return;
+      const techs = TECHS.filter(x => x.active && x.team === t[1]);
+      if (!techs.length) return;
+      out.push({ group: t[0] });
+      techs.forEach(x => out.push({ tech: x }));
+    });
+    return out;
+  };
+  const closeMenu = () => { if (menu) { menu.remove(); menu = null; } };
+  const openChat = name => {
+    if (!ac || !ac.isConnected) {
+      ac = document.createElement('servicetitan-activity-center-x');
+      ac.style.cssText = 'position:fixed;right:0;top:0;width:380px;height:100vh;background:#eef;z-index:20;display:none';
+      const r = ac.attachShadow({ mode: 'open' });
+      r.innerHTML = '<div style="padding:10px"><h3 id="who"></h3><div id="hist"></div>' +
+        '<textarea data-cy="technician-chat-input" style="width:340px;height:60px"></textarea>' +
+        '<label><input type="checkbox" data-cy="attach-message-to-job" checked> Attach to job</label>' +
+        '<button data-cy="send-chat-message">Send</button><button data-cy="close-messaging">✕</button></div>';
+      const box = r.querySelector('textarea');
+      r.querySelector('[data-cy=send-chat-message]').addEventListener('click', () => {
+        if (!box.value) return;
+        window.SENT.push([r.getElementById('who').textContent, box.value, r.querySelector('[data-cy=attach-message-to-job]').checked]);
+        const p = document.createElement('p'); p.textContent = box.value;
+        r.getElementById('hist').appendChild(p);
+        box.value = '';
+      });
+      r.querySelector('[data-cy=close-messaging]').addEventListener('click', () => { ac.style.display = 'none'; });
+      sr.appendChild(ac);
+    }
+    const r = ac.shadowRoot;
+    r.getElementById('who').textContent = name;
+    r.getElementById('hist').textContent = '';
+    r.querySelector('[data-cy=attach-message-to-job]').checked = true;
+    ac.style.display = 'block';
+  };
+  const openDrawer = j => {
+    document.querySelectorAll('.Drawer').forEach(d => d.remove());
+    const d = document.createElement('div');
+    d.className = 'Drawer Drawer--open';
+    d.innerHTML = '<h2>Job #' + j + '</h2><a href="#/Customer/0"></a><button aria-label="close drawer">x</button>';
+    document.body.appendChild(d);
+    d.querySelector('button').addEventListener('click', () => d.remove());
+    setTimeout(() => {
+      if (!document.contains(d)) return;
+      const c = jobCust(j);
+      d.innerHTML = '<h2>Job #' + j + '</h2><a href="#/Customer/' + c + '">' + CUST[c].name + '</a><button aria-label="close drawer">x</button>';
+      d.querySelector('button').addEventListener('click', () => d.remove());
+    }, 300);
+  };
+  // Draws the rows on screen (and two more either side), like the real board.
+  const drawRows = () => {
+    const vp = sr && sr.querySelector('[data-testid="timeline-scroll-viewport"]');
+    if (!vp) return;
+    const inner = vp.firstElementChild, list = rows();
+    inner.style.height = list.length * ROW + 'px';
+    const first = Math.max(0, Math.floor(vp.scrollTop / ROW) - 2), last = Math.min(list.length - 1, Math.ceil((vp.scrollTop + vp.clientHeight) / ROW) + 2);
+    inner.textContent = '';
+    for (let i = first; i <= last; i++) {
+      const it = list[i], row = document.createElement('div');
+      row.style.cssText = 'position:absolute;left:0;right:0;height:' + (ROW - 2) + 'px;top:' + i * ROW + 'px;display:flex;border-bottom:1px solid #ddd';
+      if (it.group) {
+        const g = document.createElement('div');
+        g.setAttribute('data-cy', 'ddb-team-group-' + it.group + '-header');
+        g.style.cssText = 'width:100%;background:#eee';
+        row.appendChild(g);
+      } else {
+        const t = it.tech;
+        const h = document.createElement('div');
+        h.setAttribute('data-cy', 'ddb-technician-header-' + t.id);
+        if (window.DRIFT !== 'noTechId') h.setAttribute('data-technician-id', String(t.id));
+        h.style.cssText = 'width:150px;padding:2px 6px;cursor:pointer';
+        h.innerHTML = '<p style="margin:0"></p><p data-cy="ddb-technician-status" style="margin:0;font-size:10px">Idle</p>';
+        h.firstChild.textContent = t.name;
+        h.addEventListener('click', () => window.opened.push('tech' + t.id));
+        // The tech menu opens on a right-click on the name.
+        h.firstChild.addEventListener('contextmenu', e => {
+          e.preventDefault();
+          closeMenu();
+          menu = document.createElement('div');
+          menu.setAttribute('data-cy', 'ddb-technician-menu');
+          menu.setAttribute('role', 'menu');
+          menu.style.cssText = 'position:fixed;left:' + (e.clientX + 4) + 'px;top:' + (e.clientY + 4) + 'px;background:#fff;border:1px solid #999;z-index:30';
+          menu.innerHTML = '<div role="menuitem" tabindex="0" data-cy="tmi-send-message" style="padding:4px 8px">Send Message</div><div role="menuitem" tabindex="0" data-cy="tmi-view-profile" style="padding:4px 8px">View Profile</div>';
+          menu.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeMenu(); });
+          menu.querySelector('[data-cy=tmi-send-message]').addEventListener('click', () => { closeMenu(); openChat(t.name); });
+          menu.querySelector('[data-cy=tmi-view-profile]').addEventListener('click', () => { closeMenu(); window.opened.push('profile' + t.id); });
+          sr.appendChild(menu);
+        });
+        row.appendChild(h);
+        const lane = document.createElement('div');
+        lane.style.cssText = 'flex:1;position:relative';
+        Object.keys(APPTS).filter(k => (shown[k] || []).indexOf(t.id) > -1 && onBoardDay(k)).forEach(k => {
+          const a = APPTS[k], b = document.createElement('div');
+          b.setAttribute('data-cy', 'wdb-job-appt-card');
+          if (window.DRIFT !== 'noApptId') b.setAttribute('data-job-appointment-id', k);
+          b.setAttribute('data-technician-id', String(t.id));
+          b.style.cssText = 'position:absolute;top:2px;height:36px;left:' + ((a.s.getHours() - 7) * 60) + 'px;width:' + Math.max(50, (a.e - a.s) / 60000) + 'px;background:#cfe;border:1px solid #9c9;cursor:pointer;overflow:hidden';
+          b.innerHTML = '<span></span>';
+          b.firstChild.textContent = a.cust;
+          fiber(b, { jobAppointment: { id: Number(k), jobId: a.job, customerId: a.custId, customerName: a.cust, city: a.city, zip: a.zip, businessUnitId: a.bu, technicians: (shown[k] || []).map(id => ({ id, name: tname(id) })) } });
+          b.addEventListener('click', () => { window.opened.push('job ' + a.job); openDrawer(a.job); });
+          lane.appendChild(b);
+        });
+        row.appendChild(lane);
+      }
+      inner.appendChild(row);
+    }
+  };
+  const drawTray = () => {
+    const tray = sr && sr.querySelector('#tray');
+    if (!tray) return;
+    const uas = Object.keys(APPTS).filter(k => !(shown[k] || []).length && onBoardDay(k));
+    const tab = (key, label, n) => '<div data-cy="custom-tab-item-' + key + '" aria-selected="' + (trayTab === key) + '" style="display:inline-block;margin-right:6px"><button aria-label="' + label + '">' + label + ' ' + n + '</button></div>';
+    tray.innerHTML = '<div role="tablist">' + tab('unassigned', 'Unassigned', uas.length) + tab('hold', 'Hold', HOLDS.length) + '</div>' +
+      '<table data-cy="dc-jt-' + trayTab + '-table"><tbody></tbody></table>';
+    tray.querySelectorAll('[data-cy^="custom-tab-item-"] button').forEach(b => b.addEventListener('click', () => { trayTab = b.parentElement.getAttribute('data-cy').replace('custom-tab-item-', ''); drawTray(); }));
+    const tb = tray.querySelector('tbody');
+    const items = trayTab === 'unassigned'
+      ? uas.map(k => { const a = APPTS[k]; return { job: a.job, n: a.n, cust: a.cust, zip: a.zip, item: { job: { id: a.job, businessUnitId: a.bu, total: 0, priority: a.prio || 'Normal', status: 'Scheduled' }, jobAppointment: { id: Number(k), start: a.s.toISOString(), end: a.e.toISOString(), number: a.n, status: a.status }, customer: { id: a.custId, name: a.cust }, location: { city: a.city, zip: a.zip }, technicians: [] } }; })
+      : HOLDS.map(h => ({ job: h[0], n: 1, cust: h[1], zip: '39114', item: { job: { id: h[0], businessUnitId: 1 }, jobAppointment: { id: h[0] + 100000, number: 1, status: 'Hold' }, customer: { id: h[0] + 10000, name: h[1] }, location: { city: 'Mendenhall', zip: '39114' }, technicians: [] } }));
+    items.forEach(x => {
+      const tr = document.createElement('tr');
+      tr.className = 'k-master-row';
+      tr.innerHTML = '<td data-cy="dc-jt-job-appointment-cell"></td><td data-cy="dc-jt-customer-name-cell"></td><td data-cy="dc-jt-zip-cell"></td>';
+      tr.children[0].textContent = x.job + '-' + x.n;
+      tr.children[1].textContent = x.cust;
+      tr.children[2].textContent = x.zip;
+      fiber(tr.children[0], { dataItem: x.item });
+      tr.addEventListener('click', () => window.opened.push('tray ' + x.job));
+      tb.appendChild(tr);
+    });
+  };
+  window.drawBoard = () => { drawRows(); drawTray(); };
+  const renderBoard = () => {
+    if (!host || !host.isConnected) {
+      host = document.createElement('servicetitan-dispatch-center-a1b2');
+      host.setAttribute('data-mfe-name', 'servicetitan-dispatch-center');
+      sr = host.attachShadow({ mode: 'open' });
+      document.getElementById('root').appendChild(host);
+      scrollTopKeep = 0;
+    }
+    const d = boardDay();
+    sr.innerHTML = '<div style="display:flex;gap:6px;padding:6px;border-bottom:1px solid #ccc">' +
+      '<button data-auto-sel="dc-header-today-btn">Today</button><button data-auto-sel="dc-header-prevDay-btn">‹</button>' +
+      '<button data-auto-sel="dc-header-date-picker"></button><button data-auto-sel="dc-header-nextDay-btn">›</button>' +
+      '<button data-auto-sel="dis-wdb-refresh-btn" aria-label="Refresh">⟳</button></div>' +
+      '<div data-testid="timeline-scroll-viewport" style="height:300px;overflow:auto;position:relative"><div style="position:relative"></div></div>' +
+      '<div id="tray" style="border-top:2px solid #999;padding:4px;max-height:200px;overflow:auto"></div>';
+    if (window.DRIFT !== 'noDate') sr.querySelector('[data-auto-sel="dc-header-date-picker"]').textContent = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    sr.querySelector('[data-auto-sel="dc-header-prevDay-btn"]').addEventListener('click', () => { const x = boardDay(); x.setDate(x.getDate() - 1); setDay(x); });
+    sr.querySelector('[data-auto-sel="dc-header-nextDay-btn"]').addEventListener('click', () => { const x = boardDay(); x.setDate(x.getDate() + 1); setDay(x); });
+    sr.querySelector('[data-auto-sel="dc-header-today-btn"]').addEventListener('click', () => setDay(new Date(today)));
+    sr.querySelector('[data-auto-sel="dis-wdb-refresh-btn"]').addEventListener('click', () => { window.refreshClicks++; setTimeout(() => { snapshot(); drawBoard(); }, 100); });
+    const vp = sr.querySelector('[data-testid="timeline-scroll-viewport"]');
+    vp.addEventListener('scroll', () => { scrollTopKeep = vp.scrollTop; drawRows(); });
+    snapshot();
+    drawBoard();
+    vp.scrollTop = scrollTopKeep;
+    drawRows();
+  };
+
+  function render() {
+    const h = location.hash.split('?')[0];
+    const root = document.getElementById('root');
+    let m;
+    if (/^#\/DispatchBoard/i.test(h)) { location.replace(location.href.split('#')[0] + '#/widget-app/dispatch-center?dispatchFilterCode=MEND&orientation=horizontal&timeframe=day'); return; }
+    if (/^#\/widget-app\/dispatch-center/.test(h)) {
+      Array.from(root.children).forEach(c => { if (c !== host) c.remove(); });
+      renderBoard();
+      return;
+    }
+    // Any other page: the board goes away (and comes back new).
+    root.innerHTML = ''; host = null; sr = null; menu = null; ac = null;
+    document.querySelectorAll('.Drawer').forEach(d => d.remove());
+    if ((m = /^#\/Job\/Index\/(\d+)/.exec(h))) {
+      const j = m[1];
+      (window.indexOpened = window.indexOpened || []).push(j);
+      if (!(j in NOTIF)) NOTIF[j] = true;
+      setTimeout(() => {
+        if (location.hash.split('?')[0] !== h) return;
+        root.innerHTML = '<h2>Job #' + j + '</h2><div class="qa-job-notification-toggle"><input id="nt" type="checkbox" class="ToggleSwitch__input"' + (NOTIF[j] ? ' checked' : '') + '><label for="nt" class="ToggleSwitch__html-label">Job Notifications</label></div>';
+        root.querySelector('#nt').addEventListener('change', e => { NOTIF[j] = e.target.checked; });
+      }, 300);
+    } else if ((m = /^#\/Job\/Edit\/(\d+)/.exec(h))) {
+      const j = m[1];
+      (window.editOpened = window.editOpened || []).push(j);
+      setTimeout(() => {
+        if (location.hash.split('?')[0] !== h) return;
+        const form = document.createElement('form');
+        form.innerHTML = '<label class="control-label">Business Unit</label><select name="BusinessUnit"></select><div class="errs"></div>' +
+          '<button class="btn btn-success"><i class="icon-save"></i> Save</button> <a class="btn-link muted" href="#/Job/Index/' + j + '">Cancel</a>';
+        const sel = form.querySelector('select');
+        Object.keys(BU_NAME).forEach(id => { const o = document.createElement('option'); o.value = id; o.textContent = BU_NAME[id]; sel.appendChild(o); });
+        const vm = { Id: Number(j), BusinessUnitId: ko.observable(JOB_BU[j]), IsBusinessUnitReadOnly: false };
+        sel.value = String(JOB_BU[j]);
+        sel.addEventListener('change', () => vm.BusinessUnitId(Number(sel.value)));
+        form.__vm = vm;
+        form.addEventListener('submit', e => {
+          e.preventDefault();
+          window.saves.push([j, BU_NAME[vm.BusinessUnitId()]]);
+          setTimeout(() => { JOB_BU[j] = vm.BusinessUnitId(); location.hash = '#/Job/Index/' + j; }, 300);
+        });
+        root.appendChild(form);
+      }, 300);
+    } else if ((m = /^#\/customer\/(\d+)/i.exec(h))) {
+      const c = Number(m[1]);
+      if (h.indexOf('#/Customer/') === 0) { location.replace('#/customer/' + c); return; }
+      window.custOpened.push(c);
+      setTimeout(() => {
+        if (location.hash.split('?')[0] !== h) return;
+        root.innerHTML = '<h2>Customer ' + c + '</h2><button data-tracking-id="crm-notes-add-note-button">Add Note</button>';
+        root.querySelector('button').addEventListener('click', () => {
+          if (document.querySelector('.Drawer--open')) return;
+          const d = document.createElement('div');
+          d.className = 'Drawer Drawer--open';
+          d.innerHTML = '<textarea></textarea><button data-tracking-id="add-note-button" disabled>Add Note</button>';
+          const t = d.querySelector('textarea'), s = d.querySelector('button');
+          t.addEventListener('input', () => { s.disabled = !t.value.trim(); });
+          document.body.appendChild(d);
+        });
+      }, 300);
+    } else if ((m = /^#\/ChatCenter\/(\d+)/.exec(h))) {
+      const num = m[1];
+      window.chatOpened.push(num);
+      const chat = CHATS[num] || (CHATS[num] = { msgs: [] });
+      setTimeout(() => {
+        if (location.hash.split('?')[0] !== h) return;
+        const wrap = document.createElement('div'); wrap.className = 'chat';
+        wrap.innerHTML = '<div class="cht-conversations"><form><div class="cht-response-container"><textarea class="cht-response-input" placeholder="Type response..."></textarea></div><button type="submit" class="ui button">Send</button></form></div>';
+        const toMsg = x => Object.assign({ IsInbound: false, IsOutbound: true, IsNotification: false, SmsSendErrorCode: 0, HasNotBeenDelivered: false }, x);
+        const vm = {
+          ContactNumber: ko.observable('(' + num.slice(0, 3) + ') ' + num.slice(3, 6) + '-' + num.slice(6)),
+          LoadingMessages: ko.observable(false), HasFetchedMessagePage: ko.observable(true),
+          IsUnread: ko.observable(false), ResponseText: ko.observable(''), SubmittingResponseInProgress: ko.observable(false),
+          MessagesByDay: ko.observable([{ Date: 'x', Messages: chat.msgs.map(toMsg) }])
+        };
+        const ta = wrap.querySelector('textarea');
+        ta.addEventListener('change', () => vm.ResponseText(ta.value));
+        wrap.querySelector('form').addEventListener('submit', e => {
+          e.preventDefault();
+          const body = vm.ResponseText();
+          if (!body) return;
+          vm.SubmittingResponseInProgress(true);
+          setTimeout(() => {
+            chat.msgs.push({ Body: body, IsOutbound: true, CreatedOn: new Date().toISOString() });
+            window.TEXTS.push([num, body]);
+            vm.MessagesByDay([{ Date: 'x', Messages: chat.msgs.map(toMsg) }]);
+            vm.ResponseText(''); ta.value = ''; vm.SubmittingResponseInProgress(false);
+          }, 300);
+        });
+        wrap.querySelector('.cht-conversations').__vm = vm;
+        ta.__vm = vm;
+        root.appendChild(wrap);
+      }, 300);
+    }
+  }
+  addEventListener('hashchange', render);
+  addEventListener('DOMContentLoaded', render);
+</script></head>
+<body><div id="root"></div></body></html>

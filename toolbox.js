@@ -23,7 +23,7 @@
 (() => {
   const VERSION = '1.8';
   const WHATS_NEW = {
-    '1.8': 'New: 🧭 Tech Router. 🔎 Closest techs: type a zip code or job number (or press 🖱️ and click a job) to see the techs closest by drive time with traffic, from where they are now or from home, with ➡️ to hand the job and tech to 🔀 Move Jobs. 📋 Plan Unassigned: one press plans a tech for every job on the Unassigned list (filter it by job type and department): the right department (learned from the last 2 weeks of boards), routed from each tech\'s previous job, free techs first (a job on top of another only when no one is free, marked ⚠️), spread so lighter days get the work, and salespeople kept under 5 hr 30 min of driving where possible. Review it, take off anything with ✕, and send it to Move Jobs, where nothing changes until you review it and press Assign. Field techs only, and only towns are shown, never addresses.',
+    '1.8': 'Works on ServiceTitan\'s new Dispatch board: every tool clicks, highlights and reads the jobs and techs inside it (even the rows it hasn\'t drawn yet), follows its day and filter, and comes back to it as you left it. Send Message is found by right-clicking the tech\'s name, scrolling to them if needed. Also new: 🧭 Tech Router. 🔎 Closest techs: type a zip code or job number (or press 🖱️ and click a job) to see the techs closest by drive time with traffic, from where they are now or from home, with ➡️ to hand the job and tech to 🔀 Move Jobs. 📋 Plan Unassigned: one press plans a tech for every job on the Unassigned list (filter it by job type and department): the right department (learned from the last 2 weeks of boards), routed from each tech\'s previous job, free techs first (a job on top of another only when no one is free, marked ⚠️), spread so lighter days get the work, and salespeople kept under 5 hr 30 min of driving where possible. Review it, take off anything with ✕, and send it to Move Jobs, where nothing changes until you review it and press Assign. Field techs only, and only towns are shown, never addresses.',
     '1.7.2': 'New in 📱 Customer Texts: ＋ A department… next to ＋ Everyone on the board adds just one team\'s customers for the day (Level 1 Service, Installers…) or just the Unassigned list. Pick another to add it too. 📥 Check replies then looks only at those customers.',
     '1.7.1': '📥 Check replies counts earlier confirm texts: a C to Saturday\'s text for Monday still counts after a newer reminder, if all they said after it was "already confirmed", "already did" or "thanks". A coworker\'s text that only says the weekday ("your appointment Monday") counts for that day, and one naming another day ("Saturday") no longer counts for Monday.',
     '1.7': 'Smarter 🔕 Job Notifications: one list instead of two modes. Add jobs by clicking them, clicking a tech\'s name on the board (their whole day), ＋ Whole board, or a tech from the list. Each job shows 🔔 on or 🔕 off as soon as it\'s added (off jobs get a gray dashed outline on the board), and the buttons say how many jobs they\'d change, like 🔕 Turn off (11). Results come back as cards, with problems first.',
@@ -78,40 +78,35 @@
   const visible = el => !!(el && el.getClientRects().length);
   // True if a tech's name is actually showing on the board (a team or people filter hides the rest).
   const techShowing = t => visible((t && t.querySelector('.name')) || t);
-  const onBoard = () => /dispatchboard/i.test(location.hash);
-  // A job clicked on the Dispatch board: a bubble on the timeline, or a row in the job list at
-  // the bottom (Unassigned, Hold and the other tabs). Returns the job number, or null.
-  const clickedJob = target => {
-    if (!target || !target.closest) return null;
-    const a = target.closest('a.appointment[data-job-id]');
-    if (a) { const j = a.getAttribute('data-job-id'); return /^\d+$/.test(j || '') ? j : null; }   // job numbers only
-    const tr = target.closest('.job-list tr[class*="qa-job-"]');
-    const m = tr && /(?:^|\s)qa-job-(\d+)(?:\s|$)/.exec(String(tr.className));
-    return m ? m[1] : null;
-  };
-  // A tech's name clicked on the Dispatch board. Returns the tech's ID (numbers only), or null.
-  const clickedTechId = target => {
-    const t = target && target.closest && target.closest('.technician[data-technician-id]');
-    const id = t ? t.getAttribute('data-technician-id') : null;
-    return /^\d+$/.test(id || '') ? id : null;
-  };
+  // On the Dispatch board (the new one or the old one). See "The Dispatch board" below.
+  const onBoard = () => board.on();
+  // A job clicked on the board: a bubble on the timeline, or a row in the tray / job list at the
+  // bottom (Unassigned, Hold and the other tabs). Returns the job number, or null.
+  const clickedJob = target => board.clickedJob(target);
+  // A tech's name clicked on the board. Returns the tech's ID (numbers only), or null.
+  const clickedTechId = target => board.clickedTechId(target);
+  // The element an event really happened on (inside the new board too).
+  const evTarget = e => board.evTarget(e);
+  // Unwraps a Knockout observable; anything else (the new board's plain data) is left alone.
+  const kun = v => { try { const k = window.ko; return k && typeof k.unwrap === 'function' ? k.unwrap(v) : v; } catch (e) { return v; } };
   // What the job list at the bottom of the board knows about a job on the tab showing.
   const listJob = j => {
     try {
-      const jl = document.querySelector('.job-list');
-      const vm = jl && window.ko && window.ko.dataFor(jl);
-      const list = (vm && vm.JobList && window.ko.unwrap(vm.JobList.AllVisibleJobs)) || [];
-      const x = list.find(y => String(window.ko.unwrap(y.JobId)) === String(j));
+      const vm = board.vm();
+      const list = (vm && vm.JobList && kun(vm.JobList.AllVisibleJobs)) || [];
+      const x = list.find(y => String(kun(y.JobId)) === String(j));
       if (!x) return null;
-      return { customer: String(window.ko.unwrap(x.Customer) || '').replace(/\s+/g, ' ').trim(), customerId: window.ko.unwrap(x.CustomerId) || null };
+      return { customer: String(kun(x.Customer) || '').replace(/\s+/g, ' ').trim(), customerId: kun(x.CustomerId) || null };
     } catch (e) { return null; }
   };
-  // Highlights picked jobs on the timeline and in the job list (job numbers only go into the CSS).
+  // Highlights picked jobs on the timeline and in the job list or tray (job numbers only go into
+  // the CSS). The same CSS works on both boards: the old board's bubbles and rows, and the new
+  // board's, which the Toolbox marks with data-st-job.
   const pickedCss = (all, color, soft) => {
     const ids = all.map(String).filter(j => /^\d+$/.test(j));
     return !ids.length ? '' :
-      ids.map(j => 'a.appointment[data-job-id="' + j + '"]').join(',') + '{outline:3px solid ' + color + ' !important;outline-offset:-3px !important;box-shadow:0 0 0 3px ' + soft + ' !important}' +
-      ids.map(j => '.job-list tr.qa-job-' + j + ' > td').join(',') + '{background:' + soft + ' !important;box-shadow:inset 0 2px 0 ' + color + ',inset 0 -2px 0 ' + color + ' !important}';
+      ids.map(j => 'a.appointment[data-job-id="' + j + '"],[data-cy="wdb-job-appt-card"][data-st-job="' + j + '"]').join(',') + '{outline:3px solid ' + color + ' !important;outline-offset:-3px !important;box-shadow:0 0 0 3px ' + soft + ' !important}' +
+      ids.map(j => '.job-list tr.qa-job-' + j + ' > td,tr[data-st-job="' + j + '"] > td').join(',') + '{background:' + soft + ' !important;box-shadow:inset 0 2px 0 ' + color + ',inset 0 -2px 0 ' + color + ' !important}';
   };
   const isMac = /Mac|iPhone|iPad/i.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || '');
   const ALT = isMac ? 'Option' : 'Alt';
@@ -454,6 +449,373 @@
       boardTechs, jobPlace, unassignedJobs };
   })();
 
+  // ===================================================================
+  // The Dispatch board
+  // ServiceTitan moved to a new Dispatch board in Oct 2026 (#/widget-app/dispatch-center; the old
+  // #/DispatchBoard address now opens it). It's a separate component with its own page inside it
+  // (a shadow root), so the Toolbox looks inside that. What's different, and how it's handled:
+  //   - It only draws the rows on screen (about 28 of 115 techs), so the whole day comes from
+  //     ServiceTitan's data: the same /Dispatch/Data the old board loaded, for the board's day,
+  //     branches and teams. It's read here, kept for a little while, and vm() hands it to the tools
+  //     in the old board's shape (Date, Assignments, JobList.AllVisibleJobs, BusinessUnitFilter).
+  //   - The day is on the date button (and in the address once you change days). The branches and
+  //     teams are in the address as a code (dispatchFilterCode) that ServiceTitan decodes.
+  //   - Job bubbles are marked with their appointment (data-job-appointment-id); the page keeps the
+  //     job behind each one. Tray rows show "job-visit" (663027953-1).
+  //   - A click on it reaches the Toolbox from the component, so the real target comes from the
+  //     event's path (evTarget).
+  //   - Highlights go in a style sheet inside it (sheet()), and the Toolbox marks each bubble and
+  //     tray row with its job number (data-st-job) so the style sheet can find them.
+  //   - A tech's menu (Send Message…) is a right-click on their name; techs off screen are scrolled to.
+  // The old board (Knockout) works exactly as it always has.
+  // ===================================================================
+  const board = (() => {
+    const kind = () => /^#\/widget-app\/dispatch-center(?:[/?]|$)/i.test(location.hash) ? 'new' : /dispatchboard/i.test(location.hash) ? 'old' : null;
+    const pad = n => String(n).padStart(2, '0');
+    const dayISO = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T00:00:00';
+    const midnight = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+    const un = v => { try { const k = window.ko; return k && k.isObservable && k.isObservable(v) ? v() : v; } catch (e) { return undefined; } };
+
+    // ---- The old board's own data (Knockout) ----
+    const koVM = () => { try { const jl = document.querySelector('.job-list'); return jl && window.ko && typeof window.ko.dataFor === 'function' ? window.ko.dataFor(jl) || null : null; } catch (e) { return null; } };
+
+    // ---- The new board's component ----
+    let hostCache = null;
+    const host = () => {
+      if (hostCache && hostCache.isConnected) return hostCache;
+      hostCache = document.querySelector('[data-mfe-name="servicetitan-dispatch-center"]') || null;
+      return hostCache;
+    };
+    const root = () => { if (kind() !== 'new') return null; const h = host(); return (h && h.shadowRoot) || null; };
+    const q = sel => { const r = root(); return r ? r.querySelector(sel) : null; };
+    const qa = sel => { const r = root(); return r ? Array.from(r.querySelectorAll(sel)) : []; };
+    // What the page keeps behind an element (React's props), found by name. Read only.
+    const fiberProp = (node, name, depth) => {
+      try {
+        const k = node && Object.keys(node).find(x => x.indexOf('__reactFiber') === 0);
+        for (let f = k && node[k], i = 0; f && i < (depth || 25); i++, f = f.return) {
+          const p = f.memoizedProps;
+          if (p && typeof p === 'object' && p[name] && typeof p[name] === 'object') return p[name];
+        }
+      } catch (e) {}
+      return null;
+    };
+    // The real element clicked, even inside the component (the event itself reports the component).
+    const evTarget = e => {
+      try {
+        const p = e && typeof e.composedPath === 'function' ? e.composedPath() : null;
+        const n = p && p[0];
+        if (n && n.nodeType === 1) return n;
+        if (n && n.parentElement) return n.parentElement;
+      } catch (x) {}
+      return e ? e.target : null;
+    };
+
+    // ---- The day the board shows ----
+    const newDay = () => {
+      const b = q('[data-auto-sel="dc-header-date-picker"]');
+      const m = b && /\b([A-Z][a-z]{2}) (\d{1,2}), (\d{4})\b/.exec(norm(b.textContent));
+      if (m) { const d = new Date(m[1] + ' ' + m[2] + ', ' + m[3]); if (!isNaN(d)) return midnight(d); }
+      const u = /[?&]date=(\d{4})-(\d{2})-(\d{2})(?:&|$)/.exec(location.hash);
+      return u ? new Date(+u[1], +u[2] - 1, +u[3]) : null;
+    };
+    const day = () => {
+      const k = kind();
+      if (k === 'old') { const vm = koVM(); const d = vm && un(vm.Date); return d instanceof Date && !isNaN(d) ? d : null; }
+      return k === 'new' ? newDay() : null;
+    };
+
+    // ---- The board's filter: branches and teams ----
+    const NONE = Object.freeze({ bus: [], teams: [], skills: [] });
+    const nums = a => (Array.isArray(a) ? a : []).map(Number).filter(n => isFinite(n) && n > 0);
+    const code = () => { try { return new URLSearchParams(location.hash.split('?')[1] || '').get('dispatchFilterCode') || ''; } catch (e) { return ''; } };
+    const decoded = new Map(), decoding = new Map();
+    // The filter for the board showing: { bus, teams, skills }. Decoding the address's code is asked
+    // of ServiceTitan once per code.
+    const filter = async () => {
+      if (kind() !== 'new') return { bus: bus(), teams: [], skills: [] };
+      const c = code();
+      if (!c) return NONE;
+      if (decoded.has(c)) return decoded.get(c);
+      if (decoding.has(c)) return decoding.get(c);
+      const p = st.getJSON('/dispatch-center/decoding?Code=' + encodeURIComponent(c), 15000).then(d => {
+        const it = d && d.item;
+        if (!it || typeof it !== 'object') throw Object.assign(new Error('the board\'s filter came back in a shape the Toolbox doesn\'t know'), { kind: 'bad' });
+        const f = Object.freeze({ bus: nums(it.businessUnitIds), teams: nums(it.teamIds), skills: nums(it.skillIds) });
+        decoded.set(c, f);
+        return f;
+      }).finally(() => decoding.delete(c));
+      decoding.set(c, p);
+      return p;
+    };
+    // The branches the board is filtered to, as known right now ([] for all of them, or not known yet).
+    const bus = () => {
+      const k = kind();
+      if (k === 'old') { try { const f = koVM().BusinessUnitFilter; const ids = f && typeof f.getIds === 'function' ? f.getIds() : []; return (ids || []).map(Number).filter(Boolean); } catch (e) { return []; } }
+      if (k === 'new') { const f = decoded.get(code()); return f ? f.bus.slice() : []; }
+      return [];
+    };
+
+    // ---- The new board's day of data ----
+    // { key (day|branches|teams), at, techs: [{ id, name, team }] in the board's order, rows: every
+    //   appointment on a tech's row (the old board's Assignments) }
+    const EMPTY = { key: '', at: 0, techs: [], rows: [] };
+    let data = EMPTY, loading = null, loadingKey = '';
+    const KEEP_MS = 20000;
+    const keyOf = (d, f) => dayISO(d) + '|' + f.bus.join(',') + '|' + f.teams.join(',');
+    const listeners = new Set();
+    const onData = fn => { listeners.add(fn); return () => listeners.delete(fn); };
+    const load = async force => {
+      if (kind() !== 'new') return null;
+      const d = day();
+      if (!d) throw new Error('the Dispatch board hasn\'t finished loading');
+      const f = await filter();
+      const key = keyOf(d, f);
+      if (!force && data.key === key && Date.now() - data.at < KEEP_MS) return data;
+      if (loading && loadingKey === key) return loading;
+      const p = (async () => {
+        const dd = await st.getJSON('/Dispatch/Data', 30000, { date: dayISO(d), filter: { businessUnitIds: f.bus, teamIds: f.teams, skillIds: f.skills } });
+        if (!dd || !Array.isArray(dd.Technicians)) throw Object.assign(new Error('the board\'s data came back in a shape the Toolbox doesn\'t know'), { kind: 'bad' });
+        const techs = [], rows = [];
+        dd.Technicians.forEach(t => {
+          if (!t || t.Id == null) return;
+          techs.push({ id: String(t.Id), name: norm(t.Name), team: norm(t.Team) });
+          (Array.isArray(t.Assignments) ? t.Assignments : []).forEach(a => {
+            if (!a || a.Id == null) return;
+            const r = Object.assign({}, a);
+            if (r.TechnicianId == null) r.TechnicianId = t.Id;
+            if (!Array.isArray(r.Technicians) || !r.Technicians.length) r.Technicians = [{ Id: t.Id, Name: t.Name }];
+            rows.push(r);
+          });
+        });
+        data = { key, at: Date.now(), techs, rows };
+        retag();
+        listeners.forEach(fn => { try { fn(); } catch (e) {} });
+        return data;
+      })();
+      loading = p; loadingKey = key;
+      try { return await p; } finally { if (loading === p) { loading = null; loadingKey = ''; } }
+    };
+    // Waits for what the tools need: the old board needs nothing; the new board, its day of data.
+    const ready = async force => { if (kind() === 'new') await load(force); return true; };
+    const fresh = () => { const d = day(); return !!(d && data.key && data.key.indexOf(dayISO(d) + '|') === 0); };
+
+    // ---- The tray (Jobs Tray at the bottom of the new board) ----
+    const trayTable = () => qa('[data-cy^="dc-jt-"][data-cy$="-table"]').find(visible) || null;
+    const trayRowEls = () => { const t = trayTable(); return t ? Array.from(t.querySelectorAll('tr')).filter(r => r.querySelector('[data-cy="dc-jt-job-appointment-cell"]')) : []; };
+    // "663027953-1" → { job: '663027953', n: 1 }
+    const trayJobOf = tr => {
+      const c = tr && tr.querySelector('[data-cy="dc-jt-job-appointment-cell"]');
+      const m = c && /^\s*(\d+)-(\d+)\s*$/.exec(c.textContent || '');
+      return m ? { job: m[1], n: +m[2] } : null;
+    };
+    // A tray row in the old board's shape (what the page keeps behind it, and what it shows).
+    const trayRow = tr => {
+      const jn = trayJobOf(tr);
+      if (!jn) return null;
+      const it = fiberProp(tr.querySelector('[data-cy="dc-jt-job-appointment-cell"]'), 'dataItem') || {};
+      const ja = it.jobAppointment || {}, cu = it.customer || {}, jb = it.job || {}, lo = it.location || {};
+      const nameCell = tr.querySelector('[data-cy="dc-jt-customer-name-cell"]');
+      const techs = (Array.isArray(it.technicians) ? it.technicians : []).map(t => t && ({ Id: t.id != null ? t.id : t.technicianId, Name: norm(t.name || t.technicianName) })).filter(t => t && t.Id != null);
+      return {
+        Id: ja.id != null ? ja.id : null, JobId: jn.job, AppointmentNumber: jn.n,
+        Customer: norm(cu.name || (nameCell && nameCell.textContent)), CustomerId: cu.id || null,
+        Start: ja.start || null, End: ja.end || null, BusinessUnitId: jb.businessUnitId != null ? jb.businessUnitId : null,
+        Technicians: techs, TechnicianId: techs[0] ? techs[0].Id : 0, AppointmentStatus: norm(ja.status), Zip: zip5(lo.zip), City: norm(lo.city)
+      };
+    };
+    const trayCaption = () => {
+      const tabs = qa('[data-cy^="custom-tab-item-"]').filter(e => !/tooltip/.test(e.getAttribute('data-cy') || ''));
+      const t = tabs.find(e => e.getAttribute('aria-selected') === 'true' || !!e.querySelector('[aria-selected="true"]'));
+      if (!t) return '';
+      const b = t.matches('[aria-label]') ? t : t.querySelector('[aria-label]');
+      return norm((b && b.getAttribute('aria-label')) || t.textContent).replace(/\s*\d+$/, '');
+    };
+
+    // ---- The board's data, in the old board's shape ----
+    const vm = () => {
+      const k = kind();
+      if (k === 'old') return koVM();
+      if (k !== 'new' || !host()) return null;
+      return {
+        Date: day(),
+        Assignments: fresh() ? data.rows : [],
+        JobList: { View: { Caption: trayCaption() }, AllVisibleJobs: trayRowEls().map(trayRow).filter(Boolean) },
+        BusinessUnitFilter: { getIds: () => bus() }
+      };
+    };
+
+    // ---- Techs and teams ----
+    const techHeader = id => /^\d+$/.test(String(id)) ? q('[data-cy="ddb-technician-header-' + id + '"]') : null;
+    // The new board's techs ([{ id, name, team }], in its order), or null on the old board.
+    const techs = () => kind() === 'new' ? (fresh() ? data.techs.slice() : []) : null;
+    const teamOf = id => { const t = kind() === 'new' && data.techs.find(x => x.id === String(id)); return t && t.team ? t.team : null; };
+    // The teams in the board's order.
+    const teamOrder = () => kind() === 'new'
+      ? Array.from(new Set(data.techs.map(t => t.team).filter(Boolean)))
+      : Array.from(document.querySelectorAll('.team-name')).map(t => norm(t.textContent));
+
+    // ---- What was clicked ----
+    const jobOfBubble = b => {
+      const ja = fiberProp(b, 'jobAppointment');
+      if (ja && ja.jobId != null && /^\d+$/.test(String(ja.jobId))) return String(ja.jobId);
+      const a = b.getAttribute('data-job-appointment-id');
+      const r = a && data.rows.find(x => String(x.Id) === a);
+      return r && /^\d+$/.test(String(r.JobId)) ? String(r.JobId) : null;
+    };
+    // A job clicked: a bubble on the timeline or a row in the tray (the new board), or a bubble or a
+    // row in the job list (the old board). Returns the job number, or null.
+    const clickedJob = node => {
+      if (!node || !node.closest) return null;
+      const b = node.closest('[data-cy="wdb-job-appt-card"][data-job-appointment-id]');
+      if (b) return jobOfBubble(b);
+      const tr = node.closest('tr');
+      if (tr && tr.closest('[data-cy^="dc-jt-"][data-cy$="-table"]')) { const j = trayJobOf(tr); return j ? j.job : null; }
+      const a = node.closest('a.appointment[data-job-id]');
+      if (a) { const j = a.getAttribute('data-job-id'); return /^\d+$/.test(j || '') ? j : null; }   // job numbers only
+      const tr2 = node.closest('.job-list tr[class*="qa-job-"]');
+      const m = tr2 && /(?:^|\s)qa-job-(\d+)(?:\s|$)/.exec(String(tr2.className));
+      return m ? m[1] : null;
+    };
+    // A tech's name clicked. Returns the tech's ID (numbers only), or null.
+    const clickedTechId = node => {
+      const t = node && node.closest && (node.closest('[data-cy^="ddb-technician-header-"][data-technician-id]') || node.closest('.technician[data-technician-id]'));
+      const id = t ? t.getAttribute('data-technician-id') : null;
+      return /^\d+$/.test(id || '') ? id : null;
+    };
+
+    // ---- Highlights ----
+    // Marks each bubble and tray row with its job number (data-st-job), for the style sheets.
+    const retag = () => {
+      const r = root();
+      if (!r) return;
+      r.querySelectorAll('[data-cy="wdb-job-appt-card"][data-job-appointment-id]').forEach(b => {
+        const j = jobOfBubble(b);
+        if (j) { if (b.getAttribute('data-st-job') !== j) b.setAttribute('data-st-job', j); }
+        else if (b.hasAttribute('data-st-job')) b.removeAttribute('data-st-job');
+      });
+      trayRowEls().forEach(tr => {
+        const j = trayJobOf(tr), v = j ? j.job : '';
+        if (v) { if (tr.getAttribute('data-st-job') !== v) tr.setAttribute('data-st-job', v); }
+        else if (tr.hasAttribute('data-st-job')) tr.removeAttribute('data-st-job');
+      });
+    };
+    // A style sheet for highlights: on the page (the old board) and inside the new board.
+    const sheets = new Set();
+    const sheet = () => {
+      const outer = el('style');
+      (document.head || document.documentElement).appendChild(outer);
+      let inner = null, css = '';
+      const put = () => {
+        if (outer.textContent !== css) outer.textContent = css;
+        const r = root();
+        if (!r) return;
+        if (!inner || inner.getRootNode() !== r || !inner.isConnected) { if (inner) inner.remove(); inner = document.createElement('style'); r.appendChild(inner); }
+        if (inner.textContent !== css) inner.textContent = css;
+      };
+      const s = { set: t => { css = t || ''; put(); }, put, remove: () => { outer.remove(); if (inner) inner.remove(); sheets.delete(s); } };
+      sheets.add(s);
+      return s;
+    };
+
+    // ---- Keeping up with the new board ----
+    // While the Toolbox is open: bubbles and tray rows are re-marked as the board draws them, the style
+    // sheets follow the board if it's drawn again, and the day's data is read again when the day or
+    // the filter changes.
+    let observer = null, observed = null, queued = false, timer = null, lastKey = '', lastHash = kind() ? location.hash : null;
+    // At most every 150 ms: the board redraws often (its clock, scrolling), and marking is quick but not free.
+    const onMutate = () => {
+      if (queued) return;
+      queued = true;
+      setTimeout(() => { queued = false; retag(); }, 150);
+    };
+    const tick = () => {
+      if (kind()) lastHash = location.hash;
+      const r = root();
+      if (r !== observed) {
+        if (observer) observer.disconnect();
+        observer = null; observed = r;
+        if (r && typeof MutationObserver === 'function') {
+          observer = new MutationObserver(onMutate);
+          observer.observe(r, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['data-job-appointment-id', 'aria-selected'] });
+        }
+      }
+      if (r) {
+        sheets.forEach(s => s.put());
+        const d = day(), c = code(), f = decoded.get(c);
+        const key = d ? dayISO(d) + '|' + c + '|' + (f ? 'f' : '') : '';
+        if (key && key !== lastKey && !loading) { lastKey = key; load().catch(() => { lastKey = ''; }); }
+      }
+    };
+    const watch = () => { if (!timer) { timer = setInterval(tick, 1000); window.addEventListener('hashchange', tick); } tick(); };
+    const stop = () => {
+      if (timer) { clearInterval(timer); timer = null; window.removeEventListener('hashchange', tick); }
+      if (observer) observer.disconnect();
+      observer = null; observed = null;
+      Array.from(sheets).forEach(s => s.remove());
+      listeners.clear();
+    };
+    // Where to come back to after a run on other pages: the board as you left it.
+    const home = () => lastHash || '#/DispatchBoard';
+
+    // ---- Refreshing ----
+    // The new board's own Refresh button (same day and filters), then a fresh read of its data.
+    // false if the button isn't there.
+    const refresh = async () => {
+      const b = qa('[data-auto-sel="dis-wdb-refresh-btn"]').find(visible) || qa('button[aria-label="Refresh"]').find(visible);
+      if (!b) return false;
+      b.click();
+      await wait(400);
+      try { await load(true); } catch (e) {}
+      await wait(300);
+      return true;
+    };
+
+    // ---- A tech's row and menu (the new board) ----
+    // Scrolls the board until the tech's name is drawn (it only draws the rows on screen). Starts
+    // where they probably are (their place among the board's techs), then looks from the top.
+    const findTech = async id => {
+      let h = techHeader(id);
+      if (h) return h;
+      const vp = q('[data-testid="timeline-scroll-viewport"]');
+      if (!vp) return null;
+      const at = async y => { vp.scrollTop = Math.max(0, Math.round(y)); await wait(120); return techHeader(id); };
+      const i = data.techs.findIndex(t => t.id === String(id));
+      if (i >= 0 && data.techs.length) { h = await at(i / data.techs.length * vp.scrollHeight - vp.clientHeight / 2); if (h) return h; }
+      const step = Math.max(150, vp.clientHeight - 60);
+      for (let y = 0; y <= vp.scrollHeight; y += step) { h = await at(y); if (h) return h; }
+      return null;
+    };
+    // Opens a tech's right-click menu and returns the item with that data-cy (tmi-send-message…),
+    // or null. A tech who isn't on the board gives 'missing'.
+    const techMenuItem = async (id, cy) => {
+      const h = await findTech(id);
+      if (!h) return 'missing';
+      h.scrollIntoView({ block: 'center' });
+      await wait(150);
+      const h2 = techHeader(id) || h;
+      const nameEl = Array.from(h2.querySelectorAll('p')).find(p => !p.hasAttribute('data-cy') && norm(p.textContent)) || h2;
+      const r = nameEl.getBoundingClientRect();
+      nameEl.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, composed: true, cancelable: true, button: 2, buttons: 2, clientX: r.left + 5, clientY: r.top + 5, view: window }));
+      return until(() => { const m = q('[data-cy="ddb-technician-menu"]'); const x = m && m.querySelector('[data-cy="' + cy + '"]'); return x && visible(x) ? x : null; }, 3000);
+    };
+    const closeMenu = async () => {
+      const m = q('[data-cy="ddb-technician-menu"]');
+      if (!m) return true;
+      (m.querySelector('[role=menuitem]') || m).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, composed: true }));
+      return !!(await until(() => !q('[data-cy="ddb-technician-menu"]'), 1500, 100));
+    };
+    // ServiceTitan's Activity Center (the message panel): on the page (old board) or inside the new board.
+    const findIn = (r, re) => r ? Array.from(r.querySelectorAll('*')).find(e => re.test(e.tagName)) || null : null;
+
+    return {
+      kind, on: () => !!kind(), isNew: () => kind() === 'new', host, root, q, qa, fiberProp, evTarget,
+      day, filter, bus, load, ready, onData, vm, techs, teamOf, teamOrder, techHeader,
+      clickedJob, clickedTechId, retag, sheet, watch, stop, home, refresh, findTech, techMenuItem, closeMenu, findIn,
+      trayRowEls, trayJobOf
+    };
+  })();
+
   // Customer cards: customers in sections (Needs a look, Confirmed, No reply…), one card each with
   // their name, job numbers, full phone number, a status line and anything they replied, plus
   // buttons to copy their name or number and to open their conversation in a new tab. A section
@@ -666,7 +1028,8 @@
   };
   const putBack = snap => snap && snap.forEach(([e, top, left]) => { if (e.scrollTop !== top) e.scrollTop = top; if (e.scrollLeft !== left) e.scrollLeft = left; });
   const pressGuard = e => {
-    if (!onBoard() || panel.contains(e.target) || !pickers.some(p => p.active() && p.hit(e.target))) return;
+    const t = evTarget(e);
+    if (!onBoard() || panel.contains(t) || !pickers.some(p => p.active() && p.hit(t))) return;
     if (e.type === 'click') {
       // Let the tool handle the click; undo any jump after the page has had its turn.
       const snap = pressSnap; pressSnap = null;
@@ -674,7 +1037,7 @@
       setTimeout(() => putBack(snap), 150);
       return;
     }
-    if (e.type === 'pointerdown') pressSnap = scrollersOf(e.target);
+    if (e.type === 'pointerdown') pressSnap = scrollersOf(t);
     if (e.type === 'mousedown') e.preventDefault();   // no focus change, no text selection
     e.stopPropagation(); e.stopImmediatePropagation();
   };
@@ -684,10 +1047,9 @@
   // A job on the board's timeline: its customer, and the tech's first name (for {tech}).
   const timelineJob = j => {
     try {
-      const jl = document.querySelector('.job-list');
-      const vm = jl && window.ko && window.ko.dataFor(jl);
-      const list = (vm && window.ko.unwrap(vm.Assignments)) || [];
-      const u = window.ko.unwrap;
+      const vm = board.vm();
+      const list = (vm && kun(vm.Assignments)) || [];
+      const u = kun;
       const a = list.find(x => String(u(x.JobId)) === String(j));
       if (!a) return null;
       const tech = norm(u(a.FirstName) || u(a.TechnicianName)).split(' ')[0] || '';
@@ -713,12 +1075,11 @@
   const jobPicker = opts => {
     const picked = new Map();   // job number -> label (usually the customer's name)
     let picking = false, enabled = true;
-    const style = el('style');
-    (document.head || document.documentElement).appendChild(style);
+    const style = board.sheet();
     const labelOf = j => {
       const t = timelineJob(j); if (t && t.customer) return t.customer;
       const l = listJob(j); if (l && l.customer) return l.customer;
-      const a = document.querySelector('a.appointment[data-job-id="' + j + '"]');
+      const a = document.querySelector('a.appointment[data-job-id="' + j + '"]') || board.q('[data-cy="wdb-job-appt-card"][data-st-job="' + j + '"]');
       return a ? norm(a.innerText || a.textContent).slice(0, 38) : '';
     };
     const say = t => opts.say && opts.say(t);
@@ -741,7 +1102,7 @@
 
     const paint = () => {
       const ids = Array.from(picked.keys());
-      style.textContent = opts.shown() ? pickedCss(ids, opts.color, opts.soft) + (opts.css && ids.length ? opts.css(ids) : '') : '';
+      style.set(opts.shown() ? pickedCss(ids, opts.color, opts.soft) + (opts.css && ids.length ? opts.css(ids) : '') : '');
     };
     const HINT = opts.hint || 'Click jobs on the board, or in the Unassigned / Hold list at the bottom, to add them. Click again to take one off.';
     const render = () => {
@@ -791,14 +1152,14 @@
       if (opts.busy()) return;
       let caption = '', jobs = [];
       try {
-        const jl = document.querySelector('.job-list');
-        const vm = jl && window.ko && window.ko.dataFor(jl);
+        const vm = board.vm();
         const JL = vm && vm.JobList;
-        const view = JL && window.ko.unwrap(JL.View);
+        const view = JL && kun(JL.View);
         caption = (view && view.Caption) || '';
-        jobs = ((JL && window.ko.unwrap(JL.AllVisibleJobs)) || []).map(x => String(window.ko.unwrap(x.JobId)));
+        jobs = ((JL && kun(JL.AllVisibleJobs)) || []).map(x => String(kun(x.JobId)));
       } catch (e) {}
       if (!jobs.length) document.querySelectorAll('.job-list tr[class*="qa-job-"]').forEach(tr => { const j = clickedJob(tr); if (j && visible(tr)) jobs.push(j); });
+      jobs = jobs.filter((j, i) => jobs.indexOf(j) === i);
       if (!jobs.length) { say('The list at the bottom of the board is empty. Open a tab there (Unassigned, Hold, …) first.'); return; }
       let n = 0;
       jobs.forEach(j => { if (/^\d+$/.test(j) && add(j)) n++; });
@@ -812,9 +1173,10 @@
       render();
     };
     const onClick = e => {
-      if (!picking || opts.busy() || !onBoard() || !opts.shown() || panel.contains(e.target)) return;
-      const j = clickedJob(e.target);
-      const tech = !j && opts.onTech ? clickedTechId(e.target) : null;
+      const t = evTarget(e);
+      if (!picking || opts.busy() || !onBoard() || !opts.shown() || panel.contains(t)) return;
+      const j = clickedJob(t);
+      const tech = !j && opts.onTech ? clickedTechId(t) : null;
       if (!j && !tech) return;
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       if (tech) { opts.onTech(tech); return; }
@@ -914,9 +1276,11 @@
     const checkBoard = async manual => {
       // If a check is already running, show its result when it finishes.
       if (checking) { if (manual) manualWaiting = true; return; }
-      if (!/dispatchboard/i.test(location.hash)) { if (manual) { issues.size ? render() : flashOk('Open the Dispatch board to check it.'); } return; }
+      manualCheck = !!manual;
+      if (!onBoard()) { if (manual) { issues.size ? render() : flashOk('Open the Dispatch board to check it.'); } return; }
       checking = true;
       try {
+        if (board.isNew()) { await checkNewBoard(); return; }
         const techEls = await until(() => { const t = document.querySelectorAll('.technician[data-technician-id]'); return t.length ? t : null; }, 12000, 500);
         Array.from(issues.keys()).forEach(k => { if (k.indexOf('board|') === 0) issues.delete(k); });
         const BOARD = 'Job Notifications & Tech Messages';
@@ -950,6 +1314,28 @@
         if ((manual || manualWaiting) && !issues.size) flashOk('✅ Everything the Toolbox needs is where it should be.');
       } finally { checking = false; manualWaiting = false; }
     };
+    // The new board: the pieces the tools look for inside it (waiting for it to finish loading).
+    const checkNewBoard = async () => {
+      const B = 'Dispatch board';
+      const loaded = await until(() => board.root() && board.qa('[data-cy^="ddb-technician-header-"]').length ? true : null, 15000, 500);
+      Array.from(issues.keys()).forEach(k => { if (k.indexOf('board|') === 0) issues.delete(k); });
+      if (!board.host()) flag(B, 'can\'t find the new Dispatch board on the page', '[data-mfe-name=servicetitan-dispatch-center]', 'board');
+      else if (!board.root()) flag(B, 'can\'t look inside the new Dispatch board', 'shadowRoot', 'board');
+      else if (!loaded) flag(B, 'can\'t find the techs on the Dispatch board', '[data-cy^=ddb-technician-header-]', 'board');
+      else {
+        if (!board.q('[data-auto-sel="dc-header-date-picker"]')) flag(B, 'can\'t read which day the board shows', '[data-auto-sel=dc-header-date-picker]', 'board');
+        else if (!board.day()) flag(B, 'can\'t read the day on the board\'s date button', '[data-auto-sel=dc-header-date-picker]', 'board');
+        const h = board.qa('[data-cy^="ddb-technician-header-"]')[0];
+        if (h && !h.getAttribute('data-technician-id')) flag(B, 'tech names are missing their tech number', '[data-cy^=ddb-technician-header-][data-technician-id]', 'board');
+        const bubbles = board.qa('[data-cy="wdb-job-appt-card"]');
+        if (bubbles.length && !bubbles.some(x => /^\d+$/.test(x.getAttribute('data-job-appointment-id') || ''))) flag(B, 'job bubbles are missing their appointment number', '[data-cy=wdb-job-appt-card][data-job-appointment-id]', 'board');
+        try { await board.ready(true); }
+        catch (e) { if (!st.isSignedOut(e)) flag(B, 'can\'t read the board\'s day of jobs (' + errText(e) + ')', '/Dispatch/Data, /dispatch-center/decoding', 'board'); }
+      }
+      render();
+      if ((manualCheck || manualWaiting) && !issues.size) flashOk('✅ Everything the Toolbox needs is where it should be.');
+    };
+    let manualCheck = false;
     let okTimer = null;
     const flashOk = text => {
       barText.textContent = text; barBtns.textContent = '';
@@ -969,13 +1355,13 @@
   const boardData = (() => {
     // Unwraps a Knockout observable; leaves anything else (including plain functions) alone.
     const un = v => { try { const k = window.ko; return k && k.isObservable && k.isObservable(v) ? v() : v; } catch (e) { return undefined; } };
-    const vm = () => { try { const jl = document.querySelector('.job-list'); return jl && window.ko && typeof window.ko.dataFor === 'function' ? window.ko.dataFor(jl) || null : null; } catch (e) { return null; } };
-    const day = () => { try { const d = un(vm().Date); return d instanceof Date && !isNaN(d) ? d : null; } catch (e) { return null; } };
+    const vm = () => board.vm();
+    const day = () => board.day();
     const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
     const pad2 = n => String(n).padStart(2, '0');
     const dayISO = d => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + 'T00:00:00';
     // The Business Units the board is filtered to (the Unassigned and Hold lists use the same filter).
-    const bus = () => { try { const f = vm().BusinessUnitFilter; const ids = f && typeof f.getIds === 'function' ? f.getIds() : []; return (ids || []).map(Number).filter(Boolean); } catch (e) { return []; } };
+    const bus = () => board.bus();
     // Appointment status 5 is Canceled (checked on the live account, Oct 2026). Words are checked
     // too, in case it comes as text.
     const canceled = x => {
@@ -995,6 +1381,7 @@
     const NO_TEAM = 'Other (team not showing)';
     const liveTeam = id => {
       if (!/^\d+$/.test(String(id))) return null;
+      if (board.isNew()) return board.teamOf(id);   // the new board's data has every tech's team
       const row = document.getElementById('team-timeline-row-' + id) || document.querySelector('.technician[data-technician-id="' + id + '"]');
       const tc = row && row.closest('.team-container');
       let h = tc && tc.previousElementSibling;
@@ -1068,7 +1455,7 @@
         if (ts.size > 1) ts.delete(NO_TEAM);
         ts.forEach(t => count.set(t, (count.get(t) || 0) + 1));
       });
-      const order = Array.from(document.querySelectorAll('.team-name')).map(t => norm(t.textContent));
+      const order = board.teamOrder();
       const rank = t => t === NO_TEAM ? 1e6 : (order.indexOf(t) < 0 ? 1e5 : order.indexOf(t));
       return Array.from(count.entries()).map(([name, n]) => ({ name, n })).sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
     };
@@ -1080,6 +1467,8 @@
     // Returns { jobs: [{ jobId, customer, customerId, tech, day, teams, unassigned }], onTimeline,
     // unassigned, canceled }. teams: the job's teams (timeline jobs only).
     const whole = async tool => {
+      if (!day()) throw new Error('open the Dispatch board first');
+      await board.ready();
       const v = vm(), d = day();
       if (!v || !d) throw new Error('open the Dispatch board first');
       const jobs = [], seen = new Set(), byJob = new Map();
@@ -1718,13 +2107,16 @@
     // The day the board shows, from the board itself (e.g. "Wed, Oct 7, 2026").
     const boardDate = () => {
       try {
-        const d = window.ko.unwrap(window.ko.dataFor(document.querySelector('.job-list')).Date);
+        const d = board.day();
         if (d && typeof d.toLocaleDateString === 'function') return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
       } catch (e) {}
       return (document.body.innerText.match(/(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [A-Z][a-z]{2} \d+, \d{4}/) || ['the day shown'])[0];
     };
     const techsOnBoard = () => {
       const seen = new Map();
+      // The new board only draws the techs on screen, so its techs come from the board's data.
+      const nt = board.techs();
+      if (nt) { nt.forEach(t => { if (/^\d+$/.test(t.id) && t.name && !seen.has(t.id)) seen.set(t.id, t.name); }); return seen; }
       document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
         const id = t.getAttribute('data-technician-id');
         if (seen.has(id) || !/^\d+$/.test(id || '')) return;
@@ -1752,6 +2144,7 @@
     const techJobsWait = async techId => {
       let ids = techJobs(techId);
       if (ids.length) return ids;
+      if (board.isNew()) { try { await board.ready(true); } catch (e) {} return techJobs(techId); }   // the board's data has every job
       const row = document.getElementById('team-timeline-row-' + techId);
       if (row) row.scrollIntoView({ block: 'center' });
       let lastKey = '', calm = 0;
@@ -1847,8 +2240,8 @@
     const OFF_CSS = ids => {
       const off = ids.filter(j => { const s = states.get(j); return s && s.on === false; });
       return !off.length ? '' :
-        off.map(j => 'a.appointment[data-job-id="' + j + '"]').join(',') + '{outline:3px dashed #616161 !important;outline-offset:-3px !important;box-shadow:0 0 0 3px rgba(97,97,97,.25) !important}' +
-        off.map(j => '.job-list tr.qa-job-' + j + ' > td').join(',') + '{background:rgba(97,97,97,.16) !important;box-shadow:inset 0 2px 0 #616161,inset 0 -2px 0 #616161 !important}';
+        off.map(j => 'a.appointment[data-job-id="' + j + '"],[data-cy="wdb-job-appt-card"][data-st-job="' + j + '"]').join(',') + '{outline:3px dashed #616161 !important;outline-offset:-3px !important;box-shadow:0 0 0 3px rgba(97,97,97,.25) !important}' +
+        off.map(j => '.job-list tr.qa-job-' + j + ' > td,tr[data-st-job="' + j + '"] > td').join(',') + '{background:rgba(97,97,97,.16) !important;box-shadow:inset 0 2px 0 #616161,inset 0 -2px 0 #616161 !important}';
     };
     const picker = jobPicker({
       color: '#ef6c00', soft: 'rgba(239,108,0,.22)',
@@ -2008,9 +2401,11 @@
       });
       techSel.value = '';
     };
-    // The list is read again when you point at it or tab to it, so it matches the board.
+    // The list is read again when you point at it or tab to it, so it matches the board, and when
+    // the new board's day of data arrives.
     techSel.addEventListener('mouseenter', () => fillTechs());
     techSel.addEventListener('focus', () => fillTechs());
+    board.onData(() => fillTechs());
     techSel.onchange = async () => {
       const id = techSel.value;
       techSel.value = '';
@@ -2355,6 +2750,7 @@
 
     // ---- Reading the board ----
     const liveTeamOf = id => {
+      if (board.isNew()) return board.teamOf(id);   // the new board's data has every tech's team
       const row = document.getElementById('team-timeline-row-' + id);
       const tc = row && row.closest('.team-container');
       let h = tc && tc.previousElementSibling;
@@ -2379,6 +2775,22 @@
     const boardTechs = () => {
       const out = new Map();
       teamMapDirty = false;
+      // The new board only draws the techs on screen, so everyone comes from the board's data (its
+      // day, branches and teams). A board filter leaves techs out of the data, so no one is "hidden".
+      const nt = board.techs();
+      if (nt) {
+        const vm = board.vm(), jobCount = new Map();
+        ((vm && vm.Assignments) || []).forEach(a => {
+          const ids = new Set([String(a.TechnicianId)].concat((a.Technicians || []).map(x => x && String(x.Id))));
+          ids.forEach(id => { if (/^\d+$/.test(id || '')) jobCount.set(id, (jobCount.get(id) || 0) + 1); });
+        });
+        nt.forEach(t => {
+          if (!/^\d+$/.test(t.id) || !t.name || out.has(t.id)) return;
+          out.set(t.id, { id: t.id, name: t.name, team: teamOf(t.id), jobs: jobCount.get(t.id) || 0, hidden: false });
+        });
+        if (teamMapDirty) set(K.teamMap, JSON.stringify(teamMap));
+        return out;
+      }
       // Job bubbles per tech, counted in one pass over the board.
       const jobCount = new Map();
       document.querySelectorAll('a.appointment[data-technician-id][data-job-id]').forEach(a => {
@@ -2414,7 +2826,8 @@
       if (acCache && acCache.isConnected) return acCache;
       acCache = null;
       if (!fresh && Date.now() - acLastMiss < 500) return null;
-      acCache = Array.from(document.querySelectorAll('*')).find(e => /^SERVICETITAN-ACTIVITY-CENTER/i.test(e.tagName)) || null;
+      // On the page (the old board), or inside the new board.
+      acCache = board.findIn(document, /^SERVICETITAN-ACTIVITY-CENTER/i) || board.findIn(board.root(), /^SERVICETITAN-ACTIVITY-CENTER/i);
       if (!acCache) acLastMiss = Date.now();
       return acCache;
     };
@@ -2437,7 +2850,9 @@
       if (!box || !host) return false;
       const r = box.getBoundingClientRect();
       if (r.width < 20 || r.bottom > innerHeight || r.top < 0) return false;
-      const topEl = document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2).find(e => !panel.contains(e));
+      // Inside the new board, ask the board what's at that spot (the page would just say "the board").
+      const where = host.getRootNode && host.getRootNode().elementsFromPoint ? host.getRootNode() : document;
+      const topEl = where.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2).find(e => !panel.contains(e));
       return topEl === host;
     };
     // Moves the Toolbox panel to the left of the message panel so it doesn't cover it.
@@ -2455,7 +2870,29 @@
     };
     // A missing ServiceTitan piece (not a one-off glitch): flag it and stop the whole run.
     const changed = (what, detail) => { health.flag('Tech Messages', what, detail); return { changed: true, what }; };
+    // The new board: right-click the tech's name (scrolling to it first), then Send Message.
+    const openChatForNew = async t => {
+      let item = await board.techMenuItem(t.id, 'tmi-send-message');
+      if (item === 'missing') return board.techs() && board.techs().some(x => x.id === String(t.id)) ? changed('can\'t find the tech\'s name on the board', '[data-cy=ddb-technician-header-<id>]') : 'not on the board';
+      if (!item) { await board.closeMenu(); await wait(500); item = await board.techMenuItem(t.id, 'tmi-send-message'); }   // one retry for a slow board
+      if (!item || item === 'missing') {
+        if (board.q('[data-cy="ddb-technician-menu"]')) { await board.closeMenu(); return changed('the tech menu has no "Send Message" option', '[data-cy=tmi-send-message]'); }
+        return changed('the tech menu didn\'t open when right-clicking a tech\'s name', '[data-cy=ddb-technician-menu]');
+      }
+      // Only ever the item marked Send Message, and only if it says so.
+      if (!/^send message$/i.test(norm(item.textContent))) { await board.closeMenu(); return changed('the tech menu\'s Send Message item says something else', '[data-cy=tmi-send-message]'); }
+      item.click();
+      const ok = await until(() => chatBox() && panelName().toLowerCase() === t.name.toLowerCase(), 8000);
+      if (!ok) {
+        if (!acHost(true)) return changed('can\'t find the message panel', 'SERVICETITAN-ACTIVITY-CENTER-*');
+        if (!chatBox()) return changed('can\'t find the message box', '[data-cy=technician-chat-input]');
+        if (!panelName()) return changed('can\'t read whose messages are open', 'Activity Center h3');
+        return 'panel showed "' + panelName() + '" instead';
+      }
+      return null;
+    };
     const openChatFor = async t => {
+      if (board.isNew()) return openChatForNew(t);
       // A board filter can leave a hidden copy of a tech on the page, so use the copy that's showing.
       const copies = Array.from(document.querySelectorAll('[id="team-technician-' + t.id + '"]'));
       const el2 = copies.find(techShowing) || copies[0];
@@ -2592,18 +3029,14 @@
     // While it's on, clicking a tech's name on the board adds them (or takes them off) instead
     // of opening their menu. Only techs your 🛡️ settings allow can be added.
     let picking = false;
-    const techStyle = el('style');
-    (document.head || document.documentElement).appendChild(techStyle);
+    const techStyle = board.sheet();
     const paintTechs = () => {
       const ids = msgsPane.style.display !== 'none' ? Array.from(selected).filter(id => /^\d+$/.test(id)) : [];
-      techStyle.textContent = ids.length ? ids.map(id => '.technician[data-technician-id="' + id + '"]').join(',') +
-        '{outline:3px solid #6a1b9a !important;outline-offset:-3px !important;background:rgba(106,27,154,.14) !important}' : '';
+      techStyle.set(ids.length ? ids.map(id => '.technician[data-technician-id="' + id + '"],[data-cy="ddb-technician-header-' + id + '"]').join(',') +
+        '{outline:3px solid #6a1b9a !important;outline-offset:-3px !important;background:rgba(106,27,154,.14) !important}' : '');
     };
-    const clickedTech = target => {
-      const t = target && target.closest && target.closest('.technician[data-technician-id]');
-      const id = t ? t.getAttribute('data-technician-id') : null;
-      return /^\d+$/.test(id || '') ? id : null;   // tech IDs are numbers; anything else is ignored
-    };
+    // A tech's name clicked (either board). Tech IDs are numbers; anything else is ignored.
+    const clickedTech = target => clickedTechId(target);
     const setPicking = on => {
       if (on && !teamRules) { openSafety(); return; }
       picking = !!on && !running;
@@ -2615,8 +3048,9 @@
       if (picking) say('Click techs\' names on the board to add them. Click again to take one off.');
     };
     const onTechClick = e => {
-      if (!picking || running || !onBoard() || panel.contains(e.target) || views.main.style.display === 'none') return;
-      const id = clickedTech(e.target);
+      const tg = evTarget(e);
+      if (!picking || running || !onBoard() || panel.contains(tg) || views.main.style.display === 'none') return;
+      const id = clickedTech(tg);
       if (!id) return;
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       const t = boardTechs().get(id);
@@ -2854,6 +3288,8 @@
       const homePos = { left: panel.style.left, right: panel.style.right, saved: get('stPos') };
       dodged = false;
       try {
+        // The new board: a fresh read of who's on it (the check before each person uses it).
+        if (board.isNew()) { try { await board.ready(true); } catch (e) { if (st.isSignedOut(e)) throw e; } }
         for (let n = 0; n < people.length; n++) {
           if (stopRun) { add('Stopped. ' + (people.length - n) + ' not messaged.'); break; }
           const planned = people[n];
@@ -2940,8 +3376,13 @@
     msgsPane.appendChild(pane);
     sub('main');
     return {
-      refresh: () => { if (!running) { sub('main'); renderMain(); } paintTechs(); },
-      leave: () => { if (picking) setPicking(false); techStyle.textContent = ''; },
+      refresh: () => {
+        if (!running) { sub('main'); renderMain(); }
+        paintTechs();
+        // The new board's techs come from its data: show them once it's read.
+        if (board.isNew()) board.ready().then(() => { if (!running && msgsPane.style.display !== 'none' && views.main.style.display !== 'none') renderMain(); }, () => {});
+      },
+      leave: () => { if (picking) setPicking(false); techStyle.set(''); },
       isRunning: () => running,
       stop: requestStop,
       cleanup: () => { window.removeEventListener('click', onTechClick, true); techStyle.remove(); }
@@ -3235,7 +3676,7 @@
       stopBtn.disabled = false; stopBtn.textContent = 'Stop'; stopBtn.style.display = 'inline-block';
       copyBtn.textContent = 'Copy results';
       updateButtons();
-      const home = onBoard() ? location.hash : '#/DispatchBoard';
+      const home = onBoard() ? location.hash : board.home();
       const results = new Map();
       const record = (it, r, retry) => { results.set(it.job, r); add('#' + it.job + ': ' + (retry ? 'retry: ' : '') + r.text); };
       const verb = mode === 'check' ? 'Checking' : mode === 'putback' ? 'Putting back' : 'Changing';
@@ -3489,15 +3930,14 @@
     };
 
     // ---------- Reading the board ----------
-    const boardVM = () => { const jl = document.querySelector('.job-list'); return jl ? vmOf(jl) : null; };
+    const boardVM = () => board.vm();
     const boardDateISO = () => {
-      try { const d = un(boardVM().Date); if (d && typeof d.toISOString === 'function') return d.toISOString(); } catch (e) {}
-      const d = new Date(); d.setHours(0, 0, 0, 0); return d.toISOString();
+      const d = board.day();
+      if (d && typeof d.toISOString === 'function') return d.toISOString();
+      const t = new Date(); t.setHours(0, 0, 0, 0); return t.toISOString();
     };
     // The Business Units the board is filtered to (the Hold list uses the same filter).
-    const boardBUs = () => {
-      try { const f = boardVM().BusinessUnitFilter; const ids = f && typeof f.getIds === 'function' ? f.getIds() : []; return (ids || []).map(Number).filter(Boolean); } catch (e) { return []; }
-    };
+    const boardBUs = () => board.bus();
     const buNames = ids => {
       const all = (window.App && window.App.Data && window.App.Data.BusinessUnits) || [];
       return ids.map(id => (all.find(b => b.Id === id) || {}).Name).filter(Boolean);
@@ -3513,6 +3953,7 @@
     // The Hold list, 500 at a time: the first page says how many there are, then the rest load
     // a few at a time.
     const loadHolds = async () => {
+      await board.filter().catch(() => null);   // the new board: its branches (from the address)
       const ids = boardBUs();
       const date = boardDateISO();
       const PAGE = 500;
@@ -3557,7 +3998,7 @@
     let everyoneLoading = false;
     const pad2 = n => String(n).padStart(2, '0');
     const localDayISO = d => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + 'T00:00:00';
-    const boardDay = () => { try { const d = un(boardVM().Date); return d instanceof Date && !isNaN(d) ? d : null; } catch (e) { return null; } };
+    const boardDay = () => { const d = board.day(); return d instanceof Date && !isNaN(d) ? d : null; };
     const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
     // Appointment status 5 is Canceled (checked on the live account, Oct 2026). Words are checked
     // too, in case it comes as text.
@@ -4114,7 +4555,7 @@
     };
     const openChat = async (num, jobId) => {
       const want = '#/ChatCenter/' + num;
-      if (location.hash.split('?')[0] === want) { goTo('#/DispatchBoard'); await wait(800); }
+      if (location.hash.split('?')[0] === want) { goTo(board.home()); await wait(800); }
       goTo(want + (jobId ? '?jobid=' + jobId : ''));
       const c = await until(() => chatFor(num), 15000, 100);
       if (!c) return null;
@@ -4307,7 +4748,7 @@
       if (!m) { sub('main'); return; }
       running = true; stopRun = false; lock = TOOL;
       const auto = mode === 'auto';
-      const home = onBoard() ? location.hash : '#/DispatchBoard';
+      const home = onBoard() ? location.hash : board.home();
       runLog.textContent = ''; runMsg.textContent = '';
       stopBtn.disabled = false; stopBtn.textContent = 'Stop'; stopBtn.style.display = 'inline-block';
       doneBtn.style.display = 'none'; copyBtn.textContent = 'Copy results';
@@ -4572,6 +5013,7 @@
     // Every appointment on the board's day (timeline and the whole Unassigned list), canceled ones
     // left out: [{ apptId, jobId, customer, customerId, confirmed }].
     const dayAppts = async () => {
+      await board.ready();   // the new board: its day of data
       const vm = boardVM(), day = boardDay();
       if (!vm || !day) throw new Error('open the Dispatch board first');
       const out = new Map();
@@ -4946,14 +5388,14 @@
     const hasId = (list, id) => list.some(x => S(x) === S(id));
 
     // ---------- The board ----------
-    const boardVM = () => { try { const jl = document.querySelector('.job-list'); return jl && window.ko ? window.ko.dataFor(jl) || null : null; } catch (e) { return null; } };
-    const boardDay = () => { const vm = boardVM(); const d = vm && u(vm.Date); return d instanceof Date && !isNaN(d) ? d : null; };
+    const boardVM = () => board.vm();
+    const boardDay = () => { const d = board.day(); return d instanceof Date && !isNaN(d) ? d : null; };
     const sameDay = (a, b) => !!(a && b) && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
     const pad = n => String(n).padStart(2, '0');
     const dayISO = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T00:00:00';
     const dayText = d => d ? d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'the day shown';
     const toDate = v => { v = u(v); if (v == null || v === '') return null; const d = v instanceof Date ? v : new Date(v); return isNaN(d) ? null : d; };
-    const boardBUs = () => { try { const f = boardVM().BusinessUnitFilter; const ids = f && typeof f.getIds === 'function' ? f.getIds() : []; return (ids || []).map(Number).filter(Boolean); } catch (e) { return []; } };
+    const boardBUs = () => board.bus();
     const buName = id => { try { const b = ((window.App && window.App.Data && window.App.Data.BusinessUnits) || []).find(x => Number(x.Id) === Number(id)); if (b && b.Name) return norm(b.Name); } catch (e) {} return 'another branch'; };
     const otherBranch = id => { const ids = boardBUs(); return !!(ids.length && id != null && ids.indexOf(Number(id)) < 0); };
     const skillsOn = () => { try { return !(window.App && window.App.Data && window.App.Data.EnableSkillsManagement === false); } catch (e) { return true; } };
@@ -4992,6 +5434,7 @@
     };
     // The whole Unassigned list for the day the board shows (all pages), for your board's branches.
     const loadUnassigned = async () => {
+      await board.ready();   // the new board: its branches and day of data
       const day = boardDay();
       if (!day) throw new Error('Open the Dispatch board first.');
       const PAGE = 500;
@@ -5385,6 +5828,11 @@
       if (busy) return;
       if (lock) return say('Wait for ' + lock + ' to finish first.');
       if (!onBoard()) return say('Open the Dispatch board first.');
+      // The new board: a fresh read of its day (it isn't kept up to the second like the old board's).
+      if (board.isNew() && m !== 'putback') {
+        say('Reading the board...');
+        try { await board.ready(true); } catch (e) { return say('⚠️ Couldn\'t read the board: ' + errText(e)); }
+      }
       let day = boardDay();
       let list = [], missing = [];
       if (m === 'putback') {
@@ -5586,6 +6034,12 @@
     // ---------- The board catching up ----------
     // Jobs from a run that the board (on the day it shows) doesn't show with their new techs yet.
     const boardBehind = runList => {
+      // The new board: a bubble it's drawn for a job, on a tech the job no longer has. (Bubbles
+      // it hasn't drawn can't be checked; ServiceTitan's own reading already confirmed the change.)
+      if (board.isNew()) {
+        const cards = board.qa('[data-cy="wdb-job-appt-card"][data-job-appointment-id]');
+        return runList.filter(z => z.after && cards.some(c => c.getAttribute('data-job-appointment-id') === S(z.apptId) && !hasId(z.after, c.getAttribute('data-technician-id'))));
+      }
       const rows = dayRows();
       return runList.filter(z => {
         if (!z.after) return false;
@@ -5599,6 +6053,7 @@
     // same reload the board does itself; keeps the day and filters). Waits until it's done.
     // Returns false if it couldn't (then the run says to press F5).
     const refreshBoard = async () => {
+      if (board.isNew()) return board.refresh();   // its Refresh button (same day and filters)
       const vm = boardVM();
       if (!vm || typeof vm.refreshData !== 'function') return false;
       // The board skips its refresh while one of its menus is open (and then stays "refreshing").
@@ -5869,6 +6324,8 @@
             if (!behind.length) add('Refreshed the board to show the changes.');
           }
           if (behind.length) add('The board hasn\'t caught up yet on ' + plural(behind.length, 'job') + '. ServiceTitan has the change; refresh the page (F5) if the board doesn\'t update in a moment.');
+
+          if (board.isNew()) board.load(true).catch(() => {});   // the tools' copy of the new board's day
         }
         if (lastRun.length) health.clear(TOOL);
         say('Done: ' + summary + '.');
@@ -6146,8 +6603,11 @@
     const miText = n => (n < 10 ? n.toFixed(1) : String(Math.round(n))) + ' mi';
 
     // ---------- The board ----------
-    const boardVM = () => { try { const jl = document.querySelector('.job-list'); return jl && window.ko ? window.ko.dataFor(jl) || null : null; } catch (e) { return null; } };
-    const boardBUs = () => { try { const f = boardVM().BusinessUnitFilter; const ids = f && typeof f.getIds === 'function' ? f.getIds() : []; return (ids || []).map(Number).filter(Boolean); } catch (e) { return []; } };
+    const boardVM = () => board.vm();
+    // The board's branches. The new board keeps them in its address as a code, read from
+    // ServiceTitan once (branchesNow waits for that).
+    const boardBUs = () => board.bus();
+    const branchesNow = async () => { await board.filter().catch(() => null); return board.bus(); };
     const pad = n => String(n).padStart(2, '0');
     const dayISO = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T00:00:00';
     const dayKey = d => dayISO(d).slice(0, 10);
@@ -6201,7 +6661,7 @@
       return z ? { zip: z, why: 'from home' + (town ? ' (' + town + ')' : ' (' + z + ')') } : null;
     };
     const pointOf = (at, points) => !at ? null : at.lat != null ? { lat: at.lat, lon: at.lon } : points.get(at.zip) || null;
-    const loadBoard = (day, tool) => st.boardTechs(dayISO(day), boardBUs()).catch(e => {
+    const loadBoard = async (day, tool) => st.boardTechs(dayISO(day), await branchesNow()).catch(e => {
       if (e && e.kind === 'bad') health.flag(tool || TOOL, 'can\'t read where the techs are', '/Dispatch/Data');
       throw e;
     });
@@ -6423,9 +6883,8 @@
     // ---------- Picking a job on the board ----------
     let picking = false;
     const shown = () => nearPane.style.display !== 'none';
-    const style = el('style');
-    (document.head || document.documentElement).appendChild(style);
-    const paint = () => { style.textContent = shown() && tab === 'near' && last && last.jobId ? pickedCss([last.jobId], '#00796b', 'rgba(0,121,107,.22)') : ''; };
+    const style = board.sheet();
+    const paint = () => { style.set(shown() && tab === 'near' && last && last.jobId ? pickedCss([last.jobId], '#00796b', 'rgba(0,121,107,.22)') : ''); };
     const setPicking = on => {
       picking = !!on;
       pickBtn.style.background = picking ? '#00796b' : '#fff';
@@ -6434,8 +6893,9 @@
       if (picking) say(onBoard() ? 'Click a job on the board, or in the Unassigned / Hold list at the bottom.' : 'Open the Dispatch board to pick a job there.');
     };
     const onClick = e => {
-      if (!picking || !onBoard() || !shown() || panel.contains(e.target)) return;
-      const j = clickedJob(e.target);
+      const tg = evTarget(e);
+      if (!picking || !onBoard() || !shown() || panel.contains(tg)) return;
+      const j = clickedJob(tg);
       if (!j) return;
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       setPicking(false);
@@ -6451,6 +6911,7 @@
     const findTyped = async () => {
       const v = norm(typed.value).replace(/^#/, '');
       if (!/^\d{3,}$/.test(v)) return say('Type a zip code or a job number.');
+      await board.ready().catch(() => null);   // the new board: its day of data, to know its jobs
       if (boardJob(v).found) return find({ jobId: v });
       if (/^\d{5}$/.test(v)) {
         say('Finding the closest techs...');
@@ -6479,7 +6940,7 @@
     // The departments on the board, in the board's order.
     const teamsOf = techs => {
       const names = Array.from(new Set(techs.map(t => t.team).filter(Boolean)));
-      const order = Array.from(document.querySelectorAll('.team-name')).map(t => norm(t.textContent));
+      const order = board.teamOrder();
       const rank = n => order.indexOf(n) < 0 ? 1e5 : order.indexOf(n);
       return names.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
     };
@@ -6559,9 +7020,10 @@
     // The Unassigned list for the board's day, read at most once a minute.
     let uaCache = { key: '', at: 0, list: null };
     const unassignedNow = async day => {
-      const k = dayISO(day) + '|' + boardBUs().join(',');
+      const bus = await branchesNow();
+      const k = dayISO(day) + '|' + bus.join(',');
       if (uaCache.key === k && uaCache.list && Date.now() - uaCache.at < 60000) return uaCache.list;
-      const list = (await st.unassignedJobs(dayISO(day), boardBUs())).filter(j => !j.start || sameDay(toDate(j.start), day));
+      const list = (await st.unassignedJobs(dayISO(day), bus)).filter(j => !j.start || sameDay(toDate(j.start), day));
       uaCache = { key: k, at: Date.now(), list };
       return list;
     };
@@ -6807,6 +7269,7 @@
       planBtn.disabled = true; planBtn.style.opacity = '.5';
       try {
         say('Reading the board and the Unassigned list for ' + dayText(day) + '...');
+        await branchesNow();
         const [, techs, jobs0] = await Promise.all([loadHomes(), loadBoard(day), st.unassignedJobs(dayISO(day), boardBUs()).catch(e => { if (e && e.kind === 'bad') health.flag(TOOL, 'the Unassigned list came back in a shape the Toolbox doesn\'t know', '/Dispatch/GetJobs'); throw e; })]);
         if (stale()) return;
         const onDay = jobs0.filter(j => !j.start || sameDay(toDate(j.start), day));
@@ -6984,7 +7447,10 @@
       fit();
       showTab();
       // The departments showing on the board, until a look fills in the full list.
-      if (onBoard() && teamSel.options.length < 2) fillTeams(Array.from(new Set(Array.from(document.querySelectorAll('.team-name')).map(t => norm(t.textContent)).filter(Boolean))));
+      if (onBoard() && teamSel.options.length < 2) {
+        if (board.isNew()) board.ready().then(() => { if (teamSel.options.length < 2) fillTeams(board.teamOrder()); }, () => {});
+        else fillTeams(Array.from(new Set(board.teamOrder().filter(Boolean))));
+      }
       if (!onBoard()) say('Open the Dispatch board to use the Tech Router.');
       if (!homes) { try { await loadHomes(); } catch (e) { if (st.isSignedOut(e)) say('⚠️ ' + e.message); } }
     };
@@ -7034,6 +7500,7 @@
     texts.cleanup();
     moves.cleanup();
     near.cleanup();
+    board.stop();
     panel.remove();
     delete window.__stToolbox;
   };
@@ -7068,6 +7535,7 @@
   window.__stToolbox = { version: VERSION, close };
 
   document.body.appendChild(panel);
+  board.watch();   // keeps up with the new Dispatch board while the Toolbox is open (nothing on the old one)
   const startView = get('stView');
   showView(['notes', 'jobs', 'msgs', 'biz', 'texts', 'moves', 'near'].indexOf(startView) > -1 ? startView : 'menu');
   health.checkBoard(false);
