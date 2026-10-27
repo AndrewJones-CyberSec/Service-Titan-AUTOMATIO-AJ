@@ -23,7 +23,7 @@
 (() => {
   const VERSION = '1.8';
   const WHATS_NEW = {
-    '1.8': 'New: 🧭 Tech Router. 🔎 Closest techs: type a zip code or job number (or press 🖱️ and click a job) to see the techs closest by drive time with traffic, from where they are now or from home, with ➡️ to hand the job and tech to 🔀 Move Jobs. 📋 Plan Unassigned: one press plans a tech for every job on the Unassigned list: the right department (learned from the last 2 weeks of boards), routed from each tech\'s previous job, free techs first (a job on top of another only when no one is free, marked ⚠️), spread so lighter days get the work, and salespeople kept under 5 hr 30 min of driving where possible. Review it, take off anything with ✕, and send it to Move Jobs, where nothing changes until you review it and press Assign. Field techs only, and only towns are shown, never addresses.',
+    '1.8': 'New: 🧭 Tech Router. 🔎 Closest techs: type a zip code or job number (or press 🖱️ and click a job) to see the techs closest by drive time with traffic, from where they are now or from home, with ➡️ to hand the job and tech to 🔀 Move Jobs. 📋 Plan Unassigned: one press plans a tech for every job on the Unassigned list (filter it by job type and department): the right department (learned from the last 2 weeks of boards), routed from each tech\'s previous job, free techs first (a job on top of another only when no one is free, marked ⚠️), spread so lighter days get the work, and salespeople kept under 5 hr 30 min of driving where possible. Review it, take off anything with ✕, and send it to Move Jobs, where nothing changes until you review it and press Assign. Field techs only, and only towns are shown, never addresses.',
     '1.7.2': 'New in 📱 Customer Texts: ＋ A department… next to ＋ Everyone on the board adds just one team\'s customers for the day (Level 1 Service, Installers…) or just the Unassigned list. Pick another to add it too. 📥 Check replies then looks only at those customers.',
     '1.7.1': '📥 Check replies counts earlier confirm texts: a C to Saturday\'s text for Monday still counts after a newer reminder, if all they said after it was "already confirmed", "already did" or "thanks". A coworker\'s text that only says the weekday ("your appointment Monday") counts for that day, and one naming another day ("Saturday") no longer counts for Monday.',
     '1.7': 'Smarter 🔕 Job Notifications: one list instead of two modes. Add jobs by clicking them, clicking a tech\'s name on the board (their whole day), ＋ Whole board, or a tech from the list. Each job shows 🔔 on or 🔕 off as soon as it\'s added (off jobs get a gray dashed outline on the board), and the buttons say how many jobs they\'d change, like 🔕 Turn off (11). Results come back as cards, with problems first.',
@@ -5981,7 +5981,9 @@
   //     kind of job, never during an all-day job of theirs), and shows those first. One that's at the
   //     same time as another of their jobs is marked ⚠️ and counts STACK minutes more.
   //   📋 Plan Unassigned: plans a tech for every job on the Unassigned list for the day the board
-  //     shows, and hands the whole plan to Move Jobs. For each job (most urgent first, then by time):
+  //     shows, and hands the whole plan to Move Jobs. Filters (saved in this browser; new ones are
+  //     in): the job types to plan, and the departments whose techs can be used. For each job (most
+  //     urgent first, then by time):
   //       - Right department: the teams that did that kind of job on the last 2 weeks of boards
   //         (any team with at least a fifth of them). A job type with too few jobs to go by is
   //         matched on the start of its name ("Plumbing - …"), and failing that any team, marked ⚠️.
@@ -6237,7 +6239,86 @@
     const planBox = el('div', 'display:grid;gap:6px');
     const planBtn = smallBtn('📋 Plan the Unassigned list', () => plan(), PRIMARY + 'padding:7px 9px;font-size:13px');
     const planOut = el('div', 'display:none;gap:4px');
-    planBox.append(planBtn, planOut);
+    // Filters: the job types to plan and the departments to use. What's left out is saved in this
+    // browser, so a new job type or department is always in until you take it out.
+    const SKIP_TYPES = 'stPlanSkipTypes', SKIP_TEAMS = 'stPlanSkipTeams';
+    const savedSet = k => new Set((Array.isArray(readSaved(k, [], [])) ? readSaved(k, [], []) : []).filter(x => typeof x === 'string'));
+    const skipped = { types: savedSet(SKIP_TYPES), teams: savedSet(SKIP_TEAMS) };
+    // A list of checkboxes that folds open: items [{ key, label, n, group }] (grouped by group), ticked
+    // unless left out. load(): the items (it's opened, then filled).
+    const checkList = (title, which, key, load, unit) => {
+      const box = el('div', 'font-size:12px');
+      const head = el('button', FULL + 'padding:3px 6px;border:1px solid #ddd;border-radius:6px;background:#fff;color:#333;font:inherit;font-size:12px;text-align:left;cursor:pointer');
+      head.type = 'button';
+      head.className = 'st-plan-filter';
+      const body = el('div', 'display:none;margin-top:3px;padding:5px 7px;border:1px solid #eee;border-radius:6px;background:#fafafa;max-height:220px;overflow:auto');
+      let items = null, open = false;
+      const save = () => set(key, JSON.stringify(Array.from(skipped[which])));
+      const label = () => {
+        const out = items ? items.filter(x => skipped[which].has(x.key)).length : skipped[which].size;
+        head.textContent = title + ': ' + (!out ? 'all' : items ? (items.length - out) + ' of ' + items.length : out + ' left out') + (open ? '  ▾' : '  ▸');
+      };
+      const render = () => {
+        body.textContent = '';
+        if (!items) { body.appendChild(el('div', 'color:#666', 'Loading...')); return; }
+        if (!items.length) { body.appendChild(el('div', 'color:#666', 'Nothing to show for ' + dayText(boardData.day()) + '.')); return; }
+        const top = el('div', 'display:flex;gap:5px;margin-bottom:3px');
+        top.append(smallBtn('All', () => { items.forEach(x => skipped[which].delete(x.key)); save(); render(); label(); }, 'padding:1px 7px'),
+          smallBtn('None', () => { items.forEach(x => skipped[which].add(x.key)); save(); render(); label(); }, 'padding:1px 7px'));
+        body.appendChild(top);
+        const groups = [];
+        items.forEach(x => { let g = groups.find(y => y.name === (x.group || '')); if (!g) groups.push(g = { name: x.group || '', items: [] }); g.items.push(x); });
+        const tick = (text, on, part, onChange, indent, bold) => {
+          const l = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer;' + (indent ? 'margin-left:16px;' : '') + (bold ? 'font-weight:600;' : ''));
+          const c = el('input'); c.type = 'checkbox'; c.checked = on; c.indeterminate = !!part;
+          c.onchange = () => onChange(c.checked);
+          l.append(c, document.createTextNode(text));
+          return l;
+        };
+        groups.forEach(g => {
+          const grouped = g.name && g.items.length > 1;
+          if (grouped) {
+            const n = g.items.reduce((t, x) => t + x.n, 0), ins = g.items.filter(x => !skipped[which].has(x.key)).length;
+            body.appendChild(tick(g.name + ' (' + plural(n, unit) + ')', ins === g.items.length, ins && ins < g.items.length, on => { g.items.forEach(x => on ? skipped[which].delete(x.key) : skipped[which].add(x.key)); save(); render(); label(); }, false, true));
+          }
+          g.items.forEach(x => body.appendChild(tick(x.label + ' (' + plural(x.n, unit) + ')', !skipped[which].has(x.key), false, on => { on ? skipped[which].delete(x.key) : skipped[which].add(x.key); save(); render(); label(); }, grouped)));
+        });
+      };
+      head.onclick = async () => {
+        open = !open;
+        body.style.display = open ? 'block' : 'none';
+        label(); fit();
+        if (!open) return;
+        items = null; render();
+        try { items = await load(); } catch (e) { body.textContent = ''; body.appendChild(el('div', 'color:#8a5300', '⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t load the list: ' + errText(e)))); return; }
+        render(); label(); fit();
+      };
+      label();
+      box.append(head, body);
+      return { box, label };
+    };
+    const familyOf = type => norm(type).split(/\s+-\s+/)[0] || 'Other';
+    const typeList = checkList('Job types', 'types', SKIP_TYPES, async () => {
+      if (!onBoard() || !boardData.day()) throw new Error('open the Dispatch board first');
+      const jobs = await unassignedNow(boardData.day());
+      const n = new Map();
+      jobs.forEach(j => { const k = j.type || '(no job type)'; n.set(k, (n.get(k) || 0) + 1); });
+      // Ones left out before that aren't on today's list stay out, and show (with 0) so they can be put back.
+      skipped.types.forEach(k => { if (!n.has(k)) n.set(k, 0); });
+      return Array.from(n.entries()).map(([k, c]) => ({ key: k, label: k, n: c, group: familyOf(k) }))
+        .sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label));
+    }, 'job');
+    const teamList = checkList('Departments', 'teams', SKIP_TEAMS, async () => {
+      if (!onBoard() || !boardData.day()) throw new Error('open the Dispatch board first');
+      const [, techs] = await Promise.all([loadHomes(), loadBoard(boardData.day())]);
+      const n = new Map();
+      techs.filter(t => t.team && usable(t, fieldBox.checked)).forEach(t => n.set(t.team, (n.get(t.team) || 0) + 1));
+      skipped.teams.forEach(k => { if (!n.has(k)) n.set(k, 0); });
+      const order = teamsOf(techs);
+      return Array.from(n.entries()).map(([k, c]) => ({ key: k, label: k, n: c }))
+        .sort((a, b) => (order.indexOf(a.key) < 0 ? 1e5 : order.indexOf(a.key)) - (order.indexOf(b.key) < 0 ? 1e5 : order.indexOf(b.key)) || a.label.localeCompare(b.label));
+    }, 'tech');
+    planBox.append(typeList.box, teamList.box, planBtn, planOut);
 
     // ⚙️ Options, folded into one line that says what they're set to.
     const optsBtn = el('button', FULL + 'padding:4px 6px;border:1px solid #ddd;border-radius:6px;background:#fafafa;color:#333;font:inherit;font-size:12px;text-align:left;cursor:pointer');
@@ -6728,13 +6809,18 @@
         say('Reading the board and the Unassigned list for ' + dayText(day) + '...');
         const [, techs, jobs0] = await Promise.all([loadHomes(), loadBoard(day), st.unassignedJobs(dayISO(day), boardBUs()).catch(e => { if (e && e.kind === 'bad') health.flag(TOOL, 'the Unassigned list came back in a shape the Toolbox doesn\'t know', '/Dispatch/GetJobs'); throw e; })]);
         if (stale()) return;
-        const jobs = jobs0.filter(j => !j.start || sameDay(toDate(j.start), day));
-        if (!jobs.length) { say('The Unassigned list for ' + dayText(day) + ' is empty. Nothing to plan.'); return; }
+        const onDay = jobs0.filter(j => !j.start || sameDay(toDate(j.start), day));
+        if (!onDay.length) { say('The Unassigned list for ' + dayText(day) + ' is empty. Nothing to plan.'); return; }
+        // The Job types filter.
+        const jobs = onDay.filter(j => !skipped.types.has(j.type || '(no job type)'));
+        const typesOut = onDay.length - jobs.length;
+        if (!jobs.length) { say('All ' + plural(onDay.length, 'job') + ' on the Unassigned list are job types you left out (Job types).'); return; }
         const hist = await history(day, stale);
         if (stale()) return;
         const counts = tally(techs, addTally({}, hist.counts));   // the plan's own day counts too
         const fieldOnly = fieldBox.checked;
-        const pool = techs.filter(t => usable(t, fieldOnly)).map(t => ({
+        // The Departments filter: techs in a department you left out aren't used.
+        const pool = techs.filter(t => usable(t, fieldOnly) && !skipped.teams.has(t.team)).map(t => ({
           t, blocks: t.appts.filter(a => live(a, day)).map(a => ({ start: a.start, end: a.end, zip: a.zip, city: a.city })),
           n: new Set(t.appts.filter(a => live(a, day)).map(a => a.jobId)).size, home: homeOf(t), added: 0
         }));
@@ -6793,7 +6879,8 @@
           const open = team.filter(p => !p.blocks.some(x => overlap(x, job) && hours(x) >= LONG_JOB));
           const cands = open.map(p => { const b = before(p, job); return b ? { p, at: b, line: miles(b.pt, to), clash: p.blocks.find(x => overlap(x, job)) || null } : null; }).filter(Boolean);
           if (!cands.length) {
-            left.push({ job, why: !team.length ? 'no ' + (fieldOnly ? 'field tech' : 'one') + (fit_ ? ' in ' + fit_.teams.join(' / ') : '') + ' on the board'
+            left.push({ job, why: !team.length && fit_ && fit_.teams.every(x => skipped.teams.has(x)) ? 'its department (' + fit_.teams.join(' / ') + ') is left out (Departments)'
+              : !team.length ? 'no ' + (fieldOnly ? 'field tech' : 'one') + (fit_ ? ' in ' + fit_.teams.join(' / ') : '') + ' on the board'
               : !open.length ? 'everyone in ' + (fit_ ? fit_.teams.join(' / ') : 'the department') + ' is on an all-day job then' : 'no one in that department could be placed (no home address)' });
             continue;
           }
@@ -6821,7 +6908,7 @@
           best.p.blocks.push({ start: job.start, end: job.end, zip: job.zip, city: job.city, planned: true });
           best.p.n++; best.p.added++;
         }
-        planned = { day, rows, left, at: Date.now(), failedDays: hist.failed, error, pool, noKey: !key };
+        planned = { day, rows, left, at: Date.now(), failedDays: hist.failed, error, pool, noKey: !key, typesOut, teamsOut: Array.from(new Set(techs.filter(t => skipped.teams.has(t.team)).map(t => t.team))).length };
         renderPlan();
       } catch (e) {
         if (stale()) return;
@@ -6837,6 +6924,7 @@
       const stackedN = p.rows.filter(x => x.stacked).length;
       head.textContent = 'Plan for ' + dayText(p.day) + ': ' + plural(p.rows.length, 'job') + ' planned' + (stackedN ? ' (' + stackedN + ' on top of another job ⚠️)' : '') + (p.left.length ? ', ' + p.left.length + ' left' : '');
       planOut.appendChild(head);
+      if (p.typesOut || p.teamsOut) planOut.appendChild(small('Filtered: ' + [p.typesOut ? plural(p.typesOut, 'job') + ' of job types you left out not planned' : '', p.teamsOut ? plural(p.teamsOut, 'department') + ' left out' : ''].filter(Boolean).join('; ') + '.', 'color:#1a4f8a'));
       const acts = el('div', 'display:flex;gap:5px;flex-wrap:wrap');
       const send = smallBtn('➡️ Send ' + plural(p.rows.length, 'job') + ' to Move Jobs', () => sendPlan(), 'background:#6a1b9a;color:#fff;border-color:#6a1b9a;font-weight:600');
       send.disabled = !p.rows.length; send.style.opacity = p.rows.length ? '1' : '.5';
