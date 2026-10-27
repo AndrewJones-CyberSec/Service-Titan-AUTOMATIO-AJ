@@ -5977,8 +5977,9 @@
   //     board with 🖱️, and it lists the techs closest by drive time, closest first (3, up to 10 with
   //     Show more). ➡️ hands that job and tech to Move Jobs.
   //     Next job: for a job that has a tech, it also lists the Unassigned jobs closest to it by drive
-  //     time that the tech could take next (not over before this job ends, nothing else of theirs at
-  //     that time, their department does that kind of job), and shows those first.
+  //     time that the tech could take next (not over before this job ends, their department does that
+  //     kind of job, never during an all-day job of theirs), and shows those first. One that's at the
+  //     same time as another of their jobs is marked ⚠️ and counts STACK minutes more.
   //   📋 Plan Unassigned: plans a tech for every job on the Unassigned list for the day the board
   //     shows, and hands the whole plan to Move Jobs. For each job (most urgent first, then by time):
   //       - Right department: the teams that did that kind of job on the last 2 weeks of boards
@@ -6485,7 +6486,8 @@
     };
     // Next job: the Unassigned jobs closest to a job that the tech on it could take next.
     //   - Not over before this job ends (a job with no time always counts).
-    //   - Nothing else of the tech's at that time.
+    //   - Never during an all-day job of theirs; at the same time as a shorter one is marked ⚠️ and
+    //     ranks as STACK minutes farther (arrival windows aren't hard limits at AirSouth).
     //   - Their department does that kind of job (the last 2 weeks of boards); a kind with nothing
     //     to go by is kept, marked ⚠️.
     // Returns { tech, list: [{ job, min, mi, guess, line, dept, noHistory }], left: { time, busy, dept, place } } or null.
@@ -6509,17 +6511,18 @@
         const p = j.zip && points.get(j.zip);
         if (!p) { left.place++; return; }
         if (endAt && toDate(j.end) && toDate(j.end) <= endAt) { left.time++; return; }
-        if (others.some(b => overlap(b, j))) { left.busy++; return; }
+        if (others.some(b => overlap(b, j) && hours(b) >= LONG_JOB)) { left.busy++; return; }
         const f = teamsFor(j.type, counts);
         if (f && f.teams.indexOf(tech.team) < 0) { left.dept++; return; }
-        cands.push({ job: j, pt: p, line: miles(to, p), dept: f ? tech.team + ' did ' + (f.by[tech.team] || 0) + ' of ' + f.total + (f.exact ? ' like it' : ' "' + f.kind + '" jobs') : '⚠️ no recent jobs like it to go by', noHistory: !f });
+        const clash = others.find(b => overlap(b, j)) || null;
+        cands.push({ job: j, pt: p, line: miles(to, p), clash, dept: f ? tech.team + ' did ' + (f.by[tech.team] || 0) + ' of ' + f.total + (f.exact ? ' like it' : ' "' + f.kind + '" jobs') : '⚠️ no recent jobs like it to go by', noHistory: !f });
       });
-      cands.sort((a, b) => a.line - b.line);
+      cands.sort((a, b) => (a.line + (a.clash ? STACK : 0)) - (b.line + (b.clash ? STACK : 0)));
       const top = cands.slice(0, MAX);
       const drives = await driveFrom(to, top.map(c => c.pt), driveKey(), 'driving-traffic');
       if (stale()) return null;
       top.forEach((c, i) => { c.drive = drives[i]; c.min = c.drive ? c.drive.min : guessMin(c.line); c.guess = !c.drive; c.mi = c.drive && c.drive.mi != null ? c.drive.mi : c.line; });
-      top.sort((a, b) => a.min - b.min || a.line - b.line);
+      top.sort((a, b) => (a.min + (a.clash ? STACK : 0)) - (b.min + (b.clash ? STACK : 0)) || a.line - b.line);
       return { tech, list: top, left, endAt, multi: place.techIds.length > 1 };
     };
     const small = (text, extra) => el('div', 'font-size:11px;color:#666;' + (extra || ''), text);
@@ -6595,6 +6598,7 @@
         const d2 = el('div', 'color:' + (x.noHistory ? '#8a5300' : '#666') + ';font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis', detail);
         d2.title = detail;
         left.append(top, d2);
+        if (x.clash) left.appendChild(el('div', 'font-size:11px;color:#8a5300;font-weight:600', '⚠️ on top of their ' + (timeSpan(x.clash.start, x.clash.end) || 'other') + ' job'));
         const btns = el('div', 'display:flex;gap:3px');
         btns.appendChild(iconBtn('➡️', 'Assign: opens 🔀 Move Jobs with #' + x.job.jobId + ' and ' + n.tech.name + ' filled in. Nothing changes until you review it and press Move.', () => assign(x.job.jobId, n.tech), 'background:#6a1b9a;border-color:#6a1b9a'));
         c.append(left, btns);
@@ -6604,7 +6608,7 @@
       if (n.list.length > SHOW) results.appendChild(smallBtn(showAll ? 'Show fewer' : 'Show more (' + (n.list.length - SHOW) + ')', () => { showAll = !showAll; render(r); }, 'justify-self:start;padding:2px 7px'));
       const why = [];
       if (n.left.time) why.push(plural(n.left.time, 'job') + ' over before this one ends');
-      if (n.left.busy) why.push(plural(n.left.busy, 'job') + ' when ' + n.tech.name + ' has something else');
+      if (n.left.busy) why.push(plural(n.left.busy, 'job') + ' during an all-day job of ' + n.tech.name + '\'s');
       if (n.left.dept) why.push(plural(n.left.dept, 'job') + ' another department usually does');
       if (n.left.place) why.push(plural(n.left.place, 'job') + ' with no zip code to measure to');
       if (why.length) results.appendChild(fold('Left out: ' + why.join(', '), 'Only Unassigned jobs for ' + dayText(r.day) + ' on your board\'s branches are looked at. Departments come from the last 2 weeks of boards.'));
