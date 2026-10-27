@@ -115,7 +115,7 @@ with sync_playwright() as p:
     check('6015550012' in nums and '6015550112' not in nums, 'only primary number by default')
     check(all(x[1].startswith('Hey, this is Andrew with AirSouth') for x in s), 'every text signed Andrew')
     check('Needs a look:' in lg, 'needs-a-look list')
-    check(page.evaluate("() => location.hash").startswith('#/DispatchBoard'), 'back on the board after the run')
+    check(page.evaluate("() => location.hash").startswith('#/widget-app/dispatch-center'), 'back on the board after the run')
     n_before = len(s)
 
     # Second run: everyone just texted is skipped; the failed one is tried again
@@ -283,7 +283,7 @@ with sync_playwright() as p:
     page.fill('#st-ct-confirm-count', n)
     B(page, 'Send ' + n + ' texts').click()
     time.sleep(2.5)
-    page.locator('#st-toolbox span', has_text='✕').first.click()
+    page.locator('#st-toolbox button[title="Close"]').click()
     check('Customer Texts is still running' in panel_text(page), 'closing mid-run asks first')
     B(page, 'Keep running').click()
     B(page, 'Stop').click()

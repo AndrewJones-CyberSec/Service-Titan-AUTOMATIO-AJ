@@ -52,7 +52,7 @@ with sync_playwright() as p:
     B(page, 'Customer Texts').click()
     B(page, '✅ Confirm Appt').click()
     # The board on the next Monday (1 to 7 days out).
-    page.evaluate("() => { const d = new Date(); d.setHours(0, 0, 0, 0); do d.setDate(d.getDate() + 1); while (d.getDay() !== 1); window.MON = d; document.querySelector('.job-list').__vm.Date(d); }")
+    page.evaluate("() => { const d = new Date(); d.setHours(0, 0, 0, 0); do d.setDate(d.getDate() + 1); while (d.getDay() !== 1); window.MON = d; NB.setDay(d); }")
     mon_long = page.evaluate("() => window.MON.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })")
     st_date = page.evaluate("() => window.MON.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).replace(/,/g, '')")
     # A time n days from Monday (-2 = Saturday), h hours into the day.

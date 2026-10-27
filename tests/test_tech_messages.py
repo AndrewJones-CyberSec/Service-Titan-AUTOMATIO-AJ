@@ -9,7 +9,7 @@ def check(c, w):
     if not c: fails.append(w)
 def B(page, t): return page.locator('#st-toolbox button:visible', has_text=t).first
 def T(page): return page.locator('#st-toolbox').inner_text()
-def lit(page, id): return page.evaluate("id => getComputedStyle(document.querySelector('.technician[data-technician-id=\"' + id + '\"]')).outlineStyle", str(id)) == 'solid'
+def lit(page, id): return page.evaluate("id => getComputedStyle(sq('.technician[data-technician-id=\"' + id + '\"]')).outlineStyle", str(id)) == 'solid'
 with sync_playwright() as p:
     b = p.chromium.launch(); page = b.new_page(viewport={'width': 1400, 'height': 900})
     errors = []; page.on('pageerror', lambda e: errors.append(str(e)))

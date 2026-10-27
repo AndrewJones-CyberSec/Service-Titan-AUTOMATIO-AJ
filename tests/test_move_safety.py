@@ -379,9 +379,9 @@ with sync_playwright() as p:
     restore(page)
 
     # ================= Managed tech: an unknown tech isn't counted as managed =================
-    # $500 job on a tech the tech list doesn't know (#999), adding Andrew J (not managed).
+    # $500 job on a tech the board shows but the tech list doesn't know (#999), adding Andrew J (not managed).
     mode(page, 'Add a tech'); pick_to(page, 103)
-    ev(page, "() => { APPTS[9002].techs = [999]; render(); window.calls = []; }")
+    ev(page, "() => { BOARD_ONLY = [{ id: 999, name: 'Pat Q' }]; APPTS[9002].techs = [999]; render(); window.calls = []; }")
     clear_jobs(page); type_jobs(page, '7002')
     t = review(page)
     check("couldn't confirm a managed tech on this $500.00 job" in t and "isn't in the tech list" in t and not go_enabled(page) and calls(page) == [], 'managed: an unknown tech on a priced job is left alone, not assumed managed')
@@ -391,6 +391,7 @@ with sync_playwright() as p:
     t = review(page)
     check('+ Andrew J' in t and "couldn't confirm a managed tech" not in t and 'Left alone' not in t, 'managed: a known managed tech on the job is enough')
     B(page, 'Cancel').click()
+    ev(page, "() => { BOARD_ONLY = []; }")
     restore(page)
     mode(page, 'Move to a tech')
 
@@ -404,7 +405,7 @@ with sync_playwright() as p:
     hidden_job = "(() => { const d = new Date(APPTS[9101].s); APPTS[9200] = { job: 7200, n: 1, cust: 'Other Branch', s: new Date(d.setHours(12, 30)), e: new Date(d.setHours(13, 0)), techs: [104], bu: 2, total: 0, status: 'Scheduled', skills: [], hidden: true }; })()"
     # Hidden and already there at the review: ServiceTitan's own check catches it (exact at review).
     ev(page, three); ev(page, "() => { const d = new Date(APPTS[9101].s); APPTS[9200] = { job: 7200, n: 1, cust: 'Other Branch', s: new Date(d.setHours(12, 30)), e: new Date(d.setHours(13, 0)), techs: [104], bu: 2, total: 0, status: 'Scheduled', skills: [], hidden: true }; render(); }")
-    check(ev(page, "() => !document.querySelector('a.appointment[data-job-id=\"7200\"]')"), 'hidden: the other branch\'s job isn\'t on the board')
+    check(ev(page, "() => !sq('a.appointment[data-job-id=\"7200\"]')"), 'hidden: the other branch\'s job isn\'t on the board')
     clear_jobs(page); type_jobs(page, '7101 7102 7103')
     t = review(page)
     check('Already booked at that time (1)' in t and 'Kim Wu' in t.split('Already booked at that time')[1], 'hidden: a job the board doesn\'t show is caught at the review')
@@ -525,7 +526,7 @@ with sync_playwright() as p:
     ev(page, "() => { API_DELAY = 600; }")
     page.click('#st-move-go')
     time.sleep(0.8)
-    page.locator('#st-toolbox span', has_text='✕').first.click()
+    page.locator('#st-toolbox button[title="Close"]').click()
     B(page, 'Stop it and close').click()
     time.sleep(0.3)
     still = ev(page, "() => !!document.getElementById('st-toolbox')")

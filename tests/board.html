@@ -6,8 +6,9 @@
   .modal{display:none}
   .modal.in{display:block;position:fixed;top:30%;left:30%;background:#fff;border:2px solid #333;padding:20px}
 </style>
+<script src="newboard.js"></script>
 <script>
-  // Tiny stand-in for Knockout: observables, ko.dataFor and ko.unwrap only.
+  // Tiny stand-in for Knockout: observables, ko.dataFor and ko.unwrap only (the Edit Job page uses it).
   (function () {
     if (location.search.indexOf('noko') > -1) return;
     const obs = v => { const f = function (x) { if (arguments.length) { v = x; return f; } return v; }; f.__obs = true; return f; };
@@ -99,33 +100,26 @@
     }
     return json({ Id: Number(j), NotificationsEnabled: j in window.NOTIF ? window.NOTIF[j] : true, BusinessUnit: job ? nameOf(job.bu) : 'Commercial' });
   };
+  // The new Dispatch board (newboard.js). Tech One has the DB jobs under 900000. With ?full, Tech
+  // Two (901001, 901002), a job of Tech One's further along the day (912345), a canceled
+  // appointment (901005) and tomorrow's (901006) are in the board's data too. The Jobs Tray shows
+  // the Hold tab (901003, 901004), and with FILLER 60 more rows under a tall board.
+  NB.setup({
+    techs: () => [{ id: 1, name: 'Tech One', team: 'Install HVAC', teamId: 1 }].concat(window.FULL ? [{ id: 2, name: 'Tech Two', team: 'Install HVAC', teamId: 1 }] : []),
+    appts: () => window.FULL
+      ? window.FULL_ASSIGNMENTS.map(a => ({ id: a.Id, job: a.JobId, techs: (a.Technicians || []).map(t => t.Id), customer: a.Customer, customerId: a.CustomerId, start: a.Start, status: a.AppointmentStatus === 5 ? 'Canceled' : 'Scheduled' }))
+      : Object.keys(DB).filter(j => j < 900000).map((j, i) => ({ id: 7000 + i, job: Number(j), techs: [1], customer: 'Cust ' + j, customerId: Number(j) })),
+    tray: () => [{ job: 901003, customer: 'Tray Cust 901003 ', customerId: 3 }, { job: 901004, customer: 'Tray Cust 901004', customerId: 4 }],
+    trayTab: 'Hold',
+    filler: () => window.FILLER ? 60 : 0   // FILLER: a long Jobs Tray under a tall board (set it, then NB.render())
+  });
   function render() {
     const h = location.hash.split('?')[0];
     const root = document.getElementById('root');
-    root.innerHTML = '';
+    if (!NB.isBoard(location.hash)) root.innerHTML = '';
     let m;
-    if (/^#\/DispatchBoard/.test(h)) {
-      root.innerHTML = '<div class="team-container"><div class="team-name">Install HVAC</div>' +
-        '<div class="technician" data-technician-id="1"><span class="name">Tech One</span></div></div>' +
-        '<div id="team-timeline-row-1">' + Object.keys(DB).filter(j => j < 900000).map(j =>
-          '<a class="appointment" data-job-id="' + j + '" data-technician-id="1"><span>Quote</span> Cust ' + j + ' - 39180</a>').join('') + '</div>' +
-        (window.FULL ? '<div class="team-container"><div class="technician" data-technician-id="2"><span class="name">Tech Two</span></div></div>' +
-          '<div id="team-timeline-row-2"><a class="appointment" data-job-id="901001" data-technician-id="2">Two Cust A</a><a class="appointment" data-job-id="901002" data-technician-id="2">Two Cust B</a></div>' : '');
-      root.querySelectorAll('.technician').forEach(t => t.addEventListener('click', () => { window.techOpened = (window.techOpened || 0) + 1; }));
-      root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => { window.opened.push(a.getAttribute('data-job-id')); }));
-      const jl = document.createElement('div'); jl.className = 'job-list';
-      const filler = [];
-      for (let i = 0; i < 60; i++) filler.push(String(950000 + i));
-      jl.innerHTML = '<div style="height:1500px">(board)</div><div class="toolbar">Hold (2)</div><div><table class="k-grid-table" tabindex="0"><tbody>' +
-        ['901003', '901004'].concat(filler).map(j => '<tr class="row__BK7JR qa-job-' + j + '" style="height:40px"><td>Quote</td><td><a href="#/Customer/1">Tray Cust ' + j + '</a></td></tr>').join('') + '</tbody></table></div>';
-      jl.querySelectorAll('tr').forEach(tr => tr.addEventListener('click', () => { window.opened.push('tray'); }));
-      // Like the real list: pressing a row focuses the list and jumps back to its top.
-      const tbl = jl.querySelector('table');
-      tbl.addEventListener('mousedown', () => { tbl.focus({ preventScroll: true }); const top = tbl.getBoundingClientRect().top; if (top < 0) window.scrollTo(0, top + window.scrollY - 40); });
-      if (window.ko) jl.__vm = { JobList: { View: ko.observable({ Caption: 'Hold' }), AllVisibleJobs: ko.observable([{ JobId: 901003, Customer: 'Tray Cust 901003 ', CustomerId: 3 }, { JobId: 901004, Customer: 'Tray Cust 901004', CustomerId: 4 }]) } };
-      if (window.ko && window.FULL) Object.assign(jl.__vm, { Date: ko.observable(today), Assignments: ko.observable(window.FULL_ASSIGNMENTS), BusinessUnitFilter: { getIds: () => [621842244] } });
-      root.appendChild(jl);
-    } else if ((m = /^#\/Job\/Edit\/(\d+)/.exec(h))) {
+    if (NB.isBoard(location.hash) || /^#\/DispatchBoard/.test(h)) return;   // the board draws itself (NB.render)
+    if ((m = /^#\/Job\/Edit\/(\d+)/.exec(h))) {
       const j = m[1], job = DB[j];
       (window.editOpened = window.editOpened || []).push(j);
       setTimeout(() => {

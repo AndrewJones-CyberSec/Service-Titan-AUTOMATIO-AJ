@@ -232,7 +232,7 @@ with sync_playwright() as p:
     check(ev(page, "() => window.opened.length") == 0, 'the refused click did not open the job either')
     type_jobs(page, '7002')
     check('2 jobs picked' in T(page), 'typed third job refused too')
-    page.locator('#st-toolbox button:visible', has_text='All in the list').first.click()
+    page.locator('#st-toolbox button:visible', has_text='Tray page').first.click()
     check('2 jobs picked' in T(page), 'whole list refused past two')
     page.locator('#st-toolbox button:visible', has_text='Picking: ON').first.click()
     # Switching into Swap with more than two picked says so
@@ -320,25 +320,25 @@ with sync_playwright() as p:
     reset(page, 9001, [101])
 
     # ---- The board hasn't redrawn ----
-    ev(page, "() => { BOARD_LAG = true; }")
+    ev(page, "() => { BOARD_LAG = true; window.refreshes = 0; }")
     clear_jobs(page); type_jobs(page, '7001')
     review(page); go(page)
     lg = log(page)
-    check('Refreshed the board' in lg and "board hasn't caught up" not in lg and ev(page, "() => window.refreshes") == 1, 'board not redrawn: refreshes it with the board\'s own reload')
-    check(ev(page, "() => !!document.querySelector('#team-timeline-row-102 a.appointment[data-job-id=\"7001\"]')"), 'after the refresh the board shows the job on the new tech')
+    check('Refreshed the board' in lg and ev(page, "() => window.refreshes") == 1, 'after a run: refreshes the board with its own Refresh button')
+    check(ev(page, "() => !!sq('#team-timeline-row-102 a.appointment[data-job-id=\"7001\"]')"), 'after the refresh the board shows the job on the new tech')
     reset(page, 9001, [101]); ev(page, "() => { render(); window.refreshes = 0; }")
     # No reload on this board (ServiceTitan changed it): says to press F5
     ev(page, "() => { NO_REFRESH = true; render(); }")
     clear_jobs(page); type_jobs(page, '7001')
     review(page); go(page)
-    check("board hasn't caught up" in log(page) and 'F5' in log(page), 'no board reload: says to press F5')
+    check('Refresh (or F5)' in log(page), 'no Refresh button on the board: says to press Refresh or F5')
     # A board menu open: the board would skip its refresh, so don't call it
     ev(page, "() => { NO_REFRESH = false; render(); }")
-    reset(page, 9001, [101]); ev(page, "() => { render(); window.refreshes = 0; const d = document.createElement('div'); d.className = 'trello-dropdown open'; d.id = 'fake-menu'; document.body.appendChild(d); }")
+    reset(page, 9001, [101]); ev(page, "() => { render(); window.refreshes = 0; const d = document.createElement('div'); d.setAttribute('role', 'menu'); d.textContent = 'menu'; d.id = 'fake-menu'; NB.host.shadowRoot.appendChild(d); }")
     clear_jobs(page); type_jobs(page, '7001')
     review(page); go(page)
-    check(ev(page, "() => window.refreshes") == 0 and "board hasn't caught up" in log(page), 'a board menu open: no refresh, says to press F5')
-    ev(page, "() => { document.getElementById('fake-menu').remove(); BOARD_LAG = false; }")
+    check(ev(page, "() => window.refreshes") == 0 and 'Refresh (or F5)' in log(page), 'a board menu open: no refresh, says to press Refresh or F5')
+    ev(page, "() => { const m = NB.host.shadowRoot.getElementById('fake-menu'); if (m) m.remove(); BOARD_LAG = false; }")
     reset(page, 9001, [101]); ev(page, "() => render()")
 
     # ---- Put back is kept when the Toolbox is closed and opened again ----

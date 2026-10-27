@@ -67,13 +67,12 @@ with sync_playwright() as p:
     t = pick_dept(page, '\u0001unassigned')
     check(picked(page) == ['7101', '7102'], 'Unassigned list: its jobs, canceled left out (%s)' % picked(page))
     check('from the Unassigned list' in t, 'says it was the Unassigned list')
-    saved = json.loads(page.evaluate("() => localStorage.getItem('stMsgTeamMap')") or '{}')
-    check(saved == {'1': 'Level 1 Service', '2': 'Installers'}, 'each tech\'s team is remembered (%s)' % saved)
-
-    # A board filter hides the team headers: the remembered teams are used.
-    page.evaluate("() => document.querySelectorAll('.team-header').forEach(h => h.remove())")
+    # 2.0: each tech's team comes with the board's data, so nothing has to be remembered, and the
+    # team bars on the board (hidden by default on the new board) don't matter.
+    check(page.evaluate("() => localStorage.getItem('stMsgTeamMap')") is None, 'teams come from the board\'s data (nothing remembered)')
+    page.evaluate("() => NB.qa('.team-name').forEach(h => h.remove())")
     o = options(page)
-    check('Level 1 Service  (2 jobs)' in o and 'Installers  (2 jobs)' in o, 'headers hidden: the teams it remembered are used (%s)' % o)
+    check('Level 1 Service  (2 jobs)' in o and 'Installers  (2 jobs)' in o, 'team names hidden on the board: the departments are still there (%s)' % o)
 
     # 📥 Check replies after texting one department: only the jobs on the list are checked.
     B(page, 'Clear').click()
@@ -87,11 +86,11 @@ with sync_playwright() as p:
     B(page, '← Back').click()
     page.evaluate("() => window.__stToolbox.close()")
 
-    # A board where the teams can't be told (and none remembered): one "team not showing" choice.
+    # The board laid out with one team: every job is in it (teams always come with the board's data now).
     open_board(page, '')
     o = options(page)
-    check(o == ['＋ A department…', 'Other (team not showing)  (3 jobs)', 'Unassigned list'], 'teams can\'t be told: one "team not showing" choice (%s)' % o)
-    t = pick_dept(page, 'Other (team not showing)')
+    check(o == ['＋ A department…', 'Install HVAC  (3 jobs)', 'Unassigned list'], 'one team on the board: one choice with all its jobs (%s)' % o)
+    t = pick_dept(page, 'Install HVAC')
     check(picked(page) == ['6001', '6002', '6003'], 'it adds those jobs (%s)' % picked(page))
     # ＋ Everyone on the board works as before.
     B(page, 'Clear').click()

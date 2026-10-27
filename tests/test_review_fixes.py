@@ -57,6 +57,7 @@ with sync_playwright() as p:
     page.evaluate("() => { localStorage.clear(); localStorage.setItem('stMsgTeams', JSON.stringify({ 'Install HVAC': true, 'Leadership Team': false })); localStorage.setItem('stMsgSel', JSON.stringify(['1', '2'])); localStorage.setItem('stMsgMode', 'auto'); }")
     page.evaluate(TOOLBOX)
     B(page, 'Tech Messages').click()
+    page.wait_for_function("() => /To: 2 techs/.test(document.getElementById('st-toolbox').innerText)", timeout=5000)
     check('To: 2 techs' in T(page), 'both techs picked to start with')
     home_style = panel_style(page)
 
@@ -96,6 +97,7 @@ with sync_playwright() as p:
     page.evaluate("() => { localStorage.setItem('stMsgSel', JSON.stringify(['1', '2'])); localStorage.removeItem('stView'); }")
     page.evaluate(TOOLBOX)
     B(page, 'Tech Messages').click()
+    page.wait_for_function("() => /To: 2 techs/.test(document.getElementById('st-toolbox').innerText)", timeout=5000)
     check('To: 2 techs' in T(page), 'both techs picked again')
     B(page, 'Review and send').click()
     other_tab(page, 'stMsgTeams', {'Install HVAC': False, 'Leadership Team': False})
@@ -182,7 +184,7 @@ with sync_playwright() as p:
 
     # No Back-button step per text, and back on the board at the end.
     check(page.evaluate("() => history.length") == hist0, 'the run added no Back-button steps (%d before, %d after)' % (hist0, page.evaluate("() => history.length")))
-    check(page.evaluate("() => location.hash").startswith('#/DispatchBoard'), 'back on the board after the run')
+    check(page.evaluate("() => location.hash").startswith('#/widget-app/dispatch-center'), 'back on the board after the run')
 
     # ⚙️ Settings starts from what's saved now, so saving doesn't undo the other tab.
     B(page, '← Back').click()

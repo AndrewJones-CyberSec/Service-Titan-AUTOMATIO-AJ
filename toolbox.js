@@ -20,8 +20,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.7.2';
+  const VERSION = '2.0';
   const WHATS_NEW = {
+    '2.0': 'Built for ServiceTitan\'s new Dispatch board (use its Day view), with a new look. Every tool works on it again. New: tags show on every job, and ＋ Jobs with a tag… adds all the jobs with one tag. Jobs show how their day is going (🚚 Dispatched 10:20 AM, 🔧 Working). ＋ Whole board is quicker (the whole day comes in one request). 💬 Tech Messages adds everyone Working or Dispatched in one click. – folds the Toolbox down to its title bar.',
     '1.7.2': 'New in 📱 Customer Texts: ＋ A department… next to ＋ Everyone on the board adds just one team\'s customers for the day (Level 1 Service, Installers…) or just the Unassigned list. Pick another to add it too. 📥 Check replies then looks only at those customers.',
     '1.7.1': '📥 Check replies counts earlier confirm texts: a C to Saturday\'s text for Monday still counts after a newer reminder, if all they said after it was "already confirmed", "already did" or "thanks". A coworker\'s text that only says the weekday ("your appointment Monday") counts for that day, and one naming another day ("Saturday") no longer counts for Monday.',
     '1.7': 'Smarter 🔕 Job Notifications: one list instead of two modes. Add jobs by clicking them, clicking a tech\'s name on the board (their whole day), ＋ Whole board, or a tech from the list. Each job shows 🔔 on or 🔕 off as soon as it\'s added (off jobs get a gray dashed outline on the board), and the buttons say how many jobs they\'d change, like 🔕 Turn off (11). Results come back as cards, with problems first.',
@@ -83,13 +84,13 @@
   // A text box or list, in the Toolbox's look.
   const FIELD = 'box-sizing:border-box;padding:5px 8px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;font-size:12px;color:var(--st-ink);background:var(--st-bg);';
   const smallBtn = (label, onClick, extra) => {
-    const b = el('button', 'padding:5px 8px;cursor:pointer;border:1px solid #aaa;border-radius:6px;background:#fff;color:#111;font:inherit;font-size:12px;' + (extra || ''), label);
+    const b = el('button', 'padding:4px 10px;min-height:28px;cursor:pointer;border:1px solid var(--st-ctl);border-radius:6px;background:var(--st-bg);color:var(--st-ink);font:inherit;font-size:12px;font-weight:600;line-height:1.2;' + (extra || ''), label);
     b.type = 'button';
     b.onclick = onClick;
     return b;
   };
-  const PRIMARY = 'background:#1a6ed8;color:#fff;border-color:#1a6ed8;font-weight:600;';
-  const DANGER = 'background:#c62828;color:#fff;border-color:#c62828;font-weight:600;';
+  const PRIMARY = 'background:var(--st-blue);color:#fff;border-color:var(--st-blue);font-weight:600;';
+  const DANGER = 'background:var(--st-red);color:#fff;border-color:var(--st-red);font-weight:600;';
   const norm = s => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
   const same = (a, b) => norm(a).toLowerCase() === norm(b).toLowerCase();
   const plural = (n, word, many) => n + ' ' + (n === 1 ? word : (many || word + 's'));
@@ -120,24 +121,33 @@
     const SIGNED_OUT = 'ServiceTitan has signed you out. Reload the page, sign back in, then run it again.';
     const NO_PERMISSION = 'your ServiceTitan login doesn\'t have permission to see this';
     const fail = (kind, msg) => Object.assign(new Error(msg), { kind });
+    // Ids go to ServiceTitan as numbers, the way its own pages send them (the new board's data
+    // keeps some of them as text).
+    const idNum = v => (typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v);
     const isSignedOut = e => !!(e && e.kind === 'signedOut');
     const isNoPermission = e => !!(e && e.kind === 'noPermission');
     // Is the session still alive? Asks for something every signed-in user can read. Reads refused
     // at the same moment share one question. true: signed in. false: signed out (refused, or sent
     // to the sign-in page). null: couldn't tell (no answer in time, can't connect, ServiceTitan
     // failing), which a run treats as ServiceTitan being slow, not as signed out.
+    // Asks for the signed-in user (every page loads it), and falls back to the permission settings
+    // the Toolbox asked for before Oct 27 2026 (that one started answering 400 that day).
     let asking = null;
+    const SIGNED_IN_CHECKS = ['/app/api/data/user', '/api/cp/settings/special/permission-settings'];
     const stillSignedIn = () => asking || (asking = (async () => {
       const ctl = typeof AbortController === 'function' ? new AbortController() : null;
       const timer = ctl ? setTimeout(() => ctl.abort(), 8000) : null;
       try {
-        const r = await fetch('/api/cp/settings/special/permission-settings?_=' + Date.now(), { credentials: 'include', headers: HEADERS, signal: ctl ? ctl.signal : undefined });
-        if (r.redirected && /\/(auth|account|login|signin)\b/i.test(r.url)) return false;
-        if (r.ok) return true;
-        if (r.status === 401 || r.status === 403) return false;
+        for (const url of SIGNED_IN_CHECKS) {
+          let r;
+          try { r = await fetch(url + '?_=' + Date.now(), { credentials: 'include', headers: HEADERS, signal: ctl ? ctl.signal : undefined }); }
+          catch (e) { if (e && e.name === 'AbortError') return null; continue; }
+          if (r.redirected && /\/(auth|account|login|signin)\b/i.test(r.url)) return false;
+          if (r.ok) return true;
+          if (r.status === 401 || r.status === 403) return false;
+        }
         return null;
-      } catch (e) { return null; }
-      finally { if (timer) clearTimeout(timer); asking = null; }
+      } finally { if (timer) clearTimeout(timer); asking = null; }
     })());
     // post: when given, sends it as JSON with a POST (the way ServiceTitan's own pages do) instead
     // of a plain read. A POST with an empty answer gives null.
@@ -297,7 +307,7 @@
     // the job they're leaving". Returns [{ id, job, nonJob, recurring, booked, why }] for the techs
     // listed. Any listed entry it can't read stops the check (a renamed field must not read as free).
     const techsBooked = async (techIds, start, end, skipApptId) => {
-      const d = await getJSON('/Job/TechniciansAreBooked', 15000, { technicianIds: techIds, start: new Date(start).toISOString(), end: new Date(end).toISOString(), repeatModel: null, originalAppointmentId: skipApptId == null ? null : skipApptId, originalAppointmentDefinitionId: null });
+      const d = await getJSON('/Job/TechniciansAreBooked', 15000, { technicianIds: techIds.map(idNum), start: new Date(start).toISOString(), end: new Date(end).toISOString(), repeatModel: null, originalAppointmentId: skipApptId == null ? null : idNum(skipApptId), originalAppointmentDefinitionId: null });
       const bad = () => fail('bad', 'the already-booked check came back in a shape the Toolbox doesn\'t know');
       if (!Array.isArray(d)) throw bad();
       const asked = techIds.map(String);
@@ -328,8 +338,8 @@
       });
       return out;
     };
-    const assignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/AssignTechnicians', 20000, { appointmentId: apptId, technicianIds: techIds });
-    const unassignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/UnassignTechnicians', 20000, { appointmentId: apptId, technicianIds: techIds });
+    const assignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/AssignTechnicians', 20000, { appointmentId: idNum(apptId), technicianIds: techIds.map(idNum) });
+    const unassignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/UnassignTechnicians', 20000, { appointmentId: idNum(apptId), technicianIds: techIds.map(idNum) });
     // ---- Confirming appointments (Customer Texts → 📥 Check replies). The same request the job
     // panel's ⋮ menu sends for Confirm / Remove confirmation (seen Oct 2026).
     // An appointment's confirmed flag and status, read fresh: { confirmed, status }, or throws.
@@ -347,7 +357,7 @@
       if (!Array.isArray(d) || d.some(a => !a || a.id == null)) throw fail('bad', 'the job\'s appointments came back in a shape the Toolbox doesn\'t know');
       return d.map(a => ({ id: a.id, status: a.status, start: a.start || null }));
     };
-    const setConfirmed = (apptId, on) => getJSON('/dispatch/job-edit-flyout/UpdateJobAppointmentIsConfirmed', 20000, { jobAppointmentId: apptId, isConfirmed: !!on });
+    const setConfirmed = (apptId, on) => getJSON('/dispatch/job-edit-flyout/UpdateJobAppointmentIsConfirmed', 20000, { jobAppointmentId: idNum(apptId), isConfirmed: !!on });
     return { getJSON, pool, NOT_RUN, haltNote, SIGNED_OUT, isSignedOut, isNoPermission, job, jobEdit, chatThread, chatMessages, customerPhones, code,
       appointment, jobSkills, technicians, techsBooked, daySchedule, assignTechs, unassignTechs, apptConfirmed, setConfirmed, jobAppointments };
   })();
@@ -663,6 +673,8 @@
     const refresh = async () => {
       const b = q('button[aria-label="Refresh"]');
       if (!b || b.disabled) return false;
+      // Not while one of the board's menus is open (the click would only close it).
+      if (qa('[role="menu"]').some(visible)) return false;
       b.click();
       await wait(1200);
       try { await load({ fresh: true }); } catch (e) {}
@@ -763,8 +775,8 @@
   const fmtPhone = n => { n = last10(n); return n.length === 10 ? '(' + n.slice(0, 3) + ') ' + n.slice(3, 6) + '-' + n.slice(6) : ''; };
   const customerCards = () => {
     // border, background, status text
-    const TONES = { warn: ['#e3b65c', '#fffaf0', '#8a5300'], good: ['#86c08a', '#f3faf3', '#1b5e20'], done: ['#9bb7d4', '#f4f8fc', '#1a4f8a'],
-      quiet: ['#cfcfcf', '#fafafa', '#555'], faint: ['#e2e2e2', '#fff', '#777'] };
+    const TONES = { warn: ['var(--st-amber-l)', '#fffbf3', 'var(--st-amber)'], good: ['var(--st-green-l)', '#f5fbf7', 'var(--st-green-d)'], done: ['#b3cdea', '#f6f9fe', 'var(--st-blue-d)'],
+      quiet: ['var(--st-line)', 'var(--st-soft)', 'var(--st-ink-2)'], faint: ['var(--st-line)', 'var(--st-bg)', 'var(--st-ink-3)'] };
     const box = el('div', 'max-height:calc(100vh - 290px);overflow:auto;margin:0 -4px 8px;padding:0 4px');
     const openState = {};
     let shown = [], shownNotes = [];
@@ -785,19 +797,29 @@
     };
     const card = (x, tone) => {
       const [line, bg, ink] = TONES[tone] || TONES.quiet;
-      const c = el('div', 'border:1px solid ' + line + ';background:' + bg + ';border-radius:8px;padding:7px 8px;margin-bottom:6px;font-size:12px;color:#111');
+      const c = el('div', 'border:1px solid ' + line + ';background:' + bg + ';border-radius:10px;padding:8px 10px;margin-bottom:6px;font-size:12px;color:var(--st-ink)');
       c.className = 'st-cust-card';
       const top = el('div', 'display:flex;gap:6px;align-items:baseline');
       top.append(el('div', 'flex:1;font-weight:700;font-size:13px;user-select:text;word-break:break-word', x.customer || 'Job #' + (x.jobs[0] || '?')),
-        el('div', 'color:#666;white-space:nowrap;user-select:text', x.jobs.length ? '#' + x.jobs.join(', #') : ''));
+        el('div', 'color:var(--st-ink-3);white-space:nowrap;user-select:text', x.jobs.length ? '#' + x.jobs.join(', #') : ''));
       c.appendChild(top);
-      if (!x.noPhone) c.appendChild(el('div', 'font-size:13px;margin-top:1px;user-select:text;color:' + (x.phone ? '#111' : '#888'), x.phone ? fmtPhone(x.phone) : 'no number found'));
+      if (!x.noPhone) c.appendChild(el('div', 'font-size:13px;margin-top:1px;user-select:text;color:' + (x.phone ? 'var(--st-ink)' : 'var(--st-ink-3)'), x.phone ? fmtPhone(x.phone) : 'no number found'));
+      // The job's tags, and where it stands today (from the board's data, when it's on the board's day).
+      const tags = [];
+      (x.tags || [].concat.apply([], (x.jobs || []).map(j => { const b = board.job(j); return b ? b.tags : []; }))).forEach(t => { if (!tags.some(y => y.name === t.name)) tags.push(t); });
+      const now = x.jobs && x.jobs.length === 1 ? jobNow(x.jobs[0]) : null;
+      if (tags.length || now) {
+        const meta = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:4px');
+        if (now) { const n = el('span', 'font-size:11px;color:var(--st-ink-2)', now.text); if (now.title) n.title = now.title; meta.appendChild(n); }
+        if (tags.length) meta.appendChild(tagChips(tags, 3));
+        c.appendChild(meta);
+      }
       const said = x.said && x.said.length ? x.said : null;
       const replied = said && /^replied/i.test(x.status);
       if (x.status) c.appendChild(el('div', 'margin-top:4px;color:' + ink + ';font-weight:600', replied ? (/^replied$/i.test(x.status) ? '💬 They replied:' : '🛑 ' + cap(x.status) + ':') : cap(x.status)));
-      if (x.note) c.appendChild(el('div', 'margin-top:3px;color:#1a4f8a;font-weight:600', x.note));
-      if (said && !replied) c.appendChild(el('div', 'margin-top:3px;color:#555', 'They replied:'));
-      (said || []).forEach(t => c.appendChild(el('div', 'margin-top:3px;padding:5px 7px;background:#fff;border-left:3px solid ' + line + ';border-radius:4px;font-size:13px;line-height:1.35;white-space:pre-wrap;word-break:break-word;user-select:text', t)));
+      if (x.note) c.appendChild(el('div', 'margin-top:3px;color:var(--st-blue-d);font-weight:600', x.note));
+      if (said && !replied) c.appendChild(el('div', 'margin-top:3px;color:var(--st-ink-2)', 'They replied:'));
+      (said || []).forEach(t => c.appendChild(el('div', 'margin-top:3px;padding:5px 7px;background:var(--st-bg);border-left:3px solid ' + line + ';border-radius:4px;font-size:13px;line-height:1.35;white-space:pre-wrap;word-break:break-word;user-select:text', t)));
       const btns = el('div', 'display:flex;gap:5px;flex-wrap:wrap;margin-top:6px');
       (x.actions || []).forEach(a => btns.appendChild(pill(a.label, a.onClick, a.title, a.style)));
       if (x.customer) btns.appendChild(copyPill('📋 Name', x.customer));
@@ -813,14 +835,14 @@
       shownNotes = (notes || []).filter(Boolean);
       const keep = box.scrollTop;
       box.textContent = '';
-      shownNotes.forEach(t => box.appendChild(el('div', 'font-size:12px;color:#444;background:#f1f4f8;border-radius:6px;padding:5px 7px;margin-bottom:6px;white-space:pre-wrap', t)));
+      shownNotes.forEach(t => box.appendChild(el('div', 'font-size:12px;color:var(--st-ink-2);background:var(--st-soft);border-radius:6px;padding:5px 7px;margin-bottom:6px;white-space:pre-wrap', t)));
       shown.forEach(s => {
         const sec = el('div', 'margin-bottom:4px');
         sec.className = 'st-cust-section';
         sec.setAttribute('data-title', s.title + ' (' + s.items.length + ')');
         const isOpen = () => openState[s.key] != null ? openState[s.key] : !!s.open;
         const body = el('div', 'display:' + (isOpen() ? 'block' : 'none'));
-        const hd = el('button', FULL + 'text-align:left;padding:5px 2px;border:none;background:transparent;cursor:pointer;font:inherit;font-weight:700;color:#111');
+        const hd = el('button', FULL + 'text-align:left;padding:5px 2px;border:none;background:transparent;cursor:pointer;font:inherit;font-weight:700;color:var(--st-ink)');
         hd.type = 'button';
         const label = () => { hd.textContent = (isOpen() ? '▾ ' : '▸ ') + s.title + ' (' + s.items.length + ')'; };
         hd.onclick = () => { openState[s.key] = !isOpen(); body.style.display = isOpen() ? 'block' : 'none'; label(); };
@@ -863,11 +885,11 @@
     const render = () => {
       box.textContent = '';
       draft.forEach((n, i) => {
-        const row = el('div', 'border:1px solid #ccc;border-radius:8px;padding:7px;margin-bottom:8px;background:#fafafa');
-        const name = el('input', FULL + 'padding:5px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-weight:600;color:#111;background:#fff');
+        const row = el('div', 'border:1px solid var(--st-line);border-radius:8px;padding:7px;margin-bottom:8px;background:var(--st-soft)');
+        const name = el('input', FULL + 'padding:5px 6px;border:1px solid var(--st-ctl);border-radius:5px;font:inherit;font-weight:600;color:var(--st-ink);background:var(--st-bg)');
         name.type = 'text'; name.value = n[0]; name.placeholder = namePlaceholder;
         name.oninput = () => { n[0] = name.value; };
-        const text = el('textarea', FULL + 'margin-top:5px;padding:5px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-size:12px;color:#111;background:#fff;resize:vertical');
+        const text = el('textarea', FULL + 'margin-top:5px;padding:5px 6px;border:1px solid var(--st-ctl);border-radius:5px;font:inherit;font-size:12px;color:var(--st-ink);background:var(--st-bg);resize:vertical');
         text.rows = 3; text.value = n[1]; text.placeholder = textPlaceholder;
         text.oninput = () => { n[1] = text.value; };
         const tools = el('div', 'display:flex;gap:4px;margin-top:5px');
@@ -875,7 +897,7 @@
         tools.append(
           smallBtn('↑', moveBy(-1), i === 0 ? 'opacity:.4' : ''),
           smallBtn('↓', moveBy(1), i === draft.length - 1 ? 'opacity:.4' : ''),
-          smallBtn('Delete', () => { draft.splice(i, 1); render(); }, 'margin-left:auto;color:#b00020;border-color:#e0a0a8')
+          smallBtn('Delete', () => { draft.splice(i, 1); render(); }, 'margin-left:auto;color:var(--st-red);border-color:var(--st-red-l)')
         );
         if (opts.rowExtra) tools.insertBefore(opts.rowExtra(n), tools.lastChild);
         row.append(name, text, tools);
@@ -937,14 +959,36 @@
   // ===================================================================
   // Panel shell: header and the main menu
   // ===================================================================
-  const panel = el('div', 'position:fixed;right:16px;bottom:16px;z-index:2147483647;width:290px;max-width:calc(100vw - 32px);' +
-    'background:#fff;color:#111;border:1px solid #888;border-radius:10px;box-shadow:0 5px 20px rgba(0,0,0,.3);' +
-    'font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden;text-align:left');
+  // The Toolbox's look (2.0): matches the new Dispatch board. Colors are tokens (var(--st-…)) so
+  // every tool shares one set; anything that goes inside the board uses plain colors instead.
+  const sheet = el('style');
+  sheet.id = ID + '-style';
+  sheet.textContent = [
+    '#' + ID + '{--st-ink:#141414;--st-ink-2:#4b4f55;--st-ink-3:#7b8087;--st-line:#e2e5e9;--st-ctl:#a6abb1;--st-bg:#ffffff;--st-soft:#f6f7f9;--st-soft-2:#eceff3;' +
+      '--st-blue:#0265dc;--st-blue-d:#004491;--st-blue-s:#e8f2fe;--st-green:#1f7a3d;--st-green-d:#145c2c;--st-green-s:#e9f6ee;--st-green-l:#a6d8b6;' +
+      '--st-red:#c4200d;--st-red-d:#8e1608;--st-red-s:#fdeceb;--st-red-l:#f2aaa2;--st-amber:#8f5300;--st-amber-s:#fff5e5;--st-amber-l:#f0cd8f;' +
+      '--st-purple-s:#f4eefa;--st-purple-l:#cdb6e2;--st-head:#16202e;' +
+      'font-family:"Nunito Sans",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}',
+    '#' + ID + ' *{box-sizing:border-box}',
+    '#' + ID + ' button{font-family:inherit;transition:background-color .12s,border-color .12s,box-shadow .12s,filter .12s}',
+    '#' + ID + ' button:not(:disabled):hover{filter:brightness(.96)}',
+    '#' + ID + ' button:focus-visible,#' + ID + ' input:focus-visible,#' + ID + ' select:focus-visible,#' + ID + ' textarea:focus-visible{outline:none;box-shadow:0 0 0 3px #a9d1ff !important;border-color:var(--st-blue) !important}',
+    '#' + ID + ' input[type=checkbox],#' + ID + ' input[type=radio]{accent-color:var(--st-blue);margin:0;flex:none}',
+    '#' + ID + ' select{cursor:pointer}',
+    '#' + ID + ' ::-webkit-scrollbar{width:8px;height:8px}#' + ID + ' ::-webkit-scrollbar-thumb{background:#c9ced4;border-radius:8px}#' + ID + ' ::-webkit-scrollbar-track{background:transparent}',
+    '#' + ID + ' .st-tile:hover{border-color:var(--st-blue) !important;background:var(--st-blue-s) !important;filter:none !important}',
+    '#' + ID + ' .st-hbtn:hover{background:rgba(255,255,255,.16) !important;filter:none !important}',
+    '#' + ID + '.st-min > :not(.st-head){display:none !important}'
+  ].join('\n');
+  (document.head || document.documentElement).appendChild(sheet);
+  const panel = el('div', 'position:fixed;right:16px;bottom:16px;z-index:2147483647;width:340px;max-width:calc(100vw - 32px);' +
+    'background:var(--st-bg);color:var(--st-ink);border:1px solid rgba(16,24,40,.14);border-radius:12px;box-shadow:0 14px 36px rgba(16,24,40,.24),0 2px 6px rgba(16,24,40,.12);' +
+    'font-size:13px;line-height:1.4;overflow:hidden;text-align:left');
   panel.id = ID;
 
   // While a tool is picking jobs, pressing on a job must not start a drag or move the page.
-  // (The job list at the bottom takes focus when pressed, and the browser then jumps back to
-  // its top.) So the press is swallowed, the tool handles the click, and if anything still
+  // (The Jobs Tray under the board takes focus when pressed, and the browser can jump back to
+  // its top; the board opens the job panel.) So the press is swallowed, the tool handles the click, and if anything still
   // scrolled, the scroll is put back.
   const pickers = [];   // one per tool: { active: is it picking right now?, hit: is this target something it picks? }
   let pressSnap = null;
@@ -998,7 +1042,7 @@
   const hm = d => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const STATUS_ICON = { Scheduled: '🗓️', Dispatched: '🚚', Working: '🔧', Hold: '⏸️', Done: '✅', Canceled: '✖️', Arrived: '📍' };
   // Where a job on the board's day stands, from the board's data and today's history:
-  // { text: 'Working · arrived 10:42', title: the whole history } or null (not on the board's day).
+  // { text: '🔧 Working · arrived 10:42 AM', title: the whole history } or null (not on the board's day).
   const jobNow = j => {
     const b = board.job(j);
     if (!b) return null;
@@ -1009,7 +1053,9 @@
     if (/^scheduled$/i.test(a.status) || !a.status) {
       text = '🗓️ ' + (a.windowStart && a.windowEnd ? hm(a.windowStart) + '–' + hm(a.windowEnd) : a.start ? hm(a.start) : 'Scheduled');
     } else {
-      text = (STATUS_ICON[a.status] || '•') + ' ' + a.status + (last ? ' · ' + last.status.toLowerCase() + ' ' + hm(last.at) : '');
+      // 🚚 Dispatched 10:20 AM when the last event is the status itself; 🔧 Working · arrived 10:42 AM when not.
+      const same = last && String(last.status).toLowerCase() === String(a.status).toLowerCase();
+      text = (STATUS_ICON[a.status] || '•') + ' ' + a.status + (last ? (same ? ' ' : ' · ' + String(last.status).toLowerCase() + ' ') + hm(last.at) : '');
     }
     const title = hist.length ? 'Today: ' + hist.map(e => e.status + ' ' + hm(e.at)).join(' → ') : '';
     return { text, title };
@@ -1046,13 +1092,16 @@
     };
     const say = t => opts.say && opts.say(t);
     const box = el('div', 'display:grid;gap:6px');
-    const head = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap');
-    const count = el('span', 'font-size:12px;font-weight:700;margin-right:auto;color:var(--st-ink)');
-    const pickBtn = smallBtn('🖱️ Pick on board', () => setPicking(!picking));
-    const allBtn = smallBtn('+ Tray page', () => addListTab());
+    const head = el('div', 'display:flex;gap:6px;align-items:center');
+    const count = el('span', 'font-size:12px;font-weight:800;margin-right:auto;color:var(--st-ink)');
+    const pickBtn = smallBtn('🖱️ Pick on board', () => setPicking(!picking), 'flex:1');
+    const allBtn = smallBtn('+ Tray page', () => addListTab(), 'flex:1');
     allBtn.title = 'Adds every job showing in the Jobs Tray under the board (the tab and page that are open)';
-    const clearBtn = smallBtn('Clear', () => { if (opts.busy()) return; picked.clear(); changed(); say('List cleared.'); });
-    head.append(count, pickBtn, allBtn, clearBtn);
+    const clearBtn = smallBtn('Clear', () => { if (opts.busy()) return; picked.clear(); changed(); say('List cleared.'); }, 'border-color:transparent;background:transparent;color:var(--st-blue);padding:2px 6px;min-height:22px');
+    head.append(count, clearBtn);
+    const pickRow = el('div', 'display:flex;gap:6px');
+    pickRow.append(pickBtn, allBtn);
+    box.appendChild(pickRow);
     const list = el('div', 'max-height:180px;overflow:auto;border:1px solid var(--st-line);border-radius:8px;background:var(--st-bg)');
     const typedRow = el('div', 'display:flex;gap:6px');
     const typed = el('input', 'flex:1;min-width:0;' + FIELD);
@@ -1065,7 +1114,8 @@
     tagSel.title = 'Adds every job on the board\'s day with the tag you pick: the timeline and the whole Unassigned list (your board\'s branches). Take any off with ✕.';
     const tagRow = el('div', 'display:flex;gap:6px');
     tagRow.appendChild(tagSel);
-    box.append(head, list, typedRow);
+    box.insertBefore(head, pickRow);
+    box.append(list, typedRow);
     if (opts.byTag !== false) box.appendChild(tagRow);
 
     const paint = () => {
@@ -1184,7 +1234,7 @@
         unas.forEach(r => { if (add(r.jobId, { label: r.customer, tags: r.tags, customerId: r.customerId })) n++; });
         changed();
         const all = onLine.length + unas.length;
-        say(all ? 'Added ' + plural(n, 'job') + ' tagged ' + name + ' (' + onLine.length + ' on the timeline, ' + unas.length + ' unassigned)' + (n < all ? '. ' + (all - n) + ' were already picked or didn\'t fit' : '') + '.' : 'No jobs tagged ' + name + ' on ' + board.dayText() + '.');
+        say(all ? 'Added ' + plural(n, 'job') + ' tagged ' + name + ' (' + onLine.length + ' on the timeline, ' + unas.length + ' unassigned)' + (n < all ? '. ' + plural(all - n, 'other was', 'others were') + ' already picked or didn\'t fit' : '') + '.' : 'No jobs tagged ' + name + ' on ' + board.dayText() + '.');
       } catch (e) { say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t load the board: ' + errText(e))); }
     };
     const setPicking = on => {
@@ -1249,22 +1299,49 @@
     panel.style.right = panel.style.bottom = 'auto';
   }
 
-  const header = el('div', 'padding:10px 12px;font-weight:700;background:#222;color:#fff;display:flex;justify-content:space-between;align-items:center;cursor:move;user-select:none');
-  const titleWrap = el('span', 'display:flex;align-items:baseline;gap:6px');
-  const titleText = el('span', '', '🧰 Toolbox');
-  titleWrap.append(titleText, el('span', 'font-weight:400;font-size:11px;opacity:.7', 'v' + VERSION));
-  const closeX = el('span', 'cursor:pointer;padding:0 4px', '✕');
-  closeX.title = 'Close';
-  header.append(titleWrap, closeX);
+  // The title bar: drag it to move the Toolbox. – folds it down to just this bar.
+  const header = el('div', 'padding:8px 8px 8px 12px;font-weight:800;background:var(--st-head);color:#fff;display:flex;gap:8px;align-items:center;cursor:move;user-select:none');
+  header.className = 'st-head';
+  const titleWrap = el('span', 'display:flex;align-items:center;gap:8px;flex:1;min-width:0');
+  const titleText = el('span', 'font-size:14px;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis', '🧰 Toolbox');
+  titleWrap.append(titleText, el('span', 'flex:none;font-weight:700;font-size:10.5px;padding:1px 7px;border-radius:10px;background:rgba(255,255,255,.14);color:rgba(255,255,255,.85)', 'v' + VERSION));
+  const headBtn = (label, title) => {
+    const b = el('button', 'flex:none;width:28px;height:28px;display:grid;place-items:center;border:none;border-radius:6px;background:transparent;color:#fff;cursor:pointer;font-size:14px;line-height:1;padding:0', label);
+    b.type = 'button'; b.title = title; b.className = 'st-hbtn';
+    b.addEventListener('mousedown', e => e.stopPropagation());
+    return b;
+  };
+  const minBtn = headBtn('–', 'Fold the Toolbox down to its title bar');
+  const closeX = headBtn('✕', 'Close');
+  header.append(titleWrap, minBtn, closeX);
+  // Folded down (remembered in this browser): only the title bar shows, so the board is free.
+  const setMin = on => {
+    panel.classList.toggle('st-min', !!on);
+    minBtn.textContent = on ? '▢' : '–';
+    minBtn.title = on ? 'Open the Toolbox back up' : 'Fold the Toolbox down to its title bar';
+    set('stMin', on ? '1' : '0');
+  };
+  minBtn.onclick = () => setMin(!panel.classList.contains('st-min'));
 
-  // "What's new" line, shown once after an update.
-  const news = el('div', 'display:none;padding:7px 12px;background:#e8f4ea;color:#1b5e20;font-size:12px;border-bottom:1px solid #cfe5d2');
+  // "What's new", shown once after an update: a title line with ✕, then the text. It goes away
+  // by itself after 40 seconds (not while the mouse is on it), or with ✕.
+  const news = el('div', 'display:none;padding:8px 12px 10px;background:var(--st-green-s);color:var(--st-green-d);font-size:12px;line-height:1.45;border-bottom:1px solid var(--st-green-l)');
   const lastSeen = get('stSeenVersion');
   if (lastSeen !== VERSION) {
-    news.textContent = (lastSeen ? '✨ Updated to v' + VERSION + ': ' : '✨ ') + (WHATS_NEW[VERSION] || 'New version.');
+    const newsHead = el('div', 'display:flex;align-items:center;gap:6px;font-weight:800;font-size:12.5px;margin-bottom:2px');
+    newsHead.appendChild(el('span', 'flex:1', (lastSeen ? '✨ Updated to v' : '✨ New in v') + VERSION));
+    const newsX = el('button', 'border:0;background:transparent;color:inherit;font:inherit;font-size:13px;cursor:pointer;padding:0 2px;line-height:1;opacity:.75', '✕');
+    newsX.type = 'button'; newsX.title = 'Hide what\'s new';
+    newsHead.appendChild(newsX);
+    news.append(newsHead, el('div', '', WHATS_NEW[VERSION] || 'New version.'));
     news.style.display = 'block';
     set('stSeenVersion', VERSION);
-    setTimeout(() => { news.style.display = 'none'; }, 12000);
+    let over = false;
+    news.addEventListener('mouseenter', () => { over = true; });
+    news.addEventListener('mouseleave', () => { over = false; });
+    newsX.onclick = () => { news.style.display = 'none'; };
+    const hideLater = () => setTimeout(() => { if (over) hideLater(); else news.style.display = 'none'; }, 40000);
+    hideLater();
   }
 
   // ===================================================================
@@ -1273,7 +1350,7 @@
   // ===================================================================
   const health = (() => {
     const issues = new Map();   // key -> { tool, what, detail }
-    const bar = el('div', 'display:none;padding:7px 12px;background:#fff4e5;color:#6b3f00;font-size:12px;border-bottom:1px solid #f0d3a6');
+    const bar = el('div', 'display:none;padding:7px 12px;background:var(--st-amber-s);color:var(--st-amber);font-size:12px;border-bottom:1px solid var(--st-amber-l)');
     const barText = el('div', 'white-space:pre-wrap');
     const barBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap;margin-top:6px');
     bar.append(barText, barBtns);
@@ -1282,7 +1359,13 @@
       issues.forEach(i => lines.push('- ' + i.tool + ': ' + i.what + (i.detail ? ' [' + i.detail + ']' : '')));
       return lines.join('\n');
     };
+    // Amber for problems; green for "all good"; blue for a hint.
+    const tone = k => {
+      const c = { warn: ['--st-amber-s', '--st-amber', '--st-amber-l'], ok: ['--st-green-s', '--st-green-d', '--st-green-l'], info: ['--st-blue-s', '--st-blue', '--st-line'] }[k];
+      bar.style.background = 'var(' + c[0] + ')'; bar.style.color = 'var(' + c[1] + ')'; bar.style.borderBottomColor = 'var(' + c[2] + ')';
+    };
     const render = () => {
+      tone('warn');
       if (!issues.size) { bar.style.display = 'none'; return; }
       const list = Array.from(issues.values());
       barText.textContent = '⚠️ ServiceTitan may have changed. ' + (list.length === 1 ? 'This' : 'These') + ' may not work right now:\n' +
@@ -1341,6 +1424,7 @@
     };
     let okTimer = null;
     const flashOk = text => {
+      tone(/^✅/.test(text) ? 'ok' : 'info');
       barText.textContent = text; barBtns.textContent = '';
       bar.style.display = 'block';
       clearTimeout(okTimer);
@@ -1389,10 +1473,12 @@
     const whole = async tool => {
       if (!onBoard()) throw new Error(board.need().replace(/\.$/, '').toLowerCase());
       const s = await board.load({ fresh: true });
-      const jobs = [], byJob = new Map();
+      const jobs = [], byJob = new Map(), canceledJobs = new Set();
       let onTimeline = 0, unassignedN = 0;
+      s.appts.forEach(a => { if (!board.live(a)) canceledJobs.add(a.jobId); });
       s.appts.forEach(a => {
         if (!board.live(a)) return;
+        canceledJobs.delete(a.jobId);   // another visit of it isn't canceled
         const had = byJob.get(a.jobId);
         // A two-tech job, or a job with two visits: one entry, with every team and tag.
         if (had) { teamsOf(s, a).forEach(t => { if (had.teams.indexOf(t) < 0) had.teams.push(t); }); a.tags.forEach(t => { if (!had.tags.some(y => y.name === t.name)) had.tags.push(t); }); return; }
@@ -1404,14 +1490,14 @@
       jobs.forEach(x => { if (x.teams.length > 1) x.teams = x.teams.filter(t => t !== NO_TEAM); });
       const un = await board.unassigned(tool, { fresh: true });
       un.rows.forEach(r => {
-        if (byJob.has(r.jobId)) return;
+        if (byJob.has(r.jobId) || canceledJobs.has(r.jobId)) return;
         unassignedN++;
         const x = { jobId: r.jobId, customer: r.customer, customerId: r.customerId, tech: '', day: s.day, teams: [], tags: r.tags, unassigned: true };
         byJob.set(r.jobId, x);
         jobs.push(x);
       });
       health.clear(tool);
-      return { jobs, onTimeline, unassigned: unassignedN, canceled: un.canceled };
+      return { jobs, onTimeline, unassigned: unassignedN, canceled: un.canceled + canceledJobs.size };
     };
     // A tech's jobs on the day the board shows, from the board's data (every job, even ones
     // scrolled out of view). Canceled appointments are left out. [job numbers]
@@ -1419,20 +1505,8 @@
     return { whole, techJobs, day: () => board.day(), teams, NO_TEAM };
   })();
 
-  // Same look as the note buttons.
-  const menuBtn = (label, onClick) => {
-    const b = el('button', FULL + 'margin:5px 0;padding:8px 9px;cursor:pointer;border:1px solid #aaa;' +
-      'border-radius:6px;background:#f5f5f5;color:#111;text-align:left;font:inherit', label);
-    b.type = 'button';
-    b.addEventListener('mousedown', e => e.preventDefault());
-    b.onmouseenter = () => { b.style.background = '#e8e8e8'; };
-    b.onmouseleave = () => { b.style.background = '#f5f5f5'; };
-    b.onclick = onClick;
-    return b;
-  };
-
-  const menuPane = el('div', 'display:none;padding:8px 10px 10px');
-  const menuMsg = el('div', 'font-size:12px;color:#444;margin-bottom:4px;min-height:16px', 'Pick a tool.');
+  const menuPane = el('div', 'display:none;padding:10px 12px 12px');
+  const menuMsg = el('div', 'font-size:12px;color:var(--st-ink-2);margin-bottom:8px;min-height:16px;display:flex;gap:6px;align-items:center;flex-wrap:wrap', 'Pick a tool.');
   const notesPane = el('div', 'display:none');
   const jobsPane = el('div', 'display:none');
   const msgsPane = el('div', 'display:none');
@@ -1444,6 +1518,7 @@
   const showView = name => {
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
     titleText.textContent = TITLES[name];
+    if (name === 'menu' && typeof renderMenuMsg === 'function') renderMenuMsg();
     set('stView', name);
     if (name !== 'notes' && typeof notes !== 'undefined') notes.leave();
     if (name !== 'jobs' && typeof notify !== 'undefined') notify.leave();
@@ -1458,18 +1533,41 @@
     if (name === 'moves' && typeof moves !== 'undefined') moves.refresh();
   };
 
-  menuPane.append(
-    menuMsg,
-    menuBtn('📝 Notes', () => showView('notes')),
-    menuBtn('🔕 Job Notifications', () => showView('jobs')),
-    menuBtn('💬 Tech Messages', () => showView('msgs')),
-    menuBtn('🏢 Business Unit', () => showView('biz')),
-    menuBtn('📱 Customer Texts', () => showView('texts')),
-    menuBtn('🔀 Move Jobs', () => showView('moves'))
-  );
-  const checkRow = el('div', 'display:flex;justify-content:flex-end;margin-top:4px');
-  checkRow.append(smallBtn('🩺 Check', () => health.checkBoard(true)));
-  menuPane.appendChild(checkRow);
+  // The menu: one tile per tool.
+  const TOOLS = [
+    ['notes', '📝', 'Notes', 'Saved notes on a job\'s customer', '#fff4d6'],
+    ['jobs', '🔕', 'Job Notifications', 'Turn customers\' job notifications off or on', '#ffebdd'],
+    ['msgs', '💬', 'Tech Messages', 'Message the techs you pick', '#efe7fb'],
+    ['biz', '🏢', 'Business Unit', 'Switch jobs to a branch', '#e3effd'],
+    ['texts', '📱', 'Customer Texts', 'Text customers, confirm appointments', '#e3f5e9'],
+    ['moves', '🔀', 'Move Jobs', 'Move, add, unassign or swap techs', '#f3e9fb']
+  ];
+  const tiles = el('div', 'display:grid;gap:6px');
+  TOOLS.forEach(([key, icon, name, desc, tint]) => {
+    const b = el('button', 'display:flex;gap:10px;align-items:center;width:100%;text-align:left;padding:8px 10px;border:1px solid var(--st-line);border-radius:10px;background:var(--st-bg);cursor:pointer;color:var(--st-ink);font:inherit');
+    b.type = 'button'; b.className = 'st-tile';
+    const ic = el('span', 'flex:none;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;font-size:17px;background:' + tint, icon);
+    const tx = el('span', 'display:grid;gap:1px;min-width:0');
+    tx.append(el('span', 'font-weight:800;font-size:13px', name), el('span', 'font-size:11.5px;color:var(--st-ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis', desc));
+    b.append(ic, tx, el('span', 'margin-left:auto;color:var(--st-ink-3);font-size:16px', '›'));
+    b.addEventListener('mousedown', e => e.preventDefault());
+    b.onclick = () => showView(key);
+    tiles.appendChild(b);
+  });
+  const checkRow = el('div', 'display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px');
+  checkRow.append(el('span', 'font-size:11px;color:var(--st-ink-3)', 'Works on the Dispatch board\'s Day view.'), smallBtn('🩺 Check', () => health.checkBoard(true)));
+  menuPane.append(menuMsg, tiles, checkRow);
+  // Above the tiles: which day and branches the board shows (or what to do to use the tools).
+  const renderMenuMsg = () => {
+    menuMsg.textContent = '';
+    if (!onBoard()) { menuMsg.textContent = board.need(); return; }
+    const all = (window.App && window.App.Data && window.App.Data.BusinessUnits) || [];
+    const names = board.bus().map(id => (all.find(b => Number(b.Id) === Number(id)) || {}).Name).filter(Boolean);
+    const pill = (t, bg, ink) => el('span', 'padding:2px 8px;border-radius:10px;font-weight:700;font-size:11.5px;background:' + bg + ';color:' + ink, t);
+    menuMsg.append(pill('📅 ' + board.dayText(), 'var(--st-blue-s)', 'var(--st-blue-d)'));
+    if (names.length) menuMsg.append(pill(names.length > 2 ? names.length + ' branches' : names.join(', '), 'var(--st-soft-2)', 'var(--st-ink-2)'));
+  };
+  board.onChange(() => { if (menuPane.style.display !== 'none') renderMenuMsg(); });
   panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane, movesPane);
 
   // ===================================================================
@@ -1555,7 +1653,7 @@
 
     // ---- UI ----
     const main = el('div', 'padding:8px 10px 10px');
-    const msg = el('div', 'font-size:12px;color:#444;margin-bottom:4px;min-height:16px');
+    const msg = el('div', 'font-size:12px;color:var(--st-ink-2);margin-bottom:4px;min-height:16px');
     const say = s => { msg.textContent = s; };
     const crumb = el('div', 'display:none;align-items:center;gap:8px;margin-bottom:2px');
     const crumbName = el('span', 'font-weight:700');
@@ -1580,13 +1678,13 @@
 
     // A list button in the same style everywhere in Notes.
     const listBtn = (label, title, onClick, highlight) => {
-      const bg = highlight ? '#e3eefc' : '#f5f5f5';
-      const b = el('button', FULL + 'margin:5px 0;padding:8px 9px;cursor:pointer;border:1px solid ' + (highlight ? '#1a6ed8' : '#aaa') + ';' +
-        'border-radius:6px;background:' + bg + ';color:#111;text-align:left;font:inherit' + (highlight ? ';box-shadow:inset 3px 0 0 #1a6ed8' : ''), label);
+      const bg = highlight ? 'var(--st-blue-s)' : 'var(--st-bg)';
+      const b = el('button', FULL + 'margin:5px 0;padding:8px 10px;cursor:pointer;border:1px solid ' + (highlight ? 'var(--st-blue)' : 'var(--st-line)') + ';' +
+        'border-radius:8px;background:' + bg + ';color:var(--st-ink);text-align:left;font:inherit;font-weight:600' + (highlight ? ';box-shadow:inset 3px 0 0 var(--st-blue)' : ''), label);
       b.type = 'button';
       b.title = title;
       b.addEventListener('mousedown', e => e.preventDefault());
-      b.onmouseenter = () => { b.style.background = '#e8e8e8'; };
+      b.onmouseenter = () => { b.style.background = 'var(--st-soft-2)'; };
       b.onmouseleave = () => { b.style.background = bg; };
       b.onclick = onClick;
       return b;
@@ -1617,7 +1715,7 @@
         const isArmed = armed !== null && armed === text;
         btnList.appendChild(listBtn((isArmed ? '👉 ' : '') + num(i) + (name || '(no name)'), text + keyHint(i), () => run(text), isArmed));
       });
-      if (!list.length) btnList.appendChild(el('div', 'font-size:12px;color:#666;padding:6px 0', 'No notes in this folder yet. Click ✏️ Edit notes to add some.'));
+      if (!list.length) btnList.appendChild(el('div', 'font-size:12px;color:var(--st-ink-3);padding:6px 0', 'No notes in this folder yet. Click ✏️ Edit notes to add some.'));
       bottomRow.append(smallBtn('← Menu', () => showView('menu')), smallBtn('✏️ Edit notes', () => openEditor()), backBtn);
     };
     const openFolder = i => {
@@ -1790,10 +1888,10 @@
     const editor = el('div', 'display:none;padding:8px 10px 10px');
     const editHead = el('div', 'font-weight:700;margin-bottom:4px', '✏️ Edit notes');
     const NOTES_HINT = 'Change the button name and the note text. "Move to" puts a note in another folder. Saved in this browser.';
-    const editMsg = el('div', 'font-size:12px;color:#444;margin-bottom:6px', NOTES_HINT);
+    const editMsg = el('div', 'font-size:12px;color:var(--st-ink-2);margin-bottom:6px', NOTES_HINT);
     // "Move to" picker on each note.
     const moveTo = n => {
-      const sel = el('select', 'max-width:130px;padding:3px 4px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
+      const sel = el('select', 'max-width:130px;padding:3px 4px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;font-size:12px;color:var(--st-ink);background:var(--st-bg)');
       sel.title = 'Move to another folder';
       folders.forEach((f, i) => {
         const o = el('option', '', (i === open ? 'Stay in ' : 'Move to ') + (f.name || '(no name)'));
@@ -1837,15 +1935,15 @@
     // ---- Edit folders ----
     const folderEditor = el('div', 'display:none;padding:8px 10px 10px');
     const FOLDERS_HINT = 'Rename, reorder, add or delete folders. Saved in this browser.';
-    const fMsg = el('div', 'font-size:12px;color:#444;margin-bottom:6px', FOLDERS_HINT);
+    const fMsg = el('div', 'font-size:12px;color:var(--st-ink-2);margin-bottom:6px', FOLDERS_HINT);
     const fList = el('div', 'max-height:calc(100vh - 300px);overflow:auto;margin:0 -4px;padding:0 4px');
     // Draft rows: { name, notes, src } where src is the folder it came from (null for new ones).
     let fDraft = [];
     const renderFolders = () => {
       fList.textContent = '';
       fDraft.forEach((f, i) => {
-        const row = el('div', 'border:1px solid #ccc;border-radius:8px;padding:7px;margin-bottom:8px;background:#fafafa');
-        const name = el('input', FULL + 'padding:5px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-weight:600;color:#111;background:#fff');
+        const row = el('div', 'border:1px solid var(--st-line);border-radius:8px;padding:7px;margin-bottom:8px;background:var(--st-soft)');
+        const name = el('input', FULL + 'padding:5px 6px;border:1px solid var(--st-ctl);border-radius:5px;font:inherit;font-weight:600;color:var(--st-ink);background:var(--st-bg)');
         name.type = 'text'; name.value = f.name; name.placeholder = 'Folder name (e.g. 🧾 Billing)';
         name.oninput = () => { f.name = name.value; };
         const tools = el('div', 'display:flex;gap:4px;margin-top:5px;align-items:center');
@@ -1855,11 +1953,11 @@
         const del = smallBtn('Delete', () => {
           if (n && !del.dataset.sure) { del.dataset.sure = '1'; del.textContent = 'Delete it and its ' + n + ' note' + (n === 1 ? '' : 's') + '?'; return; }
           fDraft.splice(i, 1); renderFolders();
-        }, 'margin-left:auto;color:#b00020;border-color:#e0a0a8');
+        }, 'margin-left:auto;color:var(--st-red);border-color:var(--st-red-l)');
         tools.append(
           smallBtn('↑', moveBy(-1), i === 0 ? 'opacity:.4' : ''),
           smallBtn('↓', moveBy(1), i === fDraft.length - 1 ? 'opacity:.4' : ''),
-          el('span', 'font-size:12px;color:#666', n + ' note' + (n === 1 ? '' : 's')),
+          el('span', 'font-size:12px;color:var(--st-ink-3)', n + ' note' + (n === 1 ? '' : 's')),
           del
         );
         row.append(name, tools);
@@ -1975,7 +2073,7 @@
   // ===================================================================
   // Tool 2: Job Notifications
   // One list of jobs, filled any way you like: click jobs on the board (or a tech's name, for
-  // their whole day), ＋ Whole board, a tech from the list, + All in the list, or job numbers.
+  // their whole day), ＋ Whole board, a tech from the list, + Tray page, a tag, or job numbers.
   // Each job's setting is read as soon as it's added (🔔 on / 🔕 off, in the list and on the
   // board), so the buttons say how many jobs each one would change. Turning notifications off or
   // on works the same way it always has: every job is read fresh, and only the ones that need it
@@ -2025,48 +2123,48 @@
 
     // ---------- Layout ----------
     const wrap = el('div', 'padding:8px 10px 10px;display:grid;gap:8px');
-    const msg = el('div', 'font-size:12px;color:#444;min-height:16px;white-space:pre-wrap');
+    const msg = el('div', 'font-size:12px;color:var(--st-ink-2);min-height:16px;white-space:pre-wrap');
     const say = s => { msg.textContent = s; };
     // Add more: the whole board, or a tech's whole day.
     const addRow = el('div', 'display:flex;gap:6px;align-items:center');
     const wholeBtn = smallBtn('＋ Whole board', () => addWhole());
     wholeBtn.title = 'Adds every job on the board for the day it shows: the timeline and the whole Unassigned list (all pages, your board\'s branches). Holds and canceled appointments aren\'t included. Take any off with ✕.';
-    const techSel = el('select', 'flex:1;min-width:0;padding:5px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
+    const techSel = el('select', 'flex:1;min-width:0;padding:5px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;font-size:12px;color:var(--st-ink);background:var(--st-bg)');
     techSel.id = 'st-notify-tech';
     techSel.title = 'Adds all of a tech\'s jobs on the day the board shows. (Or click the tech\'s name on the board while 🖱️ Picking is on.)';
     addRow.append(wholeBtn, techSel);
     // Where the list stands: how many are on / off, and the buttons.
-    const statusBox = el('div', 'display:none;padding:7px 8px;border:1px solid #ddd;border-radius:8px;background:#fafafa;gap:6px');
+    const statusBox = el('div', 'display:none;padding:7px 8px;border:1px solid var(--st-line);border-radius:8px;background:var(--st-soft);gap:6px');
     const statusTop = el('div', 'display:flex;gap:6px;align-items:center');
     const statusText = el('div', 'flex:1;font-size:12px;font-weight:600;white-space:pre-wrap');
     const checkBtn = smallBtn('↻ Check', () => start('check'), 'padding:2px 7px');
     checkBtn.title = 'Reads every job on the list again and lists them as cards (changes nothing).';
     statusTop.append(statusText, checkBtn);
-    const legend = el('div', 'font-size:11px;color:#666', 'On the board: orange outline = on, gray dashed = off.');
+    const legend = el('div', 'font-size:11px;color:var(--st-ink-3)', 'On the board: orange outline = on, gray dashed = off.');
     const actions = el('div', 'display:flex;gap:6px');
-    const offBtn = smallBtn('🔕 Turn off', () => askConfirm('off'), 'flex:1;padding:7px 6px;color:#c62828;border-color:#e0a0a8;font-weight:600');
-    const onBtn = smallBtn('🔔 Turn on', () => askConfirm('on'), 'flex:1;padding:7px 6px;color:#2e7d32;border-color:#9ccc9f;font-weight:600');
+    const offBtn = smallBtn('🔕 Turn off', () => askConfirm('off'), 'flex:1;padding:7px 6px;color:var(--st-red);border-color:var(--st-red-l);font-weight:600');
+    const onBtn = smallBtn('🔔 Turn on', () => askConfirm('on'), 'flex:1;padding:7px 6px;color:var(--st-green);border-color:var(--st-green-l);font-weight:600');
     actions.append(offBtn, onBtn);
     statusBox.append(statusTop, legend, actions);
-    const confirmBox = el('div', 'display:none;padding:8px;border:1px solid #e0a0a8;background:#fdecec;border-radius:6px;font-size:12px;gap:6px;flex-wrap:wrap;align-items:center');
+    const confirmBox = el('div', 'display:none;padding:8px;border:1px solid var(--st-red-l);background:var(--st-red-s);border-radius:6px;font-size:12px;gap:6px;flex-wrap:wrap;align-items:center');
     const confirmText = el('span', 'flex-basis:100%;white-space:pre-line');
     let confirmMode = 'off';
     const confirmYes = smallBtn('Yes, turn them off', () => { confirmBox.style.display = 'none'; start(confirmMode); }, DANGER);
     confirmBox.append(confirmText, confirmYes, smallBtn('Cancel', () => { confirmBox.style.display = 'none'; }));
     // A run: progress bar, buttons, and the results as cards (the step-by-step log folds away).
     const progress = el('div', 'display:none;gap:6px');
-    const bar = el('div', 'height:6px;background:#eee;border-radius:3px;overflow:hidden');
+    const bar = el('div', 'height:6px;background:var(--st-line);border-radius:3px;overflow:hidden');
     const fill = el('div', 'height:100%;width:0;background:#ef6c00;transition:width .2s');
     bar.appendChild(fill);
     const setBar = (done, total) => { fill.style.width = (total ? Math.round(100 * done / total) : 0) + '%'; };
-    const log = el('pre', 'display:none;max-height:200px;overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
+    const log = el('pre', 'display:none;max-height:200px;overflow:auto;margin:0;padding:6px;background:var(--st-soft);border:1px solid var(--st-line);border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
     const progRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
     const requestStop = () => { stop = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping after this job...'; };
     const stopBtn = smallBtn('Stop', () => requestStop());
     let header = '';
     const copyBtn = smallBtn('Copy results', async () => { if (await copy(header + '\n\n' + cards.text() + '\n\nDetails:\n' + log.textContent)) copyBtn.textContent = 'Copied'; });
     let lastMode = null;
-    const againBtn = smallBtn('↻ Try the problem jobs again', () => { if (lastMode) start(lastMode); }, 'color:#8a5300;border-color:#e3b65c');
+    const againBtn = smallBtn('↻ Try the problem jobs again', () => { if (lastMode) start(lastMode); }, 'color:var(--st-amber);border-color:var(--st-amber-l)');
     againBtn.title = 'Runs the list again: jobs already done are only read (nothing opened); the problem jobs are opened and tried again.';
     const detailsBtn = smallBtn('📜 Details', () => {
       const show = log.style.display === 'none';
@@ -2134,14 +2232,14 @@
       const busyReading = !!reading || (t.waiting > 0 && !noAccess);
       if (noAccess) {
         statusText.textContent = '⚠️ Your ServiceTitan login doesn\'t have permission to open job records, so it can\'t see or change job notifications.';
-        statusText.style.color = '#8a5300';
+        statusText.style.color = 'var(--st-amber)';
       } else {
         const parts = ['🔔 ' + t.on + ' on', '🔕 ' + t.off + ' off'];
         if (t.unknown) parts.push('❔ ' + t.unknown + ' not read');
         if (reading) parts.push('reading ' + reading.done + ' of ' + reading.total + '…');
         else if (t.waiting) parts.push('⏳ ' + t.waiting + ' to read');
         statusText.textContent = parts.join(' · ');
-        statusText.style.color = '#111';
+        statusText.style.color = 'var(--st-ink)';
       }
       legend.style.display = t.off && !noAccess ? 'block' : 'none';
       // Each button counts the jobs it would change (those set the other way, and any not read).
@@ -2322,10 +2420,10 @@
       confirmMode = on ? 'on' : 'off';
       confirmText.textContent = lines.join('\n');
       confirmYes.textContent = on ? 'Yes, turn them on' : 'Yes, turn them off';
-      const c = on ? '#2e7d32' : '#c62828';
+      const c = on ? 'var(--st-green)' : 'var(--st-red)';
       confirmYes.style.background = c; confirmYes.style.borderColor = c;
-      confirmBox.style.borderColor = on ? '#9ccc9f' : '#e0a0a8';
-      confirmBox.style.background = on ? '#e8f5e9' : '#fdecec';
+      confirmBox.style.borderColor = on ? 'var(--st-green-l)' : 'var(--st-red-l)';
+      confirmBox.style.background = on ? 'var(--st-green-s)' : 'var(--st-red-s)';
       confirmBox.style.display = 'flex';
     };
 
@@ -2739,12 +2837,12 @@
     const views = {};
     const sub = name => { Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; }); };
     const mkView = name => { views[name] = el('div', 'display:none'); pane.appendChild(views[name]); return views[name]; };
-    const msgLine = () => el('div', 'font-size:12px;color:#444;margin-bottom:6px;min-height:16px;white-space:pre-wrap');
+    const msgLine = () => el('div', 'font-size:12px;color:var(--st-ink-2);margin-bottom:6px;min-height:16px;white-space:pre-wrap');
     const head = text => el('div', 'font-weight:700;margin-bottom:4px', text);
     const row = () => el('div', 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px');
-    const scrollBox = css => el('div', 'max-height:calc(100vh - 300px);overflow:auto;border:1px solid #ddd;border-radius:6px;padding:4px 6px;background:#fafafa;' + (css || ''));
+    const scrollBox = css => el('div', 'max-height:calc(100vh - 300px);overflow:auto;border:1px solid var(--st-line);border-radius:6px;padding:4px 6px;background:var(--st-soft);' + (css || ''));
     const check = (label, checked, onChange, disabled) => {
-      const l = el('label', 'display:flex;gap:6px;align-items:center;padding:3px 0;cursor:' + (disabled ? 'not-allowed' : 'pointer') + ';font-size:12px;' + (disabled ? 'color:#999' : ''));
+      const l = el('label', 'display:flex;gap:6px;align-items:center;padding:3px 0;cursor:' + (disabled ? 'not-allowed' : 'pointer') + ';font-size:12px;' + (disabled ? 'color:var(--st-ink-3)' : ''));
       const c = el('input'); c.type = 'checkbox'; c.checked = !!checked; c.disabled = !!disabled;
       c.onchange = () => onChange(c.checked);
       l.append(c, document.createTextNode(label));
@@ -2755,13 +2853,13 @@
     const vMain = mkView('main');
     const mainMsg = msgLine();
     const msgList = el('div', '');
-    const toLine = el('div', 'font-size:12px;margin-top:8px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;background:#fafafa');
+    const toLine = el('div', 'font-size:12px;margin-top:8px;padding:6px 8px;border:1px solid var(--st-line);border-radius:6px;background:var(--st-soft)');
     const toTools = el('div', 'display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap');
     const pickTechBtn = smallBtn('🖱️ Pick on board', () => setPicking(!picking));
     pickTechBtn.title = 'Click techs\' names on the board to add them (click again to take one off)';
     const clearSelBtn = smallBtn('Clear', () => { if (running) return; selected.clear(); saveSel(); renderMain(); });
     toTools.append(pickTechBtn, clearSelBtn);
-    const toList = el('div', 'display:none;max-height:130px;overflow:auto;border:1px solid #ddd;border-radius:6px;background:#fafafa;margin-top:4px');
+    const toList = el('div', 'display:none;max-height:130px;overflow:auto;border:1px solid var(--st-line);border-radius:6px;background:var(--st-soft);margin-top:4px');
     const modeRow = el('div', 'margin-top:8px;font-size:12px;display:grid;gap:2px');
     let mode = get(K.mode) === 'auto' ? 'auto' : 'type';
     const mkRadio = (val, label) => {
@@ -2791,7 +2889,7 @@
       msgList.textContent = '';
       list.forEach(([name, text], i) => {
         const on = i === pickIdx;
-        const b = el('button', FULL + 'margin:5px 0;padding:8px 9px;cursor:pointer;border:1px solid ' + (on ? '#1a6ed8' : '#aaa') + ';border-radius:6px;background:' + (on ? '#e3eefc' : '#f5f5f5') + ';color:#111;text-align:left;font:inherit' + (on ? ';box-shadow:inset 3px 0 0 #1a6ed8' : ''), (on ? '✔ ' : '') + (name || '(no name)'));
+        const b = el('button', FULL + 'margin:5px 0;padding:8px 10px;cursor:pointer;border:1px solid ' + (on ? 'var(--st-blue)' : 'var(--st-line)') + ';border-radius:8px;font-weight:600;background:' + (on ? 'var(--st-blue-s)' : 'var(--st-bg)') + ';color:var(--st-ink);text-align:left;font:inherit' + (on ? ';box-shadow:inset 3px 0 0 var(--st-blue)' : ''), (on ? '✔ ' : '') + (name || '(no name)'));
         b.type = 'button';
         b.title = text;
         b.addEventListener('mousedown', e => e.preventDefault());
@@ -2805,13 +2903,14 @@
       toList.textContent = '';
       toList.style.display = r.length ? 'block' : 'none';
       r.forEach(t => {
-        const line = el('div', 'display:flex;gap:6px;align-items:center;padding:3px 6px;border-bottom:1px solid #eee;font-size:12px');
+        const line = el('div', 'display:flex;gap:6px;align-items:center;padding:3px 6px;border-bottom:1px solid var(--st-line);font-size:12px');
         const nm = el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
         nm.append(el('b', '', t.name), document.createTextNode('  · ' + (t.team || 'no team') + (t.status ? ' · ' + STATUS_MARK[t.status] : '')));
         line.append(nm, smallBtn('✕', () => { if (running) return; selected.delete(t.id); saveSel(); renderMain(); }, 'padding:1px 6px'));
         toList.appendChild(line);
       });
-      toLine.textContent = 'To: ' + (r.length ? r.length + ' tech' + (r.length === 1 ? '' : 's') + ' (' + r.slice(0, 4).map(t => t.name).join(', ') + (r.length > 4 ? ', …' : '') + ')' : 'nobody picked yet. Click 👥 Choose techs.');
+      toLine.textContent = 'To: ' + (r.length ? r.length + ' tech' + (r.length === 1 ? '' : 's') + ' (' + r.slice(0, 4).map(t => t.name).join(', ') + (r.length > 4 ? ', …' : '') + ')' :
+        selected.size && !board.latest() ? 'reading the board…' : 'nobody picked yet. Click 👥 Choose techs.');
       const techsNow = boardTechs();
       const offBoard = Array.from(selected).filter(id => !techsNow.has(id)).length;
       if (offBoard && board.latest()) toLine.textContent += ' · ' + offBoard + ' picked before aren\'t on the board now (left out)';
@@ -2862,7 +2961,7 @@
     // ===== Choose techs =====
     const vPick = mkView('pick');
     const pickMsg = msgLine();
-    const search = el('input', FULL + 'padding:6px 7px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff;margin-bottom:6px');
+    const search = el('input', FULL + 'padding:6px 7px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;color:var(--st-ink);background:var(--st-bg);margin-bottom:6px');
     search.type = 'text'; search.placeholder = 'Search names'; search.id = 'st-msg-search';
     let jobsOnly = get(K.jobsOnly) !== '0';
     const jobsOnlyRow = check('Only show techs with jobs on the board', jobsOnly, v => { jobsOnly = v; set(K.jobsOnly, v ? '1' : '0'); renderPicker(); });
@@ -2913,7 +3012,7 @@
           pickList.appendChild(c);
         });
       });
-      if (!shown.length) pickList.appendChild(el('div', 'font-size:12px;color:#666;padding:6px 0', jobsOnly ? 'No allowed techs with jobs on the board. Untick "Only show techs with jobs" or check 🛡️ Who can be messaged.' : 'No allowed techs found. Check 🛡️ Who can be messaged.'));
+      if (!shown.length) pickList.appendChild(el('div', 'font-size:12px;color:var(--st-ink-3);padding:6px 0', jobsOnly ? 'No allowed techs with jobs on the board. Untick "Only show techs with jobs" or check 🛡️ Who can be messaged.' : 'No allowed techs found. Check 🛡️ Who can be messaged.'));
       const blockedCount = techs.filter(t => !canMessage(t)).length;
       pickMsg.textContent = !board.latest() ? (onBoard() ? 'Reading the board…' : board.need()) :
         selected.size + ' picked. ' + blockedCount + ' people are hidden because their team is blocked or they\'re on the never-message list.';
@@ -2929,7 +3028,7 @@
     const teamList = scrollBox('max-height:calc(50vh - 120px)');
     const neverHead = el('div', 'font-weight:700;margin-top:10px', '🚫 Never message these people');
     const neverList = el('div', 'font-size:12px;margin:4px 0');
-    const neverAdd = el('input', FULL + 'padding:6px 7px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff');
+    const neverAdd = el('input', FULL + 'padding:6px 7px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;color:var(--st-ink);background:var(--st-bg)');
     neverAdd.type = 'text'; neverAdd.placeholder = 'Type a name to block (e.g. the owner)'; neverAdd.id = 'st-msg-never';
     const neverResults = el('div', 'font-size:12px');
     let draftRules = {}, draftNever = {};
@@ -2968,7 +3067,7 @@
       });
       neverList.textContent = '';
       const ids = Object.keys(draftNever);
-      if (!ids.length) neverList.appendChild(el('div', 'color:#666', 'Nobody yet.'));
+      if (!ids.length) neverList.appendChild(el('div', 'color:var(--st-ink-3)', 'Nobody yet.'));
       ids.forEach(id => {
         const r = el('div', 'display:flex;gap:6px;align-items:center;padding:2px 0');
         r.append(el('span', 'flex:1', '🚫 ' + draftNever[id]), smallBtn('Remove', () => { delete draftNever[id]; renderSafety(); }, 'padding:2px 6px'));
@@ -2982,7 +3081,7 @@
       if (!qtext) return;
       Array.from(boardTechs().values()).filter(t => t.name.toLowerCase().indexOf(qtext) > -1 && !draftNever[t.id]).slice(0, 6).forEach(t => {
         const r = el('div', 'display:flex;gap:6px;align-items:center;padding:2px 0');
-        r.append(el('span', 'flex:1', t.name + ' · ' + (t.team || 'no team')), smallBtn('Block', () => { draftNever[t.id] = t.name; neverAdd.value = ''; renderSafety(); }, 'padding:2px 6px;color:#c62828'));
+        r.append(el('span', 'flex:1', t.name + ' · ' + (t.team || 'no team')), smallBtn('Block', () => { draftNever[t.id] = t.name; neverAdd.value = ''; renderSafety(); }, 'padding:2px 6px;color:var(--st-red)'));
         neverResults.appendChild(r);
       });
     };
@@ -3020,9 +3119,9 @@
 
     // ===== Confirm =====
     const vConfirm = mkView('confirm');
-    const confText = el('div', 'font-size:12px;white-space:pre-wrap;max-height:calc(100vh - 330px);overflow:auto;border:1px solid #ddd;border-radius:6px;padding:6px;background:#fafafa');
+    const confText = el('div', 'font-size:12px;white-space:pre-wrap;max-height:calc(100vh - 330px);overflow:auto;border:1px solid var(--st-line);border-radius:6px;padding:6px;background:var(--st-soft)');
     const confAsk = el('div', 'font-size:12px;margin-top:8px');
-    const confInput = el('input', 'width:70px;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff;margin-left:6px');
+    const confInput = el('input', 'width:70px;padding:5px 6px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;color:var(--st-ink);background:var(--st-bg);margin-left:6px');
     confInput.type = 'text'; confInput.id = 'st-msg-confirm-count'; confInput.inputMode = 'numeric';
     const confGo = smallBtn('Send', () => go(), DANGER);
     const confNav = row();
@@ -3054,9 +3153,9 @@
 
     // ===== Run =====
     const vRun = mkView('run');
-    const runMsg = el('div', 'font-size:12px;color:#444;margin-bottom:6px;min-height:16px');
-    const runLog = el('pre', 'max-height:220px;overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
-    const runStep = el('div', 'display:none;margin-top:8px;padding:8px;border:1px solid #1a6ed8;background:#e3eefc;border-radius:6px;font-size:12px');
+    const runMsg = el('div', 'font-size:12px;color:var(--st-ink-2);margin-bottom:6px;min-height:16px');
+    const runLog = el('pre', 'max-height:220px;overflow:auto;margin:0;padding:6px;background:var(--st-soft);border:1px solid var(--st-line);border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
+    const runStep = el('div', 'display:none;margin-top:8px;padding:8px;border:1px solid var(--st-blue);background:var(--st-blue-s);border-radius:6px;font-size:12px');
     const stepText = el('div', 'margin-bottom:6px');
     const stepBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
     runStep.append(stepText, stepBtns);
@@ -3238,11 +3337,11 @@
 
     // ---------- Pane ----------
     const wrap = el('div', 'padding:8px 10px 10px;display:grid;gap:8px');
-    const msg = el('div', 'font-size:12px;color:#444;min-height:16px');
+    const msg = el('div', 'font-size:12px;color:var(--st-ink-2);min-height:16px');
     const say = s => { msg.textContent = s; };
     const toRow = el('div', 'display:flex;gap:6px;align-items:center');
     const toLabel = el('span', 'font-size:12px;font-weight:600', 'Change to');
-    const branchPick = el('select', 'flex:1;min-width:0;padding:6px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff');
+    const branchPick = el('select', 'flex:1;min-width:0;padding:6px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;color:var(--st-ink);background:var(--st-bg)');
     branchPick.id = 'st-biz-branch';
     toRow.append(toLabel, branchPick);
 
@@ -3258,15 +3357,15 @@
 
     const actions = el('div', 'display:flex;flex-wrap:wrap;gap:6px');
     const checkBtn = smallBtn('Check jobs (changes nothing)', () => startRun('check'), PRIMARY);
-    const changeBtn = smallBtn('Change…', () => askConfirm('change'), 'color:#c62828;border-color:#e0a0a8');
+    const changeBtn = smallBtn('Change…', () => askConfirm('change'), 'color:var(--st-red);border-color:var(--st-red-l)');
     actions.append(checkBtn, changeBtn);
-    const confirmBox = el('div', 'display:none;padding:8px;border:1px solid #e0a0a8;background:#fdecec;border-radius:6px;font-size:12px;gap:6px;flex-wrap:wrap;align-items:center');
+    const confirmBox = el('div', 'display:none;padding:8px;border:1px solid var(--st-red-l);background:var(--st-red-s);border-radius:6px;font-size:12px;gap:6px;flex-wrap:wrap;align-items:center');
     const confirmText = el('span', 'flex-basis:100%');
     const confirmYes = smallBtn('Yes', () => {}, DANGER);
     confirmBox.append(confirmText, confirmYes, smallBtn('Cancel', () => { confirmBox.style.display = 'none'; }));
 
     const progress = el('div', 'display:none;gap:6px');
-    const log = el('pre', 'max-height:200px;overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
+    const log = el('pre', 'max-height:200px;overflow:auto;margin:0;padding:6px;background:var(--st-soft);border:1px solid var(--st-line);border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
     const progRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
     const requestStop = () => { if (!running) return; stop = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping after this job...'; };
     const stopBtn = smallBtn('Stop', () => requestStop());
@@ -3700,7 +3799,7 @@
       return 'on ' + d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
     };
     // A job's next appointment day (today or later, not Done or Canceled), read from the job panel's
-    // list of its appointments. For a job not on the board's day (another tab of the job list at
+    // list of its appointments. For a job not on the board's day (another tab of the Jobs Tray at
     // the bottom, or typed in). null if it has none.
     const nextApptDay = async jobId => {
       const t = new Date(); t.setHours(0, 0, 0, 0);
@@ -3713,7 +3812,7 @@
     };
     // A picked job's appointment day: the board's day, for a job on the board's timeline that day
     // or added by ＋ Everyone on the board (that day's timeline and Unassigned list). null otherwise
-    // (another tab of the job list, a typed job): its next appointment is then read (nextApptDay).
+    // (another tab of the Jobs Tray, a typed job): its next appointment is then read (nextApptDay).
     const jobDay = j => {
       const day = boardDay();
       if (!day) return null;
@@ -3788,7 +3887,7 @@
     };
 
     // ---------- Jobs picked on the board ----------
-    // Customer and tech: from the timeline if the job is on it, else from the job list at the bottom,
+    // Customer and tech: from the board's data if the job is on it, else from the Jobs Tray row it was picked from,
     // else from what ＋ Everyone on the board loaded (it also loads Unassigned jobs that aren't showing).
     const boardInfo = new Map();   // job -> { jobId, customer, customerId, tech }
     const jobInfo = j => {
@@ -3815,10 +3914,10 @@
     const views = {};
     const sub = name => { Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; }); };
     const mkView = name => { views[name] = el('div', 'display:none'); pane.appendChild(views[name]); return views[name]; };
-    const msgLine = () => el('div', 'font-size:12px;color:#444;margin-bottom:6px;min-height:16px;white-space:pre-wrap');
+    const msgLine = () => el('div', 'font-size:12px;color:var(--st-ink-2);margin-bottom:6px;min-height:16px;white-space:pre-wrap');
     const head = text => el('div', 'font-weight:700;margin-bottom:4px', text);
     const row = () => el('div', 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px');
-    const label = text => el('div', 'font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.03em;margin-top:10px;margin-bottom:3px', text);
+    const label = text => el('div', 'font-size:11px;font-weight:700;color:var(--st-ink-2);text-transform:uppercase;letter-spacing:.03em;margin-top:10px;margin-bottom:3px', text);
     const check = (text, checked, onChange) => {
       const l = el('label', 'display:flex;gap:6px;align-items:center;padding:2px 0;cursor:pointer;font-size:12px');
       const c = el('input'); c.type = 'checkbox'; c.checked = !!checked;
@@ -3827,7 +3926,7 @@
       return { l, c };
     };
     const chip = (text, on, onClick) => {
-      const b = el('button', 'padding:4px 8px;cursor:pointer;border:1px solid ' + (on ? '#1a6ed8' : '#aaa') + ';border-radius:14px;background:' + (on ? '#e3eefc' : '#fff') + ';color:#111;font:inherit;font-size:12px;' + (on ? 'font-weight:600' : ''), text);
+      const b = el('button', 'padding:4px 10px;cursor:pointer;border:1px solid ' + (on ? 'var(--st-blue)' : 'var(--st-ctl)') + ';border-radius:14px;background:' + (on ? 'var(--st-blue)' : 'var(--st-bg)') + ';color:' + (on ? '#fff' : 'var(--st-ink)') + ';font:inherit;font-size:12px;font-weight:' + (on ? '700' : '600'), text);
       b.type = 'button'; b.onclick = onClick;
       b.addEventListener('mousedown', e => e.preventDefault());
       return b;
@@ -3844,7 +3943,7 @@
     const vMain = mkView('main');
     const mainMsg = msgLine();
     const folderRow = el('div', 'display:flex;flex-wrap:wrap;gap:5px');
-    const ruleLine = el('div', 'font-size:11px;color:#666;margin-top:4px');
+    const ruleLine = el('div', 'font-size:11px;color:var(--st-ink-3);margin-top:4px');
     const msgList = el('div', '');
     const whoRow = el('div', 'display:grid;gap:1px');
     const whoBox = el('div', 'margin-top:4px');
@@ -3858,7 +3957,7 @@
       smallBtn('⚙️ Settings', () => openSettings())
     );
     // 📥 Check replies: only on folders whose texts ask customers to reply C.
-    const repliesBtn = smallBtn('📥 Check replies and confirm', () => openReplies(), 'margin-top:6px;' + FULL + 'padding:7px;border-color:#2e7d32;color:#1b5e20;font-weight:600');
+    const repliesBtn = smallBtn('📥 Check replies and confirm', () => openReplies(), 'margin-top:6px;' + FULL + 'padding:7px;border-color:var(--st-green);color:var(--st-green-d);font-weight:600');
     repliesBtn.title = 'Reads the replies to this folder\'s texts from everyone on the board (or the jobs you picked) for the day shown. Customers who answered C get their appointment confirmed; anyone who answered something else is listed for you to read. Nothing is sent.';
     vMain.append(mainMsg, label('Folder'), folderRow, ruleLine, label('Message'), msgList, label('Who'), whoRow, whoBox, label('How'), modeRow, startBtn, repliesBtn, mainNav);
     const say = s => { mainMsg.textContent = s; };
@@ -3904,7 +4003,7 @@
       if (!holds) return;
       const groups = new Map();
       holds.jobs.forEach(h => { const g = groupOf(h.type); if (!groups.has(g)) groups.set(g, new Map()); const m = groups.get(g); m.set(h.type, (m.get(h.type) || 0) + 1); });
-      const box = el('div', 'max-height:190px;overflow:auto;border:1px solid #ddd;border-radius:6px;padding:3px 6px;background:#fafafa;margin-top:5px');
+      const box = el('div', 'max-height:190px;overflow:auto;border:1px solid var(--st-line);border-radius:6px;padding:3px 6px;background:var(--st-soft);margin-top:5px');
       Array.from(groups.entries()).sort((a, b) => sumOf(b[1]) - sumOf(a[1])).forEach(([g, types]) => {
         const tnames = Array.from(types.keys());
         const onCount = tnames.filter(t => typeSel.has(t)).length;
@@ -3946,7 +4045,7 @@
     everyoneBtn.title = 'Adds every job on the board for the day it shows: the timeline and the whole Unassigned list (all pages, your board\'s branches). Holds aren\'t included. Take anyone off with ✕.';
     // ＋ A department…: everyone on one team's schedule (the team names on the board, like Level 1
     // Service or Installers), or the Unassigned list. Pick more than one to add them all.
-    const deptSel = el('select', 'padding:4px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-size:12px;color:#111;background:#fff;max-width:100%;cursor:pointer');
+    const deptSel = el('select', 'padding:4px 6px;border:1px solid var(--st-ctl);border-radius:5px;font:inherit;font-size:12px;color:var(--st-ink);background:var(--st-bg);max-width:100%;cursor:pointer');
     deptSel.title = 'Adds the jobs of one department (a team on the board, like Level 1 Service or Installers) on the day the board shows, or the whole Unassigned list. Pick another to add it too. Take anyone off with ✕.';
     const UNASSIGNED_OPT = '\u0001unassigned';
     let deptKey = null;
@@ -4031,10 +4130,10 @@
       repliesBtn.style.display = isConfirmFolder(f) ? 'block' : 'none';
       repliesBtn.disabled = !onBoard(); repliesBtn.style.opacity = onBoard() ? '1' : '.5';
       msgList.textContent = '';
-      if (!f.msgs.length) msgList.appendChild(el('div', 'font-size:12px;color:#666', 'No messages in this folder yet. Use ✏️ Edit messages.'));
+      if (!f.msgs.length) msgList.appendChild(el('div', 'font-size:12px;color:var(--st-ink-3)', 'No messages in this folder yet. Use ✏️ Edit messages.'));
       f.msgs.forEach(([name, text], i) => {
         const on = i === curMsgIdx();
-        const b = el('button', FULL + 'margin:4px 0;padding:7px 9px;cursor:pointer;border:1px solid ' + (on ? '#1a6ed8' : '#aaa') + ';border-radius:6px;background:' + (on ? '#e3eefc' : '#f5f5f5') + ';color:#111;text-align:left;font:inherit' + (on ? ';box-shadow:inset 3px 0 0 #1a6ed8' : ''), (on ? '✔ ' : '') + (name || '(no name)'));
+        const b = el('button', FULL + 'margin:4px 0;padding:8px 10px;cursor:pointer;border:1px solid ' + (on ? 'var(--st-blue)' : 'var(--st-line)') + ';border-radius:8px;font-weight:600;background:' + (on ? 'var(--st-blue-s)' : 'var(--st-bg)') + ';color:var(--st-ink);text-align:left;font:inherit' + (on ? ';box-shadow:inset 3px 0 0 var(--st-blue)' : ''), (on ? '✔ ' : '') + (name || '(no name)'));
         b.type = 'button'; b.title = text;
         b.addEventListener('mousedown', e => e.preventDefault());
         b.onclick = () => { picks[f.name] = i; set(K.pick, JSON.stringify(picks)); renderMain(); };
@@ -4090,11 +4189,11 @@
     const renderFolders = () => {
       foldBox.textContent = '';
       draftF.forEach((f, i) => {
-        const r = el('div', 'border:1px solid #ccc;border-radius:8px;padding:7px;margin-bottom:8px;background:#fafafa;font-size:12px');
-        const nm = el('input', FULL + 'padding:5px 6px;border:1px solid #aaa;border-radius:5px;font:inherit;font-weight:600;color:#111;background:#fff');
+        const r = el('div', 'border:1px solid var(--st-line);border-radius:8px;padding:7px;margin-bottom:8px;background:var(--st-soft);font-size:12px');
+        const nm = el('input', FULL + 'padding:5px 6px;border:1px solid var(--st-ctl);border-radius:5px;font:inherit;font-weight:600;color:var(--st-ink);background:var(--st-bg)');
         nm.type = 'text'; nm.value = f.name; nm.placeholder = 'Folder name'; nm.oninput = () => { f.name = nm.value; };
         const rule = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px');
-        const days = el('input', 'width:46px;padding:3px 5px;border:1px solid #aaa;border-radius:5px;font:inherit;color:#111;background:#fff');
+        const days = el('input', 'width:46px;padding:3px 5px;border:1px solid var(--st-ctl);border-radius:5px;font:inherit;color:var(--st-ink);background:var(--st-bg)');
         days.type = 'number'; days.min = '0'; days.max = '365'; days.value = String(f.days);
         days.oninput = () => { f.days = Math.max(0, Math.min(365, parseInt(days.value, 10) || 0)); };
         rule.append(document.createTextNode('Skip if texted in the last'), days, document.createTextNode('days (0 = never skip, 1 = today)'));
@@ -4105,8 +4204,8 @@
         const tools = el('div', 'display:flex;gap:4px;margin-top:5px;align-items:center');
         const mv = d => () => { const j = i + d; if (j < 0 || j >= draftF.length) return; const t = draftF[i]; draftF[i] = draftF[j]; draftF[j] = t; renderFolders(); };
         tools.append(smallBtn('↑', mv(-1), i === 0 ? 'opacity:.4' : ''), smallBtn('↓', mv(1), i === draftF.length - 1 ? 'opacity:.4' : ''),
-          el('span', 'flex:1;color:#666;padding-left:4px', s1(f.msgs.length, 'message')),
-          smallBtn('Delete', () => { draftF.splice(i, 1); renderFolders(); }, 'color:#b00020;border-color:#e0a0a8'));
+          el('span', 'flex:1;color:var(--st-ink-3);padding-left:4px', s1(f.msgs.length, 'message')),
+          smallBtn('Delete', () => { draftF.splice(i, 1); renderFolders(); }, 'color:var(--st-red);border-color:var(--st-red-l)'));
         r.append(nm, rule, sameOnly.l, confirms.l, tools);
         foldBox.appendChild(r);
       });
@@ -4140,10 +4239,10 @@
     // ===== Settings =====
     const vSet = mkView('settings');
     const setMsg = msgLine();
-    const nameIn = el('input', FULL + 'padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff');
+    const nameIn = el('input', FULL + 'padding:5px 6px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;color:var(--st-ink);background:var(--st-bg)');
     nameIn.type = 'text';
     const allChk = check('Text every mobile number on the Bill To (not just the primary)', allMobiles, () => {});
-    const neverIn = el('textarea', FULL + 'padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff;resize:vertical');
+    const neverIn = el('textarea', FULL + 'padding:5px 6px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;font-size:12px;color:var(--st-ink);background:var(--st-bg);resize:vertical');
     neverIn.rows = 4; neverIn.placeholder = 'One phone number per line';
     const setNav = row();
     setNav.append(
@@ -4159,7 +4258,7 @@
     vSet.append(head('⚙️ Settings'), setMsg,
       label('Your name for {dispatcher}'), nameIn,
       label('Numbers'), allChk.l,
-      el('div', 'font-size:11px;color:#666;margin:2px 0 0 20px', 'Off: the primary number, or their first mobile if the primary is a landline.'),
+      el('div', 'font-size:11px;color:var(--st-ink-3);margin:2px 0 0 20px', 'Off: the primary number, or their first mobile if the primary is a landline.'),
       label('🚫 Never text these numbers'), neverIn, setNav);
     const openSettings = () => {
       if (running) return;
@@ -4179,9 +4278,9 @@
     // repeat rule, blocked in ServiceTitan). This screen then shows exactly who will be texted.
     const vConfirm = mkView('confirm');
     const confHead = head('Check before texting');
-    const confText = el('div', 'font-size:12px;white-space:pre-wrap;max-height:calc(100vh - 340px);overflow:auto;border:1px solid #ddd;border-radius:6px;padding:6px;background:#fafafa');
+    const confText = el('div', 'font-size:12px;white-space:pre-wrap;max-height:calc(100vh - 340px);overflow:auto;border:1px solid var(--st-line);border-radius:6px;padding:6px;background:var(--st-soft)');
     const confAsk = el('div', 'font-size:12px;margin-top:8px');
-    const confInput = el('input', 'width:70px;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff;margin-left:6px');
+    const confInput = el('input', 'width:70px;padding:5px 6px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;color:var(--st-ink);background:var(--st-bg);margin-left:6px');
     confInput.type = 'text'; confInput.inputMode = 'numeric'; confInput.id = 'st-ct-confirm-count';
     const confGo = smallBtn('Send', () => go(), DANGER);
     const confNav = row();
@@ -4253,15 +4352,15 @@
         confAsk.textContent = 'Type only: it opens each conversation and types the message. You press Send, and it moves to the next one.';
         confGo.textContent = 'Start';
       }
-      confAsk.appendChild(el('div', 'color:#666;margin-top:4px', 'Keep this tab on screen while it runs (browsers slow down hidden tabs). About 3 to 4 seconds per text.'));
+      confAsk.appendChild(el('div', 'color:var(--st-ink-3);margin-top:4px', 'Keep this tab on screen while it runs (browsers slow down hidden tabs). About 3 to 4 seconds per text.'));
     };
     confInput.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); go(); } };
 
     // ===== Run =====
     const vRun = mkView('run');
-    const runMsg = el('div', 'font-size:12px;color:#444;margin-bottom:6px;min-height:16px');
-    const runLog = el('pre', 'max-height:220px;overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
-    const runStep = el('div', 'display:none;margin-top:8px;padding:8px;border:1px solid #1a6ed8;background:#e3eefc;border-radius:6px;font-size:12px');
+    const runMsg = el('div', 'font-size:12px;color:var(--st-ink-2);margin-bottom:6px;min-height:16px');
+    const runLog = el('pre', 'max-height:220px;overflow:auto;margin:0;padding:6px;background:var(--st-soft);border:1px solid var(--st-line);border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
+    const runStep = el('div', 'display:none;margin-top:8px;padding:8px;border:1px solid var(--st-blue);background:var(--st-blue-s);border-radius:6px;font-size:12px');
     const stepText = el('div', 'margin-bottom:6px');
     const stepBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
     runStep.append(stepText, stepBtns);
@@ -4906,10 +5005,10 @@
 
     const vReplies = mkView('replies');
     const repHead = head('📥 Check replies');
-    const repMsg = el('div', 'font-size:12px;color:#444;margin-bottom:6px;min-height:16px;white-space:pre-wrap');
+    const repMsg = el('div', 'font-size:12px;color:var(--st-ink-2);margin-bottom:6px;min-height:16px;white-space:pre-wrap');
     // The report: every customer as a card, in sections (customerCards, shared with other tools).
     const cards = customerCards();
-    const repGo = smallBtn('Confirm', () => confirmRun(), 'background:#2e7d32;color:#fff;border-color:#2e7d32;font-weight:600;');
+    const repGo = smallBtn('Confirm', () => confirmRun(), 'background:var(--st-green);color:#fff;border-color:var(--st-green);font-weight:600;');
     const repStop = smallBtn('Stop', () => { if (!rBusy) return; rStop = true; repStop.disabled = true; repStop.textContent = 'Stopping...'; });
     const repCopy = smallBtn('Copy results', async () => { if (await copy(repMsg.textContent + '\n\n' + cards.text())) repCopy.textContent = 'Copied'; });
     const repBack = smallBtn('← Back', () => { rCheckId++; sub('main'); renderMain(); });
@@ -5041,7 +5140,7 @@
       // confirmed in ServiceTitan (a C to ServiceTitan's own reminder, or a coworker), a note saying so.
       const addable = (from, x, status) => {
         const it = item(x, status);
-        if (todoOf(x).length) it.actions = [{ label: '✅ Add to confirm', style: 'border-color:#2e7d32;color:#1b5e20;font-weight:600',
+        if (todoOf(x).length) it.actions = [{ label: '✅ Add to confirm', style: 'border-color:var(--st-green);color:var(--st-green-d);font-weight:600',
           title: 'Puts them on the list to confirm. Nothing is confirmed until you press Confirm at the bottom.', onClick: () => move(x, from, 'yes') }];
         else it.note = '☑️ Already confirmed in ServiceTitan';
         return it;
@@ -5189,7 +5288,7 @@
     const skillsOn = () => { try { return !(window.App && window.App.Data && window.App.Data.EnableSkillsManagement === false); } catch (e) { return true; } };
 
     const seenNames = new Map();   // tech id -> name, from the board
-    // One appointment from the board's data (timeline, job list or the Unassigned list).
+    // One appointment from the Unassigned list (the same request the Jobs Tray answers from).
     const rowOf = x => {
       const r = {
         apptId: u(x.Id), jobId: S(u(x.JobId)), number: u(x.AppointmentNumber),
@@ -5242,9 +5341,12 @@
       catch (e) {
         if (st.isSignedOut(e)) throw e;
         // The page's own list has no skills in it, so skills can't be checked with it.
+        // Then the techs the board shows (no managed flag or skills there either).
         const D = (window.App && window.App.Data) || {};
         const list = D.Technicians || D.ActiveTechnicians || [];
         techList = list.filter(t => t && t.Id != null).map(t => ({ id: t.Id, name: norm(t.Name), active: t.Active !== false, managed: !!t.IsManagedTechnician, skillIds: null }));
+        const s = board.latest();
+        if (!techList.length && s) techList = s.techs.map(t => ({ id: t.id, name: t.name, active: true, managed: null, skillIds: null }));
         techsNote = 'couldn\'t load the techs\' skills (' + errText(e) + ')';
         if (e && e.kind === 'bad') health.flag(TOOL, 'can\'t read the technician list', '/app/api/data/technicians');
       }
@@ -5256,7 +5358,7 @@
 
     // ---------- Pane ----------
     const wrap = el('div', 'padding:8px 10px 10px;display:grid;gap:8px');
-    const msg = el('div', 'font-size:12px;color:#444;min-height:16px');
+    const msg = el('div', 'font-size:12px;color:var(--st-ink-2);min-height:16px');
     const say = s => { msg.textContent = s; };
     let mode = MODES.some(m => m[0] === get('stMoveMode')) ? get('stMoveMode') : 'move';
     const modeBox = el('div', 'display:grid;gap:1px;font-size:12px');
@@ -5279,10 +5381,10 @@
       const box = el('div', 'display:grid;gap:3px');
       const top = el('div', 'display:flex;gap:6px;align-items:center');
       const lab = el('span', 'font-size:12px;font-weight:600;min-width:46px', label);
-      const find = el('input', 'flex:1;min-width:0;padding:4px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
+      const find = el('input', 'flex:1;min-width:0;padding:4px 6px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;font-size:12px;color:var(--st-ink);background:var(--st-bg)');
       find.type = 'text'; find.placeholder = 'Type to find a tech';
       top.append(lab, find);
-      const sel = el('select', FULL + 'padding:5px;border:1px solid #aaa;border-radius:6px;font:inherit;color:#111;background:#fff');
+      const sel = el('select', FULL + 'padding:5px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;color:var(--st-ink);background:var(--st-bg)');
       box.append(top, sel);
       const fill = () => {
         const keep = sel.value || get(key) || '';
@@ -5310,7 +5412,7 @@
       swapJobs: 'Pick two jobs. Each one gets the other\'s tech(s).',
       swapDays: 'Pick two techs. Every open job of one goes to the other, on the day the board shows.'
     };
-    const hint = el('div', 'font-size:12px;color:#555;background:#f3edf8;border-radius:6px;padding:4px 7px');
+    const hint = el('div', 'font-size:12px;color:var(--st-ink-2);background:var(--st-purple-s);border-radius:6px;padding:4px 7px');
     const toPick = techPicker('To', '', 'stMoveTo');
     const fromPick = techPicker('From', 'Anyone on the job', 'stMoveFrom');
     const aPick = techPicker('Tech A', '', 'stMoveA');
@@ -5344,7 +5446,7 @@
     const reviewStopBtn = smallBtn('Stop checking', () => { reviewStop = true; reviewStopBtn.disabled = true; });
     actions.append(reviewBtn, reviewStopBtn, undoBtn);
 
-    const reviewBox = el('div', 'display:none;padding:8px;border:1px solid #c9b3dd;background:#f6f0fb;border-radius:6px;font-size:12px;gap:6px');
+    const reviewBox = el('div', 'display:none;padding:8px;border:1px solid var(--st-purple-l);background:var(--st-purple-s);border-radius:6px;font-size:12px;gap:6px');
     const reviewText = el('div', 'white-space:pre-wrap;max-height:260px;overflow:auto');
     const reviewOpts = el('div', 'display:grid;gap:3px');
     const reviewBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
@@ -5354,7 +5456,7 @@
     reviewBox.append(reviewText, reviewOpts, reviewBtns);
 
     const progress = el('div', 'display:none;gap:6px');
-    const log = el('pre', 'max-height:220px;overflow:auto;margin:0;padding:6px;background:#f6f6f6;border:1px solid #ddd;border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
+    const log = el('pre', 'max-height:220px;overflow:auto;margin:0;padding:6px;background:var(--st-soft);border:1px solid var(--st-line);border-radius:6px;white-space:pre-wrap;font:12px/1.35 ui-monospace,Consolas,monospace');
     const progRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
     // Up to three jobs are worked on at once, so Stop lets the ones already started finish.
     const requestStop = () => { if (!running) return; stop = true; stopBtn.disabled = true; stopBtn.textContent = 'Stopping after the jobs in progress...'; };
@@ -5495,8 +5597,11 @@
     const managedProblem = (total, fin) => {
       if (!(total > 0) || !fin.length) return '';
       if (fin.some(id => { const t = techById(id); return t && t.managed; })) return '';
-      const unknown = fin.filter(id => !techById(id));
-      if (unknown.length) return 'couldn\'t confirm a managed tech on this $' + Number(total).toFixed(2) + ' job (' + names(unknown) + (unknown.length === 1 ? ' isn\'t' : ' aren\'t') + ' in the tech list). Check it by hand';
+      // Unknown: not in the tech list, or the list didn't load (the board's own tech list doesn't say).
+      const unknown = fin.filter(id => { const t = techById(id); return !t || t.managed == null; });
+      const missing = unknown.filter(id => !techById(id));
+      if (unknown.length) return 'couldn\'t confirm a managed tech on this $' + Number(total).toFixed(2) + ' job (' +
+        (missing.length ? names(missing) + (missing.length === 1 ? ' isn\'t' : ' aren\'t') + ' in the tech list' : 'the tech list didn\'t load') + '). Check it by hand';
       return 'ServiceTitan won\'t allow it: ' + names(fin) + (fin.length === 1 ? ' isn\'t a managed tech' : ' aren\'t managed techs') +
         ', so the invoice must be $0 (it\'s $' + Number(total).toFixed(2) + '). Put a managed tech on it too';
     };
@@ -6122,7 +6227,7 @@
   // Dragging, closing, and starting up
   // ===================================================================
   header.addEventListener('mousedown', e => {
-    if (e.target === closeX) return;
+    if (e.target === closeX || e.target === minBtn) return;
     e.preventDefault();
     const r = panel.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
     const move = ev => {
@@ -6141,7 +6246,7 @@
 
   // Closing while a tool is running (Job Notifications, Tech Messages, Business Unit, Customer Texts or Move Jobs) would
   // hide the panel but leave the run going in the background. So ask first, stop the run, then close.
-  const closeBar = el('div', 'display:none;padding:8px 12px;background:#fdecec;color:#7a1010;font-size:12px;border-bottom:1px solid #e0a0a8');
+  const closeBar = el('div', 'display:none;padding:8px 12px;background:var(--st-red-s);color:var(--st-red-d);font-size:12px;border-bottom:1px solid var(--st-red-l)');
   const closeText = el('div', 'margin-bottom:6px');
   const closeBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
   closeBar.append(closeText, closeBtns);
@@ -6157,6 +6262,7 @@
     moves.cleanup();
     board.stop();
     panel.remove();
+    sheet.remove();
     delete window.__stToolbox;
   };
   const close = () => {
@@ -6164,6 +6270,7 @@
     const found = runners.find(r => r[0].isRunning());
     if (!found) return finishClose();
     if (closing) return;
+    setMin(false);
     const runner = found[0];
     closeText.textContent = found[1] + ' is still running. Closing now would leave it running out of sight.';
     closeBtns.textContent = '';
@@ -6190,6 +6297,7 @@
   window.__stToolbox = { version: VERSION, close };
 
   document.body.appendChild(panel);
+  if (get('stMin') === '1') setMin(true);
   const startView = get('stView');
   showView(['notes', 'jobs', 'msgs', 'biz', 'texts', 'moves'].indexOf(startView) > -1 ? startView : 'menu');
   health.checkBoard(false);

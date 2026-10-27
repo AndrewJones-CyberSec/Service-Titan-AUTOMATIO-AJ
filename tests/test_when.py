@@ -30,7 +30,7 @@ def open_board(page, saved=None, flag=None):
     B(page, 'Customer Texts').click()
 
 def set_board_day(page, days):
-    page.evaluate("n => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + n); document.querySelector('.job-list').__vm.Date(d); }", days)
+    page.evaluate("n => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + n); NB.setDay(d); }", days)
 
 def long_date(page, days):
     return page.evaluate("n => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + n); return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }); }", days)

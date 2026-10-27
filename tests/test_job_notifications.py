@@ -28,7 +28,7 @@ def wait_read(page, want, t=15):
 def btn_text(page, start): return page.evaluate("(s) => { const b = Array.from(document.querySelectorAll('#st-toolbox button')).find(b => b.offsetParent && b.textContent.indexOf(s) === 0); return b ? b.textContent + (b.disabled ? ' [disabled]' : '') : ''; }", start)
 def sections(page): return page.evaluate("() => Array.from(document.querySelectorAll('#st-toolbox .st-cust-section')).map(s => s.getAttribute('data-title'))")
 def row_of(page, j): return page.evaluate("(j) => { const r = Array.from(document.querySelectorAll('#st-toolbox b')).find(b => b.textContent === '#' + j); return r ? r.parentElement.textContent : ''; }", j)
-def outline(page, j): return page.evaluate("(j) => getComputedStyle(document.querySelector('a.appointment[data-job-id=\"' + j + '\"]')).outlineStyle", j)
+def outline(page, j): return page.evaluate("(j) => getComputedStyle(sq('a.appointment[data-job-id=\"' + j + '\"]')).outlineStyle", j)
 def add_typed(page, nums):
     page.fill('#st-toolbox input:visible[placeholder^="Or type job"]', nums)
     page.locator('#st-toolbox button:visible', has_text='Add').filter(has_not_text='All').filter(has_not_text='note').first.click()
@@ -44,6 +44,7 @@ with sync_playwright() as p:
     t = T(page)
     check(page.locator('#st-toolbox input[name="st-notify-src"]').count() == 0, 'no more "A tech\'s jobs" / "Jobs I pick" switch')
     check('0 jobs picked' in t and B(page, 'Whole board').count() == 1, 'one list with ＋ Whole board')
+    page.wait_for_function("() => /\\(\\d+ jobs?\\)/.test(document.getElementById('st-notify-tech').textContent)", timeout=10000)
     check('Tech One  (8 jobs)' in page.evaluate("() => document.getElementById('st-notify-tech').textContent"), 'tech list shows techs with job counts')
     check(B(page, 'Turn off').count() == 0, 'no turn buttons until there are jobs')
 
@@ -52,8 +53,8 @@ with sync_playwright() as p:
     page.click('a.appointment[data-job-id="111111"]')
     page.click('.job-list tr.qa-job-901003 td')
     check(page.evaluate("() => window.opened.length") == 0, 'clicks captured while picking')
-    B(page, '+ All in the list').click()
-    check('3 jobs picked' in T(page) and 'Added 1 job from the Hold list' in T(page), 'whole list tab added (no duplicates)')
+    B(page, '+ Tray page').click()
+    check('3 jobs picked' in T(page) and 'Added 1 job from the Hold tab' in T(page), 'whole Jobs Tray page added (no duplicates)')
     page.evaluate("() => { window.NOTIF = { '222222': false }; window.indexOpened = []; }")
     add_typed(page, '222222')
     check('4 jobs picked' in T(page) and 'Tray Cust 901004' in T(page), 'typed job added; list labels show customer')
@@ -94,7 +95,7 @@ with sync_playwright() as p:
     s = wait_read(page, '0 on')
     check('🔔 0 on' in s and '🔕 4 off' in s and btn_text(page, '🔕 Turn off') == '🔕 Turn off (0) [disabled]', 'status updated after the run: %s / %s' % (s, btn_text(page, '🔕 Turn off')))
     check(all(outline(page, j) == 'dashed' for j in ['111111']), 'board shows them off')
-    check(page.evaluate("() => location.hash").startswith('#/DispatchBoard'), 'back on the board')
+    check(page.evaluate("() => location.hash").startswith('#/widget-app/dispatch-center'), 'back on the board')
 
     # ---- Turn back ON ----
     page.evaluate("() => { window.NOTIF['901003'] = true; window.indexOpened = []; }")
@@ -213,15 +214,16 @@ with sync_playwright() as p:
     B(page, 'Clear').click()
 
     # ---- Picking far down a long list must not jump the page ----
+    page.evaluate("() => { window.FILLER = true; NB.render(); }")
     B(page, 'Pick on board').click()
-    page.evaluate("() => document.querySelector('.job-list tr.qa-job-950055').scrollIntoView({ block: 'center' })")
+    page.evaluate("() => sq('.job-list tr.qa-job-950055').scrollIntoView({ block: 'center' })")
     y0 = page.evaluate("() => window.scrollY")
     for j in ['950054', '950055', '950056']:
         page.click('.job-list tr.qa-job-%s td' % j)
     time.sleep(0.4)
     y1 = page.evaluate("() => window.scrollY")
     check(abs(y1 - y0) < 2 and '3 jobs picked' in T(page), 'no jump when picking deep in the list (scroll %d -> %d)' % (y0, y1))
-    check(page.evaluate("() => document.activeElement === document.querySelector('.job-list table')") is False, 'the list did not take focus')
+    check(page.evaluate("() => document.activeElement === sq('.job-list table')") is False, 'the list did not take focus')
     B(page, 'Picking: ON').click()
     page.evaluate("() => { window.opened = []; }")
     page.click('.job-list tr.qa-job-950057 td')
@@ -231,7 +233,7 @@ with sync_playwright() as p:
     page.evaluate("() => { window.opened = []; window.scrollTo(0, 0); }")
     # Timeline: pressing a job while picking can't start a drag
     B(page, 'Pick on board').click()
-    page.evaluate("() => { window.pressed = 0; document.querySelector('a.appointment').parentElement.addEventListener('mousedown', () => window.pressed++); }")
+    page.evaluate("() => { window.pressed = 0; sq('a.appointment').parentElement.addEventListener('mousedown', () => window.pressed++); }")
     page.click('a.appointment[data-job-id="333333"]')
     check(page.evaluate("() => window.pressed") == 0 and '4 jobs picked' in T(page), 'timeline press swallowed while picking (no drag start)')
     B(page, 'Picking: ON').click()
@@ -240,7 +242,7 @@ with sync_playwright() as p:
     page.evaluate("() => { window.opened = []; }")
 
     # ---- Highlights only while the tool is open ----
-    lit = lambda: page.evaluate("() => ({ bubble: getComputedStyle(document.querySelector('a.appointment[data-job-id=\"333333\"]')).outlineStyle, row: getComputedStyle(document.querySelector('.job-list tr.qa-job-950055 > td')).backgroundColor })")
+    lit = lambda: page.evaluate("() => ({ bubble: getComputedStyle(sq('a.appointment[data-job-id=\"333333\"]')).outlineStyle, row: getComputedStyle(sq('.job-list tr.qa-job-950055 > td')).backgroundColor })")
     l0 = lit()
     check(l0['bubble'] == 'solid' and l0['row'] not in ('rgba(0, 0, 0, 0)', 'transparent'), 'picked jobs highlighted while Job Notifications is open')
     B(page, '← Menu').click()
@@ -263,6 +265,7 @@ with sync_playwright() as p:
     page.goto(URL + '?full#/DispatchBoard'); page.reload(); page.wait_for_selector('a.appointment')
     page.evaluate(TOOLBOX)
     B(page, 'Job Notifications').click()
+    page.wait_for_function("() => /\\(\\d+ jobs?\\)/.test(document.getElementById('st-notify-tech').textContent)", timeout=10000)
     techs = page.evaluate("() => document.getElementById('st-notify-tech').textContent")
     check('Tech One  (9 jobs)' in techs and 'Tech Two  (2 jobs)' in techs, "tech counts include jobs that aren't drawn, and leave out canceled / other days: %s" % techs)
     B(page, 'Whole board').click()

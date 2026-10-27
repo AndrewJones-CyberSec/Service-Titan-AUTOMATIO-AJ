@@ -339,12 +339,11 @@ with sync_playwright() as p:
 
     # A Needs a look card whose appointment is already confirmed in ServiceTitan: no Add, says why.
     page.evaluate("() => { Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); window.CONFIRMED[106002] = true; }")
-    page.evaluate("() => { const vm = document.querySelector('.job-list').__vm; vm.Assignments(vm.Assignments().map(a => Object.assign({}, a, { IsConfirmed: !!window.CONFIRMED[a.Id] }))); }")
     chats(page, {LOU: {'unread': False, 'msgs': [msg(SENT, True, 3), msg('What time?', hours=2)]}})
     run_check(page)
     check(card('Lou Ng').locator('button', has_text='Add to confirm').count() == 0 and 'Already confirmed in ServiceTitan' in card('Lou Ng').inner_text(), 'already confirmed in ServiceTitan: no Add button, and the card says why')
     back(page)
-    page.evaluate("() => { delete window.CONFIRMED[106002]; const vm = document.querySelector('.job-list').__vm; vm.Assignments(vm.Assignments().map(a => Object.assign({}, a, { IsConfirmed: false }))); }")
+    page.evaluate("() => { delete window.CONFIRMED[106002]; }")
 
     # Added, but a new message comes in before Confirm: not confirmed.
     page.evaluate("() => { Object.keys(window.CONFIRMED).forEach(k => delete window.CONFIRMED[k]); }")

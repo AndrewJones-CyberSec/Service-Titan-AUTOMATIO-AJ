@@ -5,8 +5,9 @@
   .appointment{display:inline-block;margin:4px;padding:6px 10px;background:#cfe;border:1px solid #9c9;cursor:pointer;color:#000;text-decoration:none}
   .chat{position:fixed;left:0;top:0;bottom:0;width:320px;background:#eef;padding:8px}
 </style>
+<script src="newboard.js"></script>
 <script>
-  // Tiny stand-in for Knockout.
+  // Tiny stand-in for Knockout (the Chat Center page still uses it).
   (function () {
     const obs = v => { const f = function (x) { if (arguments.length) { v = x; return f; } return v; }; f.__obs = true; return f; };
     const toJS = v => { if (v && v.__obs) v = v(); if (Array.isArray(v)) return v.map(toJS); if (v && typeof v === 'object' && !(v instanceof Date)) { const o = {}; Object.keys(v).forEach(k => { o[k] = toJS(v[k]); }); return o; } return v; };
@@ -184,36 +185,33 @@
     return realFetch(url, opts);
   };
 
+  // The new Dispatch board (newboard.js). ?teams: laid out like the real one, two teams:
+  // Level 1 Service (Paxton: 6001, 6003, 6005) and Installers (Ivan: 6003 with Paxton, 6004, 6002).
+  // Otherwise every job is Paxton's except 6003, whose tech has no name (no {tech}).
+  // 6004's appointment is Canceled; 6005 is yesterday's. The Jobs Tray shows the Hold tab (5002, 5006).
+  const TEAMS_MODE = location.search.indexOf('teams') > -1;
+  const at9 = () => new Date(NB.day().getTime() + 9 * 3600000);
+  NB.setup({
+    techs: () => TEAMS_MODE ? [{ id: 1, name: 'Paxton T', team: 'Level 1 Service', teamId: 1 }, { id: 2, name: 'Ivan I', team: 'Installers', teamId: 2 }]
+      : [{ id: 1, name: 'Paxton T', team: 'Install HVAC', teamId: 1 }, { id: 3, name: '', team: 'Install HVAC', teamId: 1 }],
+    appts: () => Object.keys(BOARD).map(j => {
+      j = Number(j);
+      const x = BOARD_EXTRA[j] || {};
+      const techs = TEAMS_MODE ? ({ 6001: [1], 6002: [2], 6003: [1, 2], 6004: [2], 6005: [1] })[j] : (BOARD[j][1] ? [1] : [3]);
+      return { id: j + 100000, job: j, techs, customer: C[BOARD[j][0]].name, customerId: BOARD[j][0], confirmed: !!window.CONFIRMED[j + 100000],
+        status: x.AppointmentStatus === 5 ? 'Canceled' : 'Scheduled', start: x.Start ? new Date(at9().getTime() - 86400000) : at9(), end: new Date(at9().getTime() + 7200000) };
+    }),
+    tray: () => [5002, 5006].map(j => ({ job: j, customer: C[JOBCUST[j]].name + ' ', customerId: JOBCUST[j], appt: j + 100000 })),
+    trayTab: 'Hold',
+    onCard: job => window.opened.push(String(job))
+  });
   function render() {
     const h = location.hash.split('?')[0];
     const root = document.getElementById('root');
-    root.innerHTML = '';
     let m;
-    if (/^#\/DispatchBoard/.test(h)) {
-      // ?teams: the board laid out like the real one, a team header above each team's techs:
-      // Level 1 Service (Paxton: 6001, 6003, 6005) and Installers (Ivan: 6003 with Paxton, 6004;
-      // 6002 is his too but scrolled out of view, so only the board's data says so).
-      const TEAMS_MODE = location.search.indexOf('teams') > -1;
-      const bubble = (j, t) => '<a class="appointment" data-job-id="' + j + '" data-technician-id="' + t + '">Quote ' + C[BOARD[j][0]].name + '</a>';
-      root.innerHTML = (TEAMS_MODE
-        ? '<div class="team-header"><span class="team-name">Level 1 Service</span></div><div class="team-container"><div class="technician" data-technician-id="1"><span class="name">Paxton T</span></div>' +
-          '<div id="team-timeline-row-1">' + [6001, 6003, 6005].map(j => bubble(j, 1)).join('') + '</div></div>' +
-          '<div class="team-header"><span class="team-name">Installers</span></div><div class="team-container"><div class="technician" data-technician-id="2"><span class="name">Ivan I</span></div>' +
-          '<div id="team-timeline-row-2">' + [6003, 6004].map(j => bubble(j, 2)).join('') + '</div></div>'
-        : '<div class="team-container"><div class="team-name">Install HVAC</div><div class="technician" data-technician-id="1"><span class="name">Paxton T</span></div></div>' +
-          '<div id="team-timeline-row-1">' + Object.keys(BOARD).map(j => bubble(j, 1)).join('') + '</div>') +
-        '<div class="job-list"><div class="toolbar">Hold (13)</div><div><table class="k-grid-table"><tbody>' +
-        [5002, 5006].map(j => '<tr class="row__BK7JR qa-job-' + j + '"><td>Quote</td><td>' + C[JOBCUST[j]].name + '</td></tr>').join('') + '</tbody></table></div></div>';
-      const jl = root.querySelector('.job-list');
-      jl.querySelectorAll('tr').forEach(tr => tr.addEventListener('click', () => window.opened.push('tray')));
-      jl.__vm = {
-        JobList: { AllVisibleJobs: ko.observable([5002, 5006].map(j => ({ JobId: j, Customer: C[JOBCUST[j]].name + ' ', CustomerId: JOBCUST[j] }))) },
-        Date: ko.observable(today),
-        BusinessUnitFilter: { getIds: () => [621842244] },
-        Assignments: ko.observable(Object.keys(BOARD).map(j => Object.assign({ Id: Number(j) + 100000, IsConfirmed: !!window.CONFIRMED[Number(j) + 100000], JobId: Number(j), Customer: C[BOARD[j][0]].name, CustomerId: BOARD[j][0], FirstName: BOARD[j][1] || null, TechnicianName: BOARD[j][1] ? BOARD[j][1] + ' T' : null }, BOARD_EXTRA[j] || {}, TEAMS_MODE && j === '6002' ? { Technicians: [{ Id: 2, Name: 'Ivan I' }] } : {})))
-      };
-      root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => window.opened.push(a.getAttribute('data-job-id'))));
-    } else if ((m = /^#\/ChatCenter\/(\d+)/.exec(h))) {
+    if (!NB.isBoard(location.hash)) root.innerHTML = '';
+    if (NB.isBoard(location.hash) || /^#\/DispatchBoard/.test(h)) return;   // the board draws itself (NB.render)
+    if ((m = /^#\/ChatCenter\/(\d+)/.exec(h))) {
       const num = m[1];
       window.chatOpened.push(num);
       if (num === '6015559999') return;   // a broken Chat Center: no message box

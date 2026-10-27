@@ -5,6 +5,7 @@
   .appointment{display:inline-block;margin:4px;padding:6px 10px;background:#cfe;border:1px solid #9c9;cursor:pointer;color:#000;text-decoration:none}
   .Drawer{position:fixed;top:60px;left:20px;width:320px;background:#fff;border:1px solid #333;padding:10px}
 </style>
+<script src="newboard.js"></script>
 <script>
   // Jobs on the board and the customer each one belongs to. A customer listed in GONE has been
   // merged or deleted, so ServiceTitan shows its "This Page Could Not Be Found" page for it.
@@ -26,19 +27,20 @@
       d.innerHTML = '<div>Job #' + j + '</div><a href="#/Customer/' + c + '">' + name + '</a> <a href="#/Location/' + (c + 1) + '">' + name + '</a>';
     }, window.DRAWER_DELAY);
   }
+  // The new Dispatch board (newboard.js): clicking a job opens its panel.
+  NB.setup({
+    techs: () => [{ id: 1, name: 'Tech One', team: 'Install HVAC' }],
+    appts: () => Object.keys(JOBS).map(j => ({ id: 9000 + Number(j) % 1000, job: Number(j), techs: [1], customer: 'Job ' + j, customerId: JOBS[j][0] })),
+    onCard: job => openJob(job)
+  });
   function render() {
     const h = location.hash.split('?')[0];
     const root = document.getElementById('root');
-    root.innerHTML = '';
     closeDrawers();
     let m;
-    if (/^#\/DispatchBoard/i.test(h)) {
-      root.innerHTML = '<div class="team-container"><div class="team-name">Install HVAC</div>' +
-        '<div class="technician" data-technician-id="1"><span class="name">Tech One</span></div>' +
-        '<div id="team-timeline-row-1">' + Object.keys(JOBS).map(j =>
-          '<a class="appointment" data-job-id="' + j + '" data-technician-id="1">Job ' + j + '</a>').join('') + '</div></div>';
-      root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => openJob(a.getAttribute('data-job-id'))));
-    } else if ((m = /^#\/customer\/(\d+)/i.exec(h))) {
+    if (NB.isBoard(location.hash) || /^#\/DispatchBoard/i.test(h)) return;   // the board draws itself (NB.render)
+    root.innerHTML = '';
+    if ((m = /^#\/customer\/(\d+)/i.exec(h))) {
       const c = Number(m[1]);
       // ServiceTitan rewrites #/Customer/ to #/customer/.
       if (h.indexOf('#/Customer/') === 0) { location.replace('#/customer/' + c); return; }

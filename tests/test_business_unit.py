@@ -61,7 +61,7 @@ with sync_playwright() as p:
     check('Took #222222 off' in page.locator('#st-toolbox').inner_text() and '4 jobs picked' in page.locator('#st-toolbox').inner_text(), 'second click takes a job off')
     page.click('a.appointment[data-job-id="222222"]')
     check('5 jobs picked' in page.locator('#st-toolbox').inner_text(), 'five jobs picked')
-    outline = page.evaluate("() => getComputedStyle(document.querySelector('a.appointment[data-job-id=\"111111\"]')).outlineStyle")
+    outline = page.evaluate("() => getComputedStyle(sq('a.appointment[data-job-id=\"111111\"]')).outlineStyle")
     check(outline == 'solid', 'picked jobs are outlined on the board')
     page.fill('#st-toolbox input:visible[placeholder^="Or type job"]', '444444, 777777 12')
     page.locator('#st-toolbox button:visible', has_text='Add').filter(has_not_text='note').first.click()
@@ -83,7 +83,7 @@ with sync_playwright() as p:
     check('#111111: Gulfport Branch → would change to Mendenhall Branch' in lg, 'check reports current BU')
     check('#333333: locked' in lg, 'locked job reported')
     check('#666666: already Mendenhall Branch' in lg, 'already-on-branch reported')
-    check(page.evaluate("() => location.hash").startswith('#/DispatchBoard'), 'back on the board after check')
+    check(page.evaluate("() => location.hash").startswith('#/widget-app/dispatch-center'), 'back on the board after check')
     check(page.evaluate("() => window.opened.length") == 0, 'picking is off after the run started (no board opens)')
 
     # Change for real
@@ -105,7 +105,7 @@ with sync_playwright() as p:
     check('Put back (3)' in page.locator('#st-toolbox').inner_text(), 'put back offered for 3 changed jobs')
     rem = page.locator('#st-toolbox').inner_text()
     check('#111111' not in rem.split('jobs picked')[1].split('Change to')[0] and '3 jobs picked' in rem, 'done jobs come off the list, problems stay')
-    check(page.evaluate("() => location.hash").startswith('#/DispatchBoard'), 'back on the board after change')
+    check(page.evaluate("() => location.hash").startswith('#/widget-app/dispatch-center'), 'back on the board after change')
 
     # Put back
     check(run_and_wait(page, 'Put back', 'Yes, put them back', timeout=120), 'put back finishes')
@@ -154,7 +154,7 @@ with sync_playwright() as p:
     page.locator('#st-toolbox button:visible', has_text='Add').filter(has_not_text='note').first.click()
     btn(page, 'Change to Mendenhall Branch').click(); btn(page, 'Yes, change them').click()
     time.sleep(1.5)
-    page.locator('#st-toolbox span', has_text='✕').first.click()
+    page.locator('#st-toolbox button[title="Close"]').click()
     check('Business Unit is still running' in page.locator('#st-toolbox').inner_text(), 'closing mid-run asks first')
     btn(page, 'Keep running').click()
     btn(page, 'Stop').click()
@@ -174,7 +174,7 @@ with sync_playwright() as p:
     t = page.locator('#st-toolbox').inner_text()
     check('#901003' in t and 'Tray Cust 901003' in t and '2 jobs picked' in t, 'jobs picked from the bottom list, with customer')
     check(page.evaluate("() => window.opened.length") == 0, 'bottom-list clicks captured while picking (nothing opened)')
-    bg = page.evaluate("() => getComputedStyle(document.querySelector('.job-list tr.qa-job-901003 > td')).backgroundColor")
+    bg = page.evaluate("() => getComputedStyle(sq('.job-list tr.qa-job-901003 > td')).backgroundColor")
     check(bg not in ('rgba(0, 0, 0, 0)', 'transparent'), 'picked rows highlighted in the list')
     page.click('.job-list tr.qa-job-901003 td')
     check('1 job picked' in page.locator('#st-toolbox').inner_text(), 'second click on a row takes it off')

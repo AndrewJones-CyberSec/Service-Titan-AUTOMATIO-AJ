@@ -5,6 +5,7 @@
   .appointment{display:inline-block;margin:4px;padding:6px 10px;background:#cfe;border:1px solid #9c9;cursor:pointer;color:#000;text-decoration:none}
   .row{padding:4px;border-bottom:1px solid #ddd}
 </style>
+<script src="newboard.js"></script>
 <script>
   // Tiny stand-in for Knockout.
   (function () {
@@ -123,7 +124,8 @@
         if (a.total > 0 && next.length && !next.some(id => (TECHS.find(t => t.id === id) || {}).isManagedTechnician)) return json({ error: 'managed' }, 400);
         a.techs = next;
       }
-      if (!window.BOARD_LAG) setTimeout(render, 50);
+      // The new board updates itself a moment after a change (BOARD_LAG: it doesn't, until Refresh).
+      if (!window.BOARD_LAG) setTimeout(NB.render, 50);
       if (lost) { if (lost !== 'always') (m[1] === 'Assign' ? ASSIGN_LOST : UNASSIGN_LOST)[body.appointmentId] = 0; throw new TypeError('Failed to fetch'); }
       return new Response('', { status: 200 });
     }
@@ -149,37 +151,19 @@
       Technicians: a.techs.map(id => ({ Id: id, Name: tname(id) })), TechnicianId: a.techs[0] || 0, AppointmentStatus: a.boardStatus || a.status };   // boardStatus: the board showing an older word
   };
   window.opened = [];
-  function render() {
-    const h = location.hash.split('?')[0];
-    const root = document.getElementById('root');
-    root.innerHTML = '';
-    if (/^#\/DispatchBoard/.test(h)) {
-      // Timeline: one row per tech, a bubble per appointment of theirs (a job with two techs shows twice).
-      root.innerHTML = '<div class="team-container"><div class="team-name">Install HVAC</div>' + TECHS.filter(t => t.active).map(t => '<div class="technician" data-technician-id="' + t.id + '"><span class="name">' + t.name + '</span></div>').join('') + '</div>' +
-        TECHS.filter(t => t.active).map(t => '<div class="row" id="team-timeline-row-' + t.id + '">' + Object.keys(APPTS).filter(k => !APPTS[k].hidden && APPTS[k].techs.indexOf(t.id) > -1).map(k =>
-          '<a class="appointment" data-job-id="' + APPTS[k].job + '" data-id="' + k + '" data-technician-id="' + t.id + '">' + APPTS[k].cust + '</a>').join('') + '</div>').join('') +
-        '<div class="job-list"><div class="toolbar">Unassigned</div><div><table class="k-grid-table"><tbody>' +
-        Object.keys(APPTS).filter(k => !APPTS[k].techs.length).map(k => '<tr class="row__BK7JR qa-job-' + APPTS[k].job + '"><td>Quote</td><td>' + APPTS[k].cust + '</td></tr>').join('') + '</tbody></table></div></div>';
-      const jl = root.querySelector('.job-list');
-      jl.__vm = {
-        JobList: { View: ko.observable({ Caption: 'Unassigned' }), AllVisibleJobs: ko.observable(Object.keys(APPTS).filter(k => !APPTS[k].techs.length).map(rowFor)) },
-        Date: ko.observable(today),
-        BusinessUnitFilter: { getIds: () => [1] },
-        // The board's own data: today's appointments and one from tomorrow (it keeps days you've looked at).
-        // hidden: a job the board's branch/team filter hides (it's still in ServiceTitan's full schedule).
-        Assignments: ko.observable(Object.keys(APPTS).filter(k => !APPTS[k].hidden && APPTS[k].techs.length).map(rowFor)),
-        // The board's own reload (seen Oct 2026: refreshData). NO_REFRESH: the board doesn't have it.
-        IsRefreshing: ko.observable(false), LoadingData: ko.observable(false)
-      };
-      if (!window.NO_REFRESH) jl.__vm.refreshData = function () {
-        window.refreshes = (window.refreshes || 0) + 1;
-        this.IsRefreshing(true); this.LoadingData(true);
-        setTimeout(render, 200);
-      };
-      root.querySelectorAll('a.appointment').forEach(a => a.addEventListener('click', () => window.opened.push(a.getAttribute('data-job-id'))));
-      jl.querySelectorAll('tr').forEach(tr => tr.addEventListener('click', () => window.opened.push('tray')));
-    }
-  }
+  // The new Dispatch board (newboard.js): one row per active tech, a card per appointment of
+  // theirs (a job with two techs shows twice); the Jobs Tray shows the Unassigned tab.
+  // hidden: a job the board's branch/team filter hides (it's still in ServiceTitan's full schedule).
+  // NO_REFRESH: the board has no Refresh button.
+  NB.setup({
+    bus: [1],
+    // BOARD_ONLY: techs the board shows that ServiceTitan's tech list doesn't have.
+    techs: () => TECHS.filter(t => t.active).concat(window.BOARD_ONLY || []).map(t => ({ id: t.id, name: t.name, team: 'Install HVAC', teamId: 1 })),
+    appts: () => Object.keys(APPTS).filter(k => APPTS[k].techs.length).map(k => { const a = APPTS[k]; return { id: Number(k), job: a.job, n: a.n, techs: a.techs.slice(), customer: a.cust, start: a.s, end: a.e, status: a.boardStatus || a.status, bu: a.bu, hidden: a.hidden }; }),
+    tray: () => Object.keys(APPTS).filter(k => !APPTS[k].techs.length).map(k => ({ job: APPTS[k].job, n: APPTS[k].n, customer: APPTS[k].cust, appt: Number(k) })),
+    onCard: job => window.opened.push(String(job))
+  });
+  function render() { NB.render(); }
   addEventListener('hashchange', render);
   addEventListener('DOMContentLoaded', render);
 </script>

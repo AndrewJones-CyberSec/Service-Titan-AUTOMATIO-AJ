@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.0
+
+ServiceTitan replaced the Dispatch board on Oct 27 2026, and every tool stopped working. 2.0 is rebuilt for the new board.
+
+- **The new Dispatch board, Day view.** The Toolbox reads the new board directly: the day it shows, your branch filter, the techs and teams in the board's order, the day's jobs (with tags), today's dispatch history, and each tech's status. On the Week view the Toolbox asks you to switch to Day; on any other page it says to open the board.
+- **Picking on the new board:** job cards on the timeline, tech names, and rows in the **Jobs Tray** under the board (Unassigned, Hold and the other tabs). While 🖱️ Pick on board is on, a click picks the job and the board's own job panel doesn't open. Picked jobs and techs are outlined on the board as before. **+ All in the list** is now **+ Tray page** (the tab and page that are open).
+- **Job lists show more:** each picked job shows its tags as colored chips and how its day is going (🗓️ the appointment time, 🚚 Dispatched 10:20 AM, 🔧 Working, ✅ Done), from the board's data. **＋ Jobs with a tag…** adds every job with one tag (the timeline plus the Unassigned list).
+- **The whole day in one request.** ＋ Whole board (🔕 Job Notifications), ＋ Everyone on the board and ＋ A department… (📱 Customer Texts) read the day the way the board does, so they're quicker and never miss a job scrolled out of view. Canceled appointments on the timeline are counted and left out, and their jobs aren't added from the Unassigned list either.
+- **💬 Tech Messages:** opens each tech's Send Message panel from the new board's tech menu, and checks the panel shows the right person before typing. New quick picks **＋ 🔧 Working (n)** and **＋ 🚚 Dispatched (n)** add every tech ServiceTitan shows with that status; each picked tech shows it too. Idle isn't used (it can mean too many things).
+- **📱 Customer Texts:** ＋ A department… takes the teams from the board's data, so a board filter can't hide them; techs without a team are under *Other (no team)*. `{when}` uses the new board's day.
+- **🔀 Move Jobs:** the review reads the board fresh, and after a run the Toolbox presses the board's own Refresh (no page reload). Appointment and tech ids always go to ServiceTitan as numbers. If the tech list can't be read, the board's techs are used, and a priced job is left alone rather than guessing whether its tech is managed.
+- **🩺 Check** looks at the new board: the day, the branch filter, the job cards and tech names, the Refresh button, and a test read of the day. *Everything is where it should be* now shows in green.
+- **Signed-in check:** ServiceTitan's permission settings started answering 400 on Oct 27, which made 🔕 Job Notifications say ServiceTitan was slow. The Toolbox now asks for the signed-in user first and only falls back to the old check.
+- **New look**, matching the new board: a navy title bar with the version, menu tiles with a line about each tool, the board's day and branch at the top of the menu, and **–** to fold the Toolbox down to its title bar (remembered). Buttons, lists, chips and cards are restyled to match. What's new now has a ✕ and stays until you close it or 40 seconds pass.
+- **Install page** redesigned: the bookmark to drag, the three steps, what's new in 2.0 and each tool, with the copy-and-paste steps folded away.
+- Tests: new `tests/newboard.js`, a fake new board (inside its own shadow root, answering the board's data requests). Every fake page now uses it, and every suite runs against it.
+
 ## 1.7.2
 
 - **📱 Customer Texts: ＋ A department…** next to ＋ Everyone on the board. It lists each team on the board (Level 1 Service, Installers… in the board's order) with how many jobs it has on the day the board shows, plus the **Unassigned list**. Picking one adds that team's jobs (canceled appointments left out); pick another to add it too, and take anyone off with ✕. A job with two techs on different teams is in both. Jobs only in the board's data (scrolled out of view) are found too.
