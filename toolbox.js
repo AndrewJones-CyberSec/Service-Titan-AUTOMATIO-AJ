@@ -807,8 +807,6 @@
     };
 
     // ---- A tech's row and menu (the new board) ----
-    // Scrolls the board until the tech's name is drawn (it only draws the rows on screen). Starts
-    // where they probably are (their place among the board's techs), then looks from the top.
     // What scrolls the techs: the Day view's timeline, or the Week view's list (the box around it that scrolls).
     const scroller = () => {
       const vp = q('[data-testid="timeline-scroll-viewport"]');
@@ -819,6 +817,8 @@
       }
       return null;
     };
+    // Scrolls the board until the tech's name is drawn (it only draws the rows on screen): straight
+    // to their row if the board says where it is, else where they probably are, then from the top.
     const findTech = async id => {
       let h = techHeader(id);
       if (h) return h;
