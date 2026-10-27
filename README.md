@@ -101,7 +101,7 @@ Routing help from the Dispatch board, in two tabs. It only reads: anything that 
 
 *📋 Plan Unassigned.* One press plans a tech for every job on the Unassigned list for the day the board shows, most urgent first:
 - **Right department:** learned from the last 2 weeks of boards (field techs' jobs): a job goes to a team that did at least a fifth of the jobs like it. A job type with too few jobs is matched on the start of its name (*Plumbing - …*); with nothing to go by, any department, marked ⚠️.
-- **Never double-booked:** only techs with nothing else at that time, counting the plan's own jobs.
+- **Free techs first:** a job on top of another of the tech's jobs at the same time (the plan's own jobs count) counts as an extra hour of driving, so it only happens when no one in the right department is free then (arrival windows aren't hard limits here). Those are marked ⚠️ in the plan, and Move Jobs asks you to tick them (*Already booked at that time*).
 - **Routed:** each job is measured from where that tech will be just before it (their previous job that day, or home), by drive time.
 - **Spread the work:** each job a tech already has that day counts as 15 minutes of driving, so a lighter day wins over a slightly closer full one.
 - Review the plan (each job, the tech, the drive and why), take any job off with **✕**, then **➡️ Send to Move Jobs**: it opens with every job and its own tech; **Review**, then **Assign**. Move Jobs makes its usual checks and **↩ Put back** undoes it. *Jobs not planned* and *Who gets what* fold open. The 2 weeks of past boards are read once and saved in your browser.

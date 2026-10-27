@@ -59,7 +59,11 @@
     9820: { job: 8020, n: 1, cust: 'Uma Vale', s: at(14), e: at(16), techs: [], status: 'Scheduled', zip: '39201', city: 'JACKSON', type: INSTALL, prio: 'Normal' },
     9821: { job: 8021, n: 1, cust: 'Vic Wade', s: at(9), e: at(11), techs: [], status: 'Scheduled', zip: '39044', city: 'Braxton', type: MAINT, prio: 'High' },
     9822: { job: 8022, n: 1, cust: 'Wes Xu', s: at(10), e: at(12), techs: [], status: 'Scheduled', zip: '39151', city: 'Puckett', type: 'Quote - Solar Panels', prio: 'Normal' },
-    9823: { job: 8023, n: 1, cust: 'Xia Yao', s: at(13), e: at(14), techs: [], status: 'Scheduled', zip: '', city: '', type: MAINT, prio: 'Low' }
+    9823: { job: 8023, n: 1, cust: 'Xia Yao', s: at(13), e: at(14), techs: [], status: 'Scheduled', zip: '', city: '', type: MAINT, prio: 'Low' },
+    // Every installer is busy 9-11 (Cal has a job then, Fay is on her way to one, Dee gets the 10-12
+    // quote), so an install at 9-11 can only go on top of someone's job.
+    9830: { job: 8030, n: 1, cust: 'Yul Zane', s: at(9), e: at(11), techs: [203], status: 'Scheduled', zip: '39149', city: 'Pinola', type: INSTALL },
+    9824: { job: 8024, n: 1, cust: 'Zed Abel', s: at(9), e: at(11), techs: [], status: 'Scheduled', zip: '39149', city: 'Pinola', type: INSTALL, prio: 'Low' }
   };
   // The last two weeks of boards (history): Level 1 Service did fall maintenance, Installers did
   // generator installs. Hal (office staff, not a managed tech) has a pile of maintenance jobs that
@@ -140,7 +144,12 @@
           technicians: APPTS[k].techs.map(id => ({ id, name: tname(id) })), jobAppointmentStatus: STATUS_NUM[APPTS[k].status], isConfirmed: true })) });
     }
     if ((m = /GetJobOverviewData\?jobId=(\d+)/.exec(u))) return json({ jobTags: [], skills: [], businessUnit: { id: 1, name: 'Mendenhall Branch' } });
-    if (u.indexOf('/Job/TechniciansAreBooked') === 0) return json([]);
+    if (u.indexOf('/Job/TechniciansAreBooked') === 0) {
+      // Like ServiceTitan: only the techs who are booked then, leaving out the appointment being changed.
+      const s0 = new Date(body.start), e0 = new Date(body.end);
+      const busy = id => Object.keys(APPTS).some(k => String(k) !== String(body.originalAppointmentId) && APPTS[k].status !== 'Canceled' && APPTS[k].techs.indexOf(id) > -1 && APPTS[k].s < e0 && s0 < APPTS[k].e);
+      return json(body.technicianIds.filter(busy).map(id => ({ TechnicianId: id, IsBookedForJob: true, IsBookedForNonJobEvent: false, IsBookedForRecurring: false })));
+    }
     if ((m = /\/dispatch\/job-edit-flyout\/(Assign|Unassign)Technicians/.exec(u))) {
       const a = APPTS[body.appointmentId];
       if (!a) return json({}, 404);
