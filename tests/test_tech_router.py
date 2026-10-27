@@ -72,7 +72,7 @@ with sync_playwright() as p:
     check(not ev(page, "() => !!document.getElementById('st-near-team').offsetParent"), 'options hidden to start with')
     page.click('#st-near-opts')
     teams = ev(page, "() => Array.from(document.querySelectorAll('#st-near-team option')).map(o => o.textContent)")
-    check(teams == ['Any', 'Level 1 Service', 'Installers', 'Dispatch'], 'departments from the board, in its order: %s' % teams)
+    check(teams == ['Any', 'Level 1 Service', 'Installers', 'Dispatch', 'Sales/ Service - Dustin J', 'Project Coordinator - Dustin J'], 'departments from the board, in its order: %s' % teams)
     check(ev(page, "() => document.getElementById('st-near-field').checked"), 'Field techs only is on to start with')
     check('Drive-time key: built in' in T(page), 'the built-in key is used to start with')
 
@@ -96,7 +96,7 @@ with sync_playwright() as p:
     check(len(hs) == 3 and all(h <= 48 for h in hs), 'compact rows, two lines each (heights %s)' % hs)
     B(page, 'Show more').click()
     n = names(page)
-    check(n == ['Ben T', 'Fay H', 'Gus K', 'Cal M', 'Dee F', 'Ana R'], 'Show more: everyone placed, closest first, office staff left out: %s' % n)
+    check(n == ['Ben T', 'Fay H', 'Gus K', 'Cal M', 'Dee F', 'Ana R', 'Lou P', 'Kim S'], 'Show more: everyone placed, closest first, office staff left out: %s' % n)
     check('from home (Florence)' in T(page), 'a home with no map point uses its zip code (town from the address, not the unit)')
     B(page, 'Show fewer').click()
     check(len(names(page)) == 3, 'back to 3')
@@ -270,7 +270,9 @@ with sync_playwright() as p:
     plan = ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox .st-plan-row')).map(r => ({ text: r.innerText, tech: r.querySelector('.st-plan-tech').textContent, job: (r.innerText.match(/#(\\d+)/) || [])[1] }))")
     got = {x['job']: x['tech'] for x in plan}
     print(got)
-    check(len(plan) == 5 and '2 left' in t, 'five jobs planned, two left: %s' % got)
+    check(len(plan) == 6 and '2 left' in t, 'six jobs planned, two left: %s' % got)
+    sale = [x for x in plan if x['job'] == '8045']
+    check(got.get('8045') == 'Lou P' and sale and 'of driving that day' in sale[0]['text'] and '⚠️' not in sale[0]['text'].split('of driving')[0][-40:], 'sales rule: the Vicksburg job goes to Lou (Kim is a bit closer but would go well past 5 hr 30 min of driving): %s' % (sale and sale[0]['text']))
     stacked = [x for x in plan if x['job'] == '8024']
     check(stacked and stacked[0]['tech'] in ('Dee F', 'Fay H') and 'on top of their' in stacked[0]['text'] and 'no one in the department is free then' in stacked[0]['text'] and '(1 on top of another job ⚠️)' in t, 'no installer free: planned on top of a short job, marked ⚠️: %s' % (stacked and stacked[0]['text']))
     check(got.get('8024') != 'Cal M' and got.get('8020') != 'Cal M', 'never on top of an all-day install (Cal)')
@@ -282,7 +284,7 @@ with sync_playwright() as p:
     times = ev(page, "() => Object.fromEntries(Object.keys(APPTS).map(k => [String(APPTS[k].job), [APPTS[k].s.getTime(), APPTS[k].e.getTime(), APPTS[k].techs.slice()]]))")
     busy = {}
     for j, tech in got.items(): busy.setdefault(tech, []).append(times[j][:2])
-    tid = {'Ana R': 201, 'Ben T': 202, 'Cal M': 203, 'Dee F': 204, 'Eli G': 205, 'Fay H': 206, 'Gus K': 207}
+    tid = {'Ana R': 201, 'Ben T': 202, 'Cal M': 203, 'Dee F': 204, 'Eli G': 205, 'Fay H': 206, 'Gus K': 207, 'Kim S': 211, 'Lou P': 212}
     for tech, ts in busy.items():
         own = [v[:2] for k, v in times.items() if tid.get(tech) in v[2] and k not in ('8006',)]
         allts = sorted(ts + own)
@@ -299,7 +301,9 @@ with sync_playwright() as p:
     past = ev(page, "() => window.dataCalls.filter(b => new Date(b.date) < new Date(new Date().toDateString())).length")
     check(past == 0, 'the past boards learned for Next job are reused (%d read)' % past)
     mx = ev(page, "() => window.mbCalls.filter(c => /directions-matrix\\/v1\\/mapbox\\/driving\\//.test(c.url)).length")
-    check(mx == 6, 'one Matrix request per job that could be placed (%d)' % mx)
+    check(mx == 7, 'one Matrix request per job that could be placed (%d)' % mx)
+    days = [c['url'] for c in ev(page, "() => window.mbCalls") if '/directions/v5/mapbox/driving/' in c['url']]
+    check(len(days) == 2 and all(matrix_coords_ok(u) for u in days), 'one day-of-driving request per salesperson, rounded (%d)' % len(days))
     ev(page, "() => { window.dataCalls = []; }")
     B(page, 'Plan again').click()
     page.wait_for_function("() => document.querySelector('#st-toolbox .st-plan-head')", timeout=30000)
@@ -308,26 +312,26 @@ with sync_playwright() as p:
     check(past == 0, 'planning again uses the saved past boards (%d read)' % past)
     # Take one out
     page.locator('#st-toolbox .st-plan-row', has_text='8022').locator('button', has_text='✕').click()
-    check(len(ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox .st-plan-row'))")) == 4 and '3 left' in T(page), 'a job taken out with ✕')
-    check('Send 4 jobs to Move Jobs' in T(page), 'the send button counts what it sends')
+    check(len(ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox .st-plan-row'))")) == 5 and '3 left' in T(page), 'a job taken out with ✕')
+    check('Send 5 jobs to Move Jobs' in T(page), 'the send button counts what it sends')
     # Send to Move Jobs
-    B(page, 'Send 4 jobs to Move Jobs').click()
+    B(page, 'Send 5 jobs to Move Jobs').click()
     time.sleep(0.4)
     t = T(page)
-    check('a plan for 4 jobs' in t and '→ Ben T' in t, 'Move Jobs has the plan, each job with its tech')
+    check('a plan for 5 jobs' in t and '→ Ben T' in t, 'Move Jobs has the plan, each job with its tech')
     check(ev(page, "() => Array.from(document.querySelectorAll('input[name=st-move-mode]')).every(r => !r.checked)"), 'no single-tech mode chosen (each job has its own)')
     B(page, 'Review').click()
     page.wait_for_function("() => { const b = document.getElementById('st-move-go'); return b && b.offsetParent; }", timeout=15000)
     t = T(page)
-    check('Planned (each job to its own tech)' in t and 'Ready: 3 jobs' in t and 'Already booked at that time (1)' in t and 'Assign 3 jobs' in t, 'Move Jobs reviews the plan, the stacked job needs a tick: %s' % t[t.find('Planned'):][:500])
+    check('Planned (each job to its own tech)' in t and 'Ready: 4 jobs' in t and 'Already booked at that time (1)' in t and 'Assign 4 jobs' in t, 'Move Jobs reviews the plan, the stacked job needs a tick: %s' % t[t.find('Planned'):][:500])
     page.check('#st-toolbox input.st-move-tick-booked')
-    check(ev(page, "() => document.getElementById('st-move-go').textContent") == 'Assign 4 jobs', 'ticking it includes it')
+    check(ev(page, "() => document.getElementById('st-move-go').textContent") == 'Assign 5 jobs', 'ticking it includes it')
     page.click('#st-move-go')
     page.wait_for_function("() => /Done:/.test(document.getElementById('st-toolbox').innerText)", timeout=30000)
     after = {j: ev(page, "() => APPTS[%d].techs.slice()" % (int(j) + 1800)) for j in got if j != '8022'}
     check(all(after[j] == [tid[got[j]]] for j in after), 'every planned job is on its tech: %s' % after)
     check(all(c[0] == 'assign' for c in ev(page, "() => window.calls")), 'only assigns (nothing taken off anyone)')
-    check(B(page, 'Put back (4)').count() == 1, 'Put back can undo the plan')
+    check(B(page, 'Put back (5)').count() == 1, 'Put back can undo the plan')
     B(page, 'Put back').click()
     page.wait_for_function("() => { const b = document.getElementById('st-move-go'); return b && b.offsetParent; }", timeout=15000)
     page.click('#st-move-go')

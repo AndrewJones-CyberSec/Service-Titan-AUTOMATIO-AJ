@@ -27,7 +27,10 @@
     '39073': [32.150, -90.130],   // Florence
     '39201': [32.290, -90.180],   // Jackson
     '39151': [32.200, -89.950],   // Puckett
-    '39120': [31.560, -91.400]    // Natchez (far west)
+    '39120': [31.560, -91.400],   // Natchez (far west)
+    '39440': [31.690, -89.130],   // Laurel (east)
+    '39208': [32.270, -90.100],   // Pearl
+    '39180': [32.350, -90.880]    // Vicksburg (west)
   };
   // Techs. home: [lat, lon] or null; addr: the profile address (street parts must never show or be sent).
   // managed: false for office staff (ServiceTitan's managed-technician flag); field techs are managed.
@@ -40,12 +43,15 @@
     { id: 206, name: 'Fay H', team: 'Installers', home: [31.80, -89.95], addr: '3 Ash St, Pinola, MS 39149 USA', active: true },
     { id: 207, name: 'Gus K', team: 'Level 1 Service', home: [32.20, -89.95], addr: '8 Birch Ct, Puckett, MS 39151 USA', active: true },
     { id: 208, name: 'Hal L', team: 'Dispatch', home: [32.30, -90.18], addr: '1 Main St, Jackson, MS 39201 USA', active: true, managed: false },   // office staff
-    { id: 209, name: 'Ivy N', team: 'Dispatch', home: [31.95, -89.82], addr: '4 Gone Way, Mendenhall, MS 39114 USA', active: false }
+    { id: 209, name: 'Ivy N', team: 'Dispatch', home: [31.95, -89.82], addr: '4 Gone Way, Mendenhall, MS 39114 USA', active: false },
+    // Salespeople (the sales rule: try to keep a day of driving under 5 hr 30 min).
+    { id: 211, name: 'Kim S', team: 'Sales/ Service - Dustin J', home: [31.69, -89.13], addr: '6 Bay Ct, Laurel, MS 39440 USA', active: true },
+    { id: 212, name: 'Lou P', team: 'Project Coordinator - Dustin J', home: [32.29, -90.18], addr: '2 Lake Dr, Jackson, MS 39201 USA', active: true }
   ];
   const tname = id => (TECHS.find(t => t.id === id) || {}).name || ('#' + id);
   const STATUS_NUM = { Scheduled: 0, Dispatched: 1, Working: 2, Hold: 3, Done: 4, Canceled: 5 };
   // Appointments: appointment id -> job, customer, time, techs, status, zip, city, job type, priority.
-  const MAINT = 'Maintenance - Fall - Residential', INSTALL = 'Install - Generator';
+  const MAINT = 'Maintenance - Fall - Residential', INSTALL = 'Install - Generator', SALES = 'Sales - Comfort Advisor';
   window.APPTS = {
     9801: { job: 8001, n: 1, cust: 'Kay Lin', s: at(13), e: at(15), techs: [], status: 'Scheduled', zip: '39111', city: 'Magee', type: MAINT, prio: 'Normal' },
     9802: { job: 8002, n: 1, cust: 'Lee Moe', s: at(8), e: at(10), techs: [205], status: 'Working', zip: '39111', city: 'Magee', type: MAINT },
@@ -65,13 +71,21 @@
     // the 10-12 quote), so an install at 9-11 can only go on top of a shorter job, never Cal's.
     9830: { job: 8030, n: 1, cust: 'Yul Zane', s: at(8), e: at(17), techs: [203], status: 'Scheduled', zip: '39149', city: 'Pinola', type: INSTALL },
     9824: { job: 8024, n: 1, cust: 'Zed Abel', s: at(9), e: at(11), techs: [], status: 'Scheduled', zip: '39149', city: 'Pinola', type: INSTALL, prio: 'Low' },
+    // Kim (home in Laurel) has two jobs in Jackson: about 5 hours of driving already. Lou (home in
+    // Jackson) has two in Pearl. A sales job in Vicksburg is a little closer for Kim, but a big detour
+    // that would take Kim well past 5 hr 30 min, so it goes to Lou.
+    9841: { job: 8041, n: 1, cust: 'Bo Cole', s: at(8), e: at(9), techs: [211], status: 'Scheduled', zip: '39201', city: 'Jackson', type: SALES },
+    9842: { job: 8042, n: 1, cust: 'Cy Dunn', s: at(11), e: at(12), techs: [211], status: 'Scheduled', zip: '39201', city: 'Jackson', type: SALES },
+    9843: { job: 8043, n: 1, cust: 'Di Ernst', s: at(8), e: at(9), techs: [212], status: 'Scheduled', zip: '39208', city: 'Pearl', type: SALES },
+    9844: { job: 8044, n: 1, cust: 'Ed Fox', s: at(11), e: at(12), techs: [212], status: 'Scheduled', zip: '39208', city: 'Pearl', type: SALES },
+    9845: { job: 8045, n: 1, cust: 'Flo Gray', s: at(14), e: at(15), techs: [], status: 'Scheduled', zip: '39180', city: 'Vicksburg', type: SALES, prio: 'Normal' },
     // Far from everyone (more than an hour and a half).
     9825: { job: 8025, n: 1, cust: 'Abe Bell', s: at(13), e: at(15), techs: [], status: 'Scheduled', zip: '39120', city: 'Natchez', type: INSTALL, prio: 'Low' }
   };
   // The last two weeks of boards (history): Level 1 Service did fall maintenance, Installers did
   // generator installs. Hal (office staff, not a managed tech) has a pile of maintenance jobs that
   // must not count.
-  const HISTORY = { 201: [MAINT, MAINT], 202: [MAINT, MAINT], 205: [MAINT, MAINT], 207: [MAINT, MAINT], 203: [INSTALL, INSTALL], 204: [INSTALL, INSTALL], 206: [INSTALL, MAINT], 208: [MAINT, MAINT, MAINT, MAINT, MAINT, INSTALL, INSTALL] };
+  const HISTORY = { 211: [SALES, SALES], 212: [SALES, SALES], 201: [MAINT, MAINT], 202: [MAINT, MAINT], 205: [MAINT, MAINT], 207: [MAINT, MAINT], 203: [INSTALL, INSTALL], 204: [INSTALL, INSTALL], 206: [INSTALL, MAINT], 208: [MAINT, MAINT, MAINT, MAINT, MAINT, INSTALL, INSTALL] };
   // Test switches: MB_DOWN (Mapbox refuses), MB_FAIL_FROM (a lon,lat Mapbox can't route from), ZCTA_DOWN,
   // DISPATCH_DRIFT (the board's data in an unknown shape), BOARD_TOMORROW (the board shows tomorrow).
   window.mbCalls = []; window.zctaCalls = []; window.opened = []; window.calls = []; window.dataCalls = []; window.getJobsCalls = [];

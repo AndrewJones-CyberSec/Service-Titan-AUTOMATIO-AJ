@@ -23,7 +23,7 @@
 (() => {
   const VERSION = '1.8';
   const WHATS_NEW = {
-    '1.8': 'New: 🧭 Tech Router. 🔎 Closest techs: type a zip code or job number (or press 🖱️ and click a job) to see the techs closest by drive time with traffic, from where they are now or from home, with ➡️ to hand the job and tech to 🔀 Move Jobs. 📋 Plan Unassigned: one press plans a tech for every job on the Unassigned list: the right department (learned from the last 2 weeks of boards), routed from each tech\'s previous job, free techs first (a job on top of another only when no one is free, marked ⚠️), and spread so lighter days get the work. Review it, take off anything with ✕, and send it to Move Jobs, where nothing changes until you review it and press Assign. Field techs only, and only towns are shown, never addresses.',
+    '1.8': 'New: 🧭 Tech Router. 🔎 Closest techs: type a zip code or job number (or press 🖱️ and click a job) to see the techs closest by drive time with traffic, from where they are now or from home, with ➡️ to hand the job and tech to 🔀 Move Jobs. 📋 Plan Unassigned: one press plans a tech for every job on the Unassigned list: the right department (learned from the last 2 weeks of boards), routed from each tech\'s previous job, free techs first (a job on top of another only when no one is free, marked ⚠️), spread so lighter days get the work, and salespeople kept under 5 hr 30 min of driving where possible. Review it, take off anything with ✕, and send it to Move Jobs, where nothing changes until you review it and press Assign. Field techs only, and only towns are shown, never addresses.',
     '1.7.2': 'New in 📱 Customer Texts: ＋ A department… next to ＋ Everyone on the board adds just one team\'s customers for the day (Level 1 Service, Installers…) or just the Unassigned list. Pick another to add it too. 📥 Check replies then looks only at those customers.',
     '1.7.1': '📥 Check replies counts earlier confirm texts: a C to Saturday\'s text for Monday still counts after a newer reminder, if all they said after it was "already confirmed", "already did" or "thanks". A coworker\'s text that only says the weekday ("your appointment Monday") counts for that day, and one naming another day ("Saturday") no longer counts for Monday.',
     '1.7': 'Smarter 🔕 Job Notifications: one list instead of two modes. Add jobs by clicking them, clicking a tech\'s name on the board (their whole day), ＋ Whole board, or a tech from the list. Each job shows 🔔 on or 🔕 off as soon as it\'s added (off jobs get a gray dashed outline on the board), and the buttons say how many jobs they\'d change, like 🔕 Turn off (11). Results come back as cards, with problems first.',
@@ -5991,6 +5991,10 @@
   //         job LONG_JOB hours or longer (an all-day install).
   //       - Not too far: a job whose closest fit is more than MAX_DRIVE minutes away is left out,
   //         with how far it is.
+  //       - Sales rule (Sales/ Service and Project Coordinators): try to keep a salesperson's day of
+  //         driving (home, their jobs in time order, home) under SALES_MAX minutes. Every minute a job
+  //         would add past that counts OVER_WEIGHT times; a job on their way adds next to nothing.
+  //         Going over is allowed when no one else is close, marked ⚠️.
   //       - Routed: measured from where that tech will be just before it (their previous job that
   //         day, or home), by drive time.
   //       - Spread the work: each job a tech already has that day counts as PER_JOB minutes of driving,
@@ -6021,6 +6025,8 @@
     const HIST_KEY = 'stRouterHistory';
     const SHOW = 3, MAX = 10;
     const HISTORY_DAYS = 14, PER_JOB = 15, STACK = 60, CANDIDATES = 8, LONG_JOB = 4, MAX_DRIVE = 90;
+    const SALES = [/^sales\s*\/\s*service\b/i, /^project coordinator/i], SALES_MAX = 330, OVER_WEIGHT = 2;
+    const isSales = team => SALES.some(re => re.test(norm(team)));
     const hours = b => { const s0 = toDate(b.start), e0 = toDate(b.end); return s0 && e0 ? (e0 - s0) / 3600000 : 0; };
     const u = v => { try { return window.ko && typeof window.ko.unwrap === 'function' ? window.ko.unwrap(v) : (typeof v === 'function' ? v() : v); } catch (e) { return v; } };
     const S = x => String(x);
@@ -6299,7 +6305,7 @@
       if (last && tab === 'near') find(last);
     };
     keyLabel();
-    optsBox.append(fromBox, teamRow, fieldRow, el('div', 'color:#555', '📋 Plan Unassigned: each job a tech already has that day counts as ' + PER_JOB + ' minutes of driving, so lighter days get the work. A job on top of another of theirs at the same time counts as ' + STACK + ' more, so that only happens when no one in the department is free (never on an all-day job). Nothing more than ' + timeText(MAX_DRIVE) + ' away.'), keyBtn, keyBox);
+    optsBox.append(fromBox, teamRow, fieldRow, el('div', 'color:#555', '📋 Plan Unassigned: each job a tech already has that day counts as ' + PER_JOB + ' minutes of driving, so lighter days get the work. A job on top of another of theirs at the same time counts as ' + STACK + ' more, so that only happens when no one in the department is free (never on an all-day job). Nothing more than ' + timeText(MAX_DRIVE) + ' away. Sales (Sales/ Service, Project Coordinators): tries to keep a day of driving under ' + timeText(SALES_MAX) + '.'), keyBtn, keyBox);
     const optsLabel = () => {
       const open = optsBox.style.display !== 'none';
       const parts = tab === 'near' ? [from === 'home' ? 'from home' : 'where they are now', fieldBox.checked ? 'field techs' : 'everyone', teamSel.value || 'any department']
@@ -6741,6 +6747,33 @@
           const h = p.home && pointOf(p.home, points);
           return h ? { pt: h, why: p.home.why } : null;
         };
+        // The sales rule: a salesperson's day of driving, home → their jobs in time order → home.
+        // One Directions request per salesperson (a guess from straight lines if Mapbox can't say),
+        // then kept up to date as the plan adds jobs.
+        const stops = p => p.blocks.filter(b => b.zip && points.has(b.zip)).sort((a, b) => (toDate(a.start) || 0) - (toDate(b.start) || 0));
+        const homePt = p => p.home ? pointOf(p.home, points) : null;
+        const dayDrive = async p => {
+          const h = homePt(p), route = [].concat(h ? [h] : [], stops(p).map(b => points.get(b.zip)), h ? [h] : []);
+          if (route.length < 2) return 0;
+          const guess = () => route.slice(1).reduce((sum, x, i) => sum + guessMin(miles(route[i], x)), 0);
+          if (!key) return guess();
+          try {
+            const j = await outside(MB + 'directions/v5/mapbox/driving/' + route.slice(0, 25).map(pt).join(';') + '?overview=false&alternatives=false&access_token=' + encodeURIComponent(key), 12000);
+            const r = j && j.code === 'Ok' && Array.isArray(j.routes) ? j.routes[0] : null;
+            return r && typeof r.duration === 'number' ? Math.round(r.duration / 60) : guess();
+          } catch (e) { return guess(); }
+        };
+        // About how much driving a job adds to a day: there and on to the next stop, less the drive it replaces.
+        const adds = (p, job, toPt, there) => {
+          const s0 = toDate(job.start), e0 = toDate(job.end) || s0;
+          const st_ = stops(p);
+          const prev = s0 ? st_.filter(b => toDate(b.end) && toDate(b.end) <= s0).pop() : null;
+          const next = e0 ? st_.find(b => toDate(b.start) && toDate(b.start) >= e0) : null;
+          const prevPt = prev ? points.get(prev.zip) : homePt(p), nextPt = next ? points.get(next.zip) : homePt(p);
+          if (!nextPt) return there;
+          return Math.max(0, there + guessMin(miles(toPt, nextPt)) - (prevPt ? guessMin(miles(prevPt, nextPt)) : 0));
+        };
+        const overBy = m => Math.max(0, m - SALES_MAX);
         const order = jobs.slice().sort((a, b) => prio(a.priority) - prio(b.priority) || (toDate(a.start) || 0) - (toDate(b.start) || 0) || a.jobId.localeCompare(b.jobId));
         const rows = [], left = [];
         const key = driveKey();
@@ -6760,13 +6793,17 @@
               : !open.length ? 'everyone in ' + (fit_ ? fit_.teams.join(' / ') : 'the department') + ' is on an all-day job then' : 'no one in that department could be placed (no home address)' });
             continue;
           }
-          const extra = c => PER_JOB * c.p.n + (c.clash ? STACK : 0);
+          const extra = c => PER_JOB * c.p.n + (c.clash ? STACK : 0) + (c.sales ? OVER_WEIGHT * (overBy(c.dayAfter) - overBy(c.p.dayMin)) : 0);
           cands.forEach(c => { c.est = guessMin(c.line) + extra(c); });
           cands.sort((a, b) => a.est - b.est);
           const top = cands.slice(0, CANDIDATES);
           const drives = await driveMany(top.map(c => c.at.pt), to, key, 'driving');
           if (stale()) return;
-          top.forEach((c, k) => { c.drive = drives[k]; c.min = c.drive ? c.drive.min : guessMin(c.line); c.score = c.min + extra(c); });
+          top.forEach((c, k) => { c.drive = drives[k]; c.min = c.drive ? c.drive.min : guessMin(c.line); c.sales = isSales(c.p.t.team); });
+          // Salespeople: their day of driving so far (read once), and with this job.
+          await Promise.all(top.filter(c => c.sales && c.p.dayMin == null).map(async c => { c.p.dayMin = await dayDrive(c.p); }));
+          if (stale()) return;
+          top.forEach(c => { if (c.sales) c.dayAfter = c.p.dayMin + adds(c.p, job, to, c.min); c.score = c.min + extra(c); });
           top.sort((a, b) => a.score - b.score || a.min - b.min || a.p.t.name.localeCompare(b.p.t.name));
           const near_ = top.filter(c => c.min <= MAX_DRIVE);
           if (!near_.length) { left.push({ job, why: 'the closest fit (' + top.slice().sort((a, b) => a.min - b.min)[0].p.t.name + ') is ' + timeText(top.slice().sort((a, b) => a.min - b.min)[0].min) + ' away, more than ' + timeText(MAX_DRIVE) }); continue; }
@@ -6774,7 +6811,9 @@
           const why = fit_ ? best.p.t.team + ' did ' + (fit_.by[best.p.t.team] || 0) + ' of ' + fit_.total + (fit_.exact ? ' like it' : ' "' + fit_.kind + '" jobs') : '⚠️ no recent jobs like it to go by: any department';
           rows.push({ job, t: best.p.t, min: best.min, guess: !best.drive, from: best.at.why, dept: why, noHistory: !fit_, had: best.p.n,
             stacked: best.clash ? '⚠️ on top of their ' + (timeSpan(best.clash.start, best.clash.end) || 'other') + ' job' + (best.clash.planned ? ' (also in this plan)' : '') +
-              (near_.some(c => !c.clash) ? ': much closer than anyone free then' : ': no one in the department is free then') : '' });
+              (near_.some(c => !c.clash) ? ': much closer than anyone free then' : ': no one in the department is free then') : '',
+            sales: best.sales ? (best.dayAfter > SALES_MAX ? '⚠️ ' : '') + 'about ' + timeText(best.dayAfter) + ' of driving that day' + (best.dayAfter > SALES_MAX ? ' (sales aim: under ' + timeText(SALES_MAX) + '; no one else is close)' : '') : '' });
+          if (best.sales) best.p.dayMin = best.dayAfter;
           best.p.blocks.push({ start: job.start, end: job.end, zip: job.zip, city: job.city, planned: true });
           best.p.n++; best.p.added++;
         }
@@ -6813,6 +6852,7 @@
         l3.title = [x.job.type, x.dept, x.t.name + ' had ' + plural(x.had, 'job') + ' that day before this one'].filter(Boolean).join('\n');
         left.append(l1, l2, l3);
         if (x.stacked) { const l4 = el('div', 'font-size:11px;color:#8a5300;font-weight:600', x.stacked); l4.className = 'st-plan-stacked'; left.appendChild(l4); }
+        if (x.sales) { const l5 = el('div', 'font-size:11px;' + (/^⚠️/.test(x.sales) ? 'color:#8a5300;font-weight:600' : 'color:#666'), x.sales); l5.className = 'st-plan-sales'; left.appendChild(l5); }
         const rm = iconBtn('✕', 'Leave this job out of the plan', () => { p.rows.splice(p.rows.indexOf(x), 1); p.left.push({ job: x.job, why: 'you took it out of the plan' }); renderPlan(); }, 'padding:1px 6px');
         c.append(left, rm);
         list.appendChild(c);
@@ -6827,7 +6867,7 @@
       if (p.failedDays) warn.push(plural(p.failedDays, 'past board') + ' couldn\'t be read, so departments come from fewer days.');
       if (p.error) warn.push('Some zip codes couldn\'t be looked up: ' + p.error + '.');
       warn.forEach(t => planOut.appendChild(small('⚠️ ' + t, 'color:#8a5300')));
-      planOut.appendChild(small('Departments from the last 2 weeks of boards. Each job a tech already has counts as ' + PER_JOB + ' min of driving; one on top of another job at the same time as ' + STACK + ' more (Move Jobs asks you to tick those), never on an all-day job. At most ' + timeText(MAX_DRIVE) + ' away. Drive times © Mapbox © OpenStreetMap.', 'color:#999'));
+      planOut.appendChild(small('Departments from the last 2 weeks of boards. Each job a tech already has counts as ' + PER_JOB + ' min of driving; one on top of another job at the same time as ' + STACK + ' more (Move Jobs asks you to tick those), never on an all-day job. At most ' + timeText(MAX_DRIVE) + ' away. Sales: tries to keep a day of driving under ' + timeText(SALES_MAX) + '. Drive times © Mapbox © OpenStreetMap.', 'color:#999'));
       planOut.style.display = 'grid';
       say(p.rows.length ? 'Check the plan, take off anything you don\'t want (✕), then send it to Move Jobs.' : 'Nothing could be planned (see why below).');
       fit();
@@ -6835,7 +6875,7 @@
     const planText = () => {
       const p = planned;
       if (!p) return '';
-      return ['Plan for ' + dayText(p.day)].concat(p.rows.map(x => jobLine(x.job) + ' → ' + x.t.name + ' (' + (x.guess ? '~' : '') + timeText(x.min) + ' ' + x.from + '; ' + x.dept + (x.stacked ? '; ' + x.stacked : '') + ')'),
+      return ['Plan for ' + dayText(p.day)].concat(p.rows.map(x => jobLine(x.job) + ' → ' + x.t.name + ' (' + (x.guess ? '~' : '') + timeText(x.min) + ' ' + x.from + '; ' + x.dept + (x.stacked ? '; ' + x.stacked : '') + (x.sales ? '; ' + x.sales : '') + ')'),
         p.left.length ? ['', 'Not planned:'].concat(p.left.map(x => jobLine(x.job) + ': ' + x.why)) : []).join('\n');
     };
     const sendPlan = () => {
