@@ -1,5 +1,5 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>Mock ServiceTitan closest techs</title>
+<html><head><meta charset="utf-8"><title>Mock ServiceTitan tech router</title>
 <style>
   body{font:13px sans-serif;margin:0}
   .appointment{display:inline-block;margin:4px;padding:6px 10px;background:#cfe;border:1px solid #9c9;cursor:pointer;color:#000;text-decoration:none}
@@ -43,21 +43,31 @@
   ];
   const tname = id => (TECHS.find(t => t.id === id) || {}).name || ('#' + id);
   const STATUS_NUM = { Scheduled: 0, Dispatched: 1, Working: 2, Hold: 3, Done: 4, Canceled: 5 };
-  // Appointments: appointment id -> job, customer, time, techs, status, zip, city.
+  // Appointments: appointment id -> job, customer, time, techs, status, zip, city, job type, priority.
+  const MAINT = 'Maintenance - Fall - Residential', INSTALL = 'Install - Generator';
   window.APPTS = {
-    9801: { job: 8001, n: 1, cust: 'Kay Lin', s: at(13), e: at(15), techs: [], status: 'Scheduled', zip: '39111', city: 'Magee' },
-    9802: { job: 8002, n: 1, cust: 'Lee Moe', s: at(8), e: at(10), techs: [205], status: 'Working', zip: '39111', city: 'Magee' },
-    9803: { job: 8003, n: 1, cust: 'Mo Nash', s: at(9), e: at(11), techs: [206], status: 'Dispatched', zip: '39149', city: 'Pinola' },
-    9804: { job: 8004, n: 1, cust: 'Ned Orr', s: at(7), e: at(8), techs: [207], status: 'Done', zip: '39044', city: 'Braxton' },
-    9805: { job: 8005, n: 1, cust: 'Oli Park', s: at(14), e: at(16), techs: [207], status: 'Scheduled', zip: '39201', city: 'Jackson' },
-    9806: { job: 8006, n: 1, cust: 'Pat Quin', s: at(8), e: at(9), techs: [202], status: 'Canceled', zip: '39201', city: 'Jackson' },
-    9807: { job: 8007, n: 1, cust: 'Quin Ray', s: at(15), e: at(16), techs: [201], status: 'Scheduled', zip: '39114', city: 'Mendenhall' },
-    9810: { job: 8010, n: 1, cust: 'Rae Sun', s: tomorrow(9), e: tomorrow(11), techs: [], status: 'Scheduled', zip: '39073', city: 'Florence', notOnBoard: true },
-    9811: { job: 8011, n: 1, cust: 'Sam Tao', s: tomorrow(9), e: tomorrow(11), techs: [], status: 'Scheduled', zip: '', city: '', notOnBoard: true }
+    9801: { job: 8001, n: 1, cust: 'Kay Lin', s: at(13), e: at(15), techs: [], status: 'Scheduled', zip: '39111', city: 'Magee', type: MAINT, prio: 'Normal' },
+    9802: { job: 8002, n: 1, cust: 'Lee Moe', s: at(8), e: at(10), techs: [205], status: 'Working', zip: '39111', city: 'Magee', type: MAINT },
+    9803: { job: 8003, n: 1, cust: 'Mo Nash', s: at(9), e: at(11), techs: [206], status: 'Dispatched', zip: '39149', city: 'Pinola', type: INSTALL },
+    9804: { job: 8004, n: 1, cust: 'Ned Orr', s: at(7), e: at(8), techs: [207], status: 'Done', zip: '39044', city: 'Braxton', type: MAINT },
+    9805: { job: 8005, n: 1, cust: 'Oli Park', s: at(14), e: at(16), techs: [207], status: 'Scheduled', zip: '39201', city: 'Jackson', type: MAINT },
+    9806: { job: 8006, n: 1, cust: 'Pat Quin', s: at(8), e: at(9), techs: [202], status: 'Canceled', zip: '39201', city: 'Jackson', type: MAINT },
+    9807: { job: 8007, n: 1, cust: 'Quin Ray', s: at(15), e: at(16), techs: [201], status: 'Scheduled', zip: '39114', city: 'Mendenhall', type: MAINT },
+    9810: { job: 8010, n: 1, cust: 'Rae Sun', s: tomorrow(9), e: tomorrow(11), techs: [], status: 'Scheduled', zip: '39073', city: 'Florence', notOnBoard: true, type: MAINT },
+    9811: { job: 8011, n: 1, cust: 'Sam Tao', s: tomorrow(9), e: tomorrow(11), techs: [], status: 'Scheduled', zip: '', city: '', notOnBoard: true, type: MAINT },
+    // More of today's Unassigned list, for 📋 Plan Unassigned and 📍 Next job.
+    9820: { job: 8020, n: 1, cust: 'Uma Vale', s: at(14), e: at(16), techs: [], status: 'Scheduled', zip: '39201', city: 'JACKSON', type: INSTALL, prio: 'Normal' },
+    9821: { job: 8021, n: 1, cust: 'Vic Wade', s: at(9), e: at(11), techs: [], status: 'Scheduled', zip: '39044', city: 'Braxton', type: MAINT, prio: 'High' },
+    9822: { job: 8022, n: 1, cust: 'Wes Xu', s: at(10), e: at(12), techs: [], status: 'Scheduled', zip: '39151', city: 'Puckett', type: 'Quote - Solar Panels', prio: 'Normal' },
+    9823: { job: 8023, n: 1, cust: 'Xia Yao', s: at(13), e: at(14), techs: [], status: 'Scheduled', zip: '', city: '', type: MAINT, prio: 'Low' }
   };
+  // The last two weeks of boards (history): Level 1 Service did fall maintenance, Installers did
+  // generator installs. Hal (office staff, not a managed tech) has a pile of maintenance jobs that
+  // must not count.
+  const HISTORY = { 201: [MAINT, MAINT], 202: [MAINT, MAINT], 205: [MAINT, MAINT], 207: [MAINT, MAINT], 203: [INSTALL, INSTALL], 204: [INSTALL, INSTALL], 206: [INSTALL, MAINT], 208: [MAINT, MAINT, MAINT, MAINT, MAINT, INSTALL, INSTALL] };
   // Test switches: MB_DOWN (Mapbox refuses), MB_FAIL_FROM (a lon,lat Mapbox can't route from), ZCTA_DOWN,
   // DISPATCH_DRIFT (the board's data in an unknown shape), BOARD_TOMORROW (the board shows tomorrow).
-  window.mbCalls = []; window.zctaCalls = []; window.opened = []; window.calls = []; window.dataCalls = [];
+  window.mbCalls = []; window.zctaCalls = []; window.opened = []; window.calls = []; window.dataCalls = []; window.getJobsCalls = [];
   window.open = (u) => { window.opened.push(String(u)); return null; };
   const mi = (a, b) => { const R = 3958.8, r = x => x * Math.PI / 180; const h = Math.sin(r(b[0] - a[0]) / 2) ** 2 + Math.cos(r(a[0])) * Math.cos(r(b[0])) * Math.sin(r(b[1] - a[1]) / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
   const RIVER = -89.78;   // crossing it costs 30 minutes and 15 miles
@@ -71,14 +81,22 @@
     if (u.indexOf('https://api.mapbox.com/') === 0) {
       window.mbCalls.push({ url: u, credentials: opts && opts.credentials });
       if (window.MB_DOWN) return json({ message: 'Not Authorized - Invalid Token' }, 401);
-      m = /driving-traffic\/(-?[\d.]+),(-?[\d.]+);(-?[\d.]+),(-?[\d.]+)\?/.exec(u);
+      // The fake roads: 20% longer than a straight line at 45 mph, and the river costs 30 minutes and 15 miles.
+      const leg = (a, b) => { const cross = (a[1] > RIVER) !== (b[1] > RIVER); return { s: (mi(a, b) * 1.2 / 45 * 60 + (cross ? 30 : 0)) * 60, d: (mi(a, b) * 1.2 + (cross ? 15 : 0)) * 1609.34 }; };
+      const pts = str => str.split(';').map(x => { const [lon, lat] = x.split(',').map(Number); return [lat, lon]; });
+      if ((m = /directions-matrix\/v1\/mapbox\/([\w-]+)\/([^?]+)\?/.exec(u))) {
+        window.matrixCalls = (window.matrixCalls || 0) + 1;
+        if (window.MATRIX_OFF) return json({ message: 'Not Authorized - Invalid Token' }, 401);
+        const p = pts(m[2]), q = new URL(u).searchParams;
+        if (p.length > (m[1] === 'driving-traffic' ? 10 : 25)) return json({ code: 'InvalidInput', message: 'too many coordinates' }, 422);
+        const src = q.get('sources').split(';').map(Number), dst = q.get('destinations').split(';').map(Number);
+        return json({ code: 'Ok', durations: src.map(i => dst.map(k => leg(p[i], p[k]).s)), distances: src.map(i => dst.map(k => leg(p[i], p[k]).d)) });
+      }
+      m = /driving(?:-traffic)?\/(-?[\d.]+),(-?[\d.]+);(-?[\d.]+),(-?[\d.]+)\?/.exec(u);
       if (!m) return json({ code: 'InvalidInput' }, 422);
       if (window.MB_FAIL_FROM && (m[1] + ',' + m[2]) === window.MB_FAIL_FROM) return json({ code: 'NoRoute', routes: [] });
-      const a = [Number(m[2]), Number(m[1])], b = [Number(m[4]), Number(m[3])];
-      const cross = (a[1] > RIVER) !== (b[1] > RIVER);
-      const road = mi(a, b) * 1.2 + (cross ? 15 : 0);
-      const minutes = mi(a, b) * 1.2 / 45 * 60 + (cross ? 30 : 0);
-      return json({ code: 'Ok', routes: [{ duration: minutes * 60, distance: road * 1609.34 }] });
+      const l = leg([Number(m[2]), Number(m[1])], [Number(m[4]), Number(m[3])]);
+      return json({ code: 'Ok', routes: [{ duration: l.s, distance: l.d }] });
     }
     if (u.indexOf('https://tigerweb.geo.census.gov/') === 0) {
       window.zctaCalls.push({ url: u, credentials: opts && opts.credentials });
@@ -95,9 +113,17 @@
       if (window.DISPATCH_DRIFT) return json({ technicians: [] });
       const day = new Date(body.date);
       const same = d => d.getFullYear() === day.getFullYear() && d.getMonth() === day.getMonth() && d.getDate() === day.getDate();
+      // A past day: the history (done jobs). HISTORY_FAIL: past days can't be read.
+      if (day < today) {
+        if (window.HISTORY_FAIL) return json({ error: 'boom' }, 500);
+        let n = 0;
+        return json({ Technicians: TECHS.filter(t => t.active).map(t => ({ Id: t.id, Name: t.name, Team: t.team, Status: 'Idle',
+          Assignments: (HISTORY[t.id] || []).map(type => { n++; const s = new Date(day); s.setHours(8 + n % 8); const e = new Date(s); e.setHours(s.getHours() + 1);
+            return { Id: 50000 + n, JobId: 60000 + t.id * 100 + n, Start: s.toISOString(), End: e.toISOString(), AppointmentStatus: 'Done', Status: 'Done', City: 'Mendenhall', Zip: '39114', Type: type, TypeId: type.length, Technicians: [{ Id: t.id, Name: t.name }] }; }) })) });
+      }
       return json({ Technicians: TECHS.filter(t => t.active).map(t => ({ Id: t.id, Name: t.name, Team: t.team, Status: 'Idle',
         Assignments: Object.keys(APPTS).filter(k => APPTS[k].techs.indexOf(t.id) > -1 && same(APPTS[k].s)).map(k => ({ Id: Number(k), JobId: APPTS[k].job, Start: APPTS[k].s.toISOString(), End: APPTS[k].e.toISOString(),
-          AppointmentStatus: APPTS[k].status, Status: APPTS[k].status, City: APPTS[k].city, Zip: APPTS[k].zip, Technicians: APPTS[k].techs.map(id => ({ Id: id, Name: tname(id) })) })) })) });
+          AppointmentStatus: APPTS[k].status, Status: APPTS[k].status, City: APPTS[k].city, Zip: APPTS[k].zip, Type: APPTS[k].type, TypeId: APPTS[k].type.length, Technicians: APPTS[k].techs.map(id => ({ Id: id, Name: tname(id) })) })) })) });
     }
     if ((m = /GetJobAppointments\?jobId=(\d+)/.exec(u))) {
       const ks = Object.keys(APPTS).filter(k => String(APPTS[k].job) === m[1]);
@@ -124,13 +150,21 @@
       setTimeout(render, 50);
       return new Response('', { status: 200 });
     }
-    if (u.indexOf('/Dispatch/GetJobs') === 0) return json({ Jobs: [], Count: 0 });
+    if (u.indexOf('/Dispatch/GetJobs') === 0) {
+      // Like ServiceTitan: the Unassigned list for a day and branches, in pages.
+      window.getJobsCalls.push(body);
+      if (body.JobType !== 'Unassigned') return json({ Jobs: [], Count: 0 });
+      const day = new Date(body.Date);
+      const same = d => d.getFullYear() === day.getFullYear() && d.getMonth() === day.getMonth() && d.getDate() === day.getDate();
+      const rows = Object.keys(APPTS).filter(k => !APPTS[k].techs.length && same(APPTS[k].s) && body.QueryFilter.BusinessUnitIds.indexOf(1) > -1).map(rowFor);
+      return json({ Jobs: rows.slice(body.QueryFilter.Skip, body.QueryFilter.Skip + body.QueryFilter.Take), Count: rows.length });
+    }
     return realFetch(url, opts);
   };
   // One appointment as the board's data has it (with Zip and City, like ServiceTitan's).
   const rowFor = k => {
     const a = APPTS[k];
-    return { Id: Number(k), JobId: a.job, AppointmentNumber: a.n, Customer: a.cust, Start: a.s, End: a.e, BusinessUnitId: 1, Zip: a.zip, City: a.city, Street: '55 Secret Rd',
+    return { Id: Number(k), JobId: a.job, AppointmentNumber: a.n, Customer: a.cust, Start: a.s, End: a.e, BusinessUnitId: 1, Zip: a.zip, City: a.city, Street: '55 Secret Rd', Type: a.type, TypeId: (a.type || '').length, Priority: a.prio || 'Normal',
       Technicians: a.techs.map(id => ({ Id: id, Name: tname(id) })), TechnicianId: a.techs[0] || 0, AppointmentStatus: a.status };
   };
   function render() {
