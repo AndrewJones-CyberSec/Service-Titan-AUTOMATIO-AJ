@@ -74,47 +74,14 @@
     return fn() || null;
   };
   const visible = el => !!(el && el.getClientRects().length);
-  // True if a tech's name is actually showing on the board (a team or people filter hides the rest).
-  const techShowing = t => visible((t && t.querySelector('.name')) || t);
-  const onBoard = () => /dispatchboard/i.test(location.hash);
-  // A job clicked on the Dispatch board: a bubble on the timeline, or a row in the job list at
-  // the bottom (Unassigned, Hold and the other tabs). Returns the job number, or null.
-  const clickedJob = target => {
-    if (!target || !target.closest) return null;
-    const a = target.closest('a.appointment[data-job-id]');
-    if (a) { const j = a.getAttribute('data-job-id'); return /^\d+$/.test(j || '') ? j : null; }   // job numbers only
-    const tr = target.closest('.job-list tr[class*="qa-job-"]');
-    const m = tr && /(?:^|\s)qa-job-(\d+)(?:\s|$)/.exec(String(tr.className));
-    return m ? m[1] : null;
-  };
-  // A tech's name clicked on the Dispatch board. Returns the tech's ID (numbers only), or null.
-  const clickedTechId = target => {
-    const t = target && target.closest && target.closest('.technician[data-technician-id]');
-    const id = t ? t.getAttribute('data-technician-id') : null;
-    return /^\d+$/.test(id || '') ? id : null;
-  };
-  // What the job list at the bottom of the board knows about a job on the tab showing.
-  const listJob = j => {
-    try {
-      const jl = document.querySelector('.job-list');
-      const vm = jl && window.ko && window.ko.dataFor(jl);
-      const list = (vm && vm.JobList && window.ko.unwrap(vm.JobList.AllVisibleJobs)) || [];
-      const x = list.find(y => String(window.ko.unwrap(y.JobId)) === String(j));
-      if (!x) return null;
-      return { customer: String(window.ko.unwrap(x.Customer) || '').replace(/\s+/g, ' ').trim(), customerId: window.ko.unwrap(x.CustomerId) || null };
-    } catch (e) { return null; }
-  };
-  // Highlights picked jobs on the timeline and in the job list (job numbers only go into the CSS).
-  const pickedCss = (all, color, soft) => {
-    const ids = all.map(String).filter(j => /^\d+$/.test(j));
-    return !ids.length ? '' :
-      ids.map(j => 'a.appointment[data-job-id="' + j + '"]').join(',') + '{outline:3px solid ' + color + ' !important;outline-offset:-3px !important;box-shadow:0 0 0 3px ' + soft + ' !important}' +
-      ids.map(j => '.job-list tr.qa-job-' + j + ' > td').join(',') + '{background:' + soft + ' !important;box-shadow:inset 0 2px 0 ' + color + ',inset 0 -2px 0 ' + color + ' !important}';
-  };
+  // On the Dispatch board, in Day view? (See board, below.)
+  const onBoard = () => board.isDay();
   const isMac = /Mac|iPhone|iPad/i.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || navigator.userAgent || '');
   const ALT = isMac ? 'Option' : 'Alt';
   const el = (tag, css, text) => { const e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; };
   const FULL = 'display:block;box-sizing:border-box;width:100%;';
+  // A text box or list, in the Toolbox's look.
+  const FIELD = 'box-sizing:border-box;padding:5px 8px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;font-size:12px;color:var(--st-ink);background:var(--st-bg);';
   const smallBtn = (label, onClick, extra) => {
     const b = el('button', 'padding:5px 8px;cursor:pointer;border:1px solid #aaa;border-radius:6px;background:#fff;color:#111;font:inherit;font-size:12px;' + (extra || ''), label);
     b.type = 'button';
@@ -385,6 +352,401 @@
       appointment, jobSkills, technicians, techsBooked, daySchedule, assignTechs, unassignTechs, apptConfirmed, setConfirmed, jobAppointments };
   })();
 
+  // ===================================================================
+  // The Dispatch board (ServiceTitan's new Dispatch Center, Oct 2026)
+  // The new board is built in its own sealed-off part of the page (a shadow root), and it only
+  // draws the rows that are on screen. So the Toolbox:
+  //   - finds things on the board by the board's own test labels (data-cy), never by position,
+  //   - reads the board's data with the same requests the board makes (every tech and job on the
+  //     day, with tags and today's history), so jobs scrolled out of view still count,
+  //   - reads which branches the board is filtered to from where the board keeps it.
+  // Only the Day view is supported: on the Week view the tools say to switch to Day.
+  // ===================================================================
+  const board = (() => {
+    const HOST_RE = /^SERVICETITAN-DISPATCH-CENTER(-|$)/i;
+    const PAGE_RE = /^#\/widget-app\/dispatch-center/i;
+    const HOME = '#/widget-app/dispatch-center?orientation=horizontal&timeframe=day';
+    const onPage = () => PAGE_RE.test(location.hash);
+    let hostEl = null, lastMiss = 0;
+    const host = () => {
+      if (hostEl && hostEl.isConnected) return hostEl;
+      hostEl = null;
+      if (!onPage() || Date.now() - lastMiss < 400) return null;
+      hostEl = Array.from(document.querySelectorAll('*')).find(e => HOST_RE.test(e.tagName)) || null;
+      if (!hostEl) lastMiss = Date.now();
+      return hostEl;
+    };
+    const root = () => { const h = host(); return (h && h.shadowRoot) || null; };
+    const q = sel => { const r = root(); return r ? r.querySelector(sel) : null; };
+    const qa = sel => { const r = root(); return r ? Array.from(r.querySelectorAll(sel)) : []; };
+
+    // 'day', 'week', 'loading' (the board is still drawing) or 'off' (not on the board).
+    const view = () => {
+      if (!onPage()) return 'off';
+      const r = root();
+      if (r) {
+        if (r.querySelector('[data-cy^="ddb-"]')) return 'day';
+        if (r.querySelector('[data-cy^="wdb-technician-header-"], [data-cy="wdb-schedule-row"]')) return 'week';
+      }
+      const tf = new URLSearchParams(location.hash.split('?')[1] || '').get('timeframe');
+      return tf === 'week' ? 'week' : 'loading';
+    };
+    const isDay = () => view() === 'day';
+    // What to say when a tool needs the board and it isn't showing.
+    const need = () => {
+      const v = view();
+      return v === 'week' ? 'Switch the Dispatch board to Day view first.' : v === 'loading' ? 'Wait for the Dispatch board to finish loading.' : 'Open the Dispatch board first.';
+    };
+    // Where to come back to after a tool opens other pages.
+    const homeHash = () => (onPage() ? location.hash : HOME);
+
+    // ---- The day the board shows (its date button, e.g. "Tue, Oct 27, 2026") ----
+    const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const DATE_RE = /\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), ([A-Z][a-z]{2}) (\d{1,2}), (\d{4})\b/;
+    let dateBtn = null;
+    const day = () => {
+      if (!(dateBtn && dateBtn.isConnected && DATE_RE.test(dateBtn.textContent))) dateBtn = qa('button').find(b => DATE_RE.test(b.textContent)) || null;
+      const m = dateBtn && DATE_RE.exec(dateBtn.textContent);
+      if (!m) return null;
+      const d = new Date(Number(m[3]), MONTHS.indexOf(m[1].toLowerCase()), Number(m[2]));
+      return isNaN(d) ? null : d;
+    };
+    const pad2 = n => String(n).padStart(2, '0');
+    const iso = d => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+    const isoT = d => iso(d) + 'T00:00:00';
+    const sameDay = (a, b) => !!(a && b) && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const dayText = d => (d || day()) ? (d || day()).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'the day shown';
+
+    // ---- The board's filter (branches, teams, skills), as the board keeps it ----
+    // Seen Oct 2026: { selectedBusinessUnitIds: ['621842244'], selectedTeamIds: [], selectedSkillIds: [] }
+    // under SHARED_DISPATCH_FILTERS_KEY_<company>_<user>, in this tab's session storage.
+    const FILTER_KEY = /^SHARED_DISPATCH_FILTERS_KEY_/;
+    const filters = () => {
+      let uid = null;
+      try { uid = window.App.Notifications.store.userId; } catch (e) {}
+      const from = s => {
+        try {
+          const keys = Object.keys(s).filter(k => FILTER_KEY.test(k));
+          const k = keys.find(x => uid != null && x.split('_').pop() === String(uid)) || (keys.length === 1 ? keys[0] : null);
+          const v = k ? JSON.parse(s.getItem(k)) : null;
+          return v && typeof v === 'object' && Array.isArray(v.selectedBusinessUnitIds) ? v : null;
+        } catch (e) { return null; }
+      };
+      const v = from(sessionStorage) || from(localStorage);
+      if (!v) return null;
+      const nums = a => (Array.isArray(a) ? a : []).map(Number).filter(n => isFinite(n) && n > 0);
+      return { bus: nums(v.selectedBusinessUnitIds), teams: nums(v.selectedTeamIds), skills: nums(v.selectedSkillIds) };
+    };
+    // The branches the board is filtered to (the Unassigned and Hold lists use the same ones).
+    const bus = () => (filters() || {}).bus || [];
+
+    // ---- Tags: { name, color, text } ----
+    // Readable text on a tag's color (the day's data doesn't always say which).
+    const inkFor = hex => {
+      const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+      if (!m) return '#141414';
+      const n = parseInt(m[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+      return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? '#141414' : '#ffffff';
+    };
+    const tagOf = t => {
+      const name = norm(t && (t.name != null ? t.name : t.TypeName));
+      if (!name) return null;
+      const color = norm(t.color || t.Color) || '#e3e5e8';
+      return { name, color, text: norm(t.textColor || t.TextColor) || inkFor(color) };
+    };
+
+    // ---- Loading the board's day ----
+    // A snapshot: { key, day, at, techs: [{ id, name, team, teamId }] in the board's order,
+    //   techById, teams (names, board order), appts: Map(apptId -> appt), byJob: Map(jobId -> [appt]),
+    //   byTech: Map(techId -> [appt]), history: Map(apptId -> [{ status, at, techId }]) }
+    // An appt: { apptId, jobId, number, customer, customerId, start, end, windowStart, windowEnd,
+    //   status, jobStatus, confirmed, bu, buName, jobType, city, zip, tags, techs: [tech ids], techStatus }
+    // Statuses are ServiceTitan's words (Scheduled, Dispatched, Working, Hold, Done...).
+    const bad = what => Object.assign(new Error('the board\'s ' + what + ' came back in a shape the Toolbox doesn\'t know'), { kind: 'bad' });
+    const toDate = v => { if (!v) return null; const d = new Date(v); return isNaN(d) ? null : d; };
+    let snap = null, loading = null, gen = 0;
+    const listeners = [];
+    const changed = () => listeners.forEach(fn => { try { fn(snap); } catch (e) {} });
+    const keyFor = (d, f) => iso(d) + '|' + JSON.stringify(f || null);
+    const load = async opts => {
+      opts = opts || {};
+      const d = opts.day || day();
+      if (!d) throw Object.assign(new Error(need()), { kind: 'board' });
+      const f = filters();
+      const key = keyFor(d, f);
+      if (!opts.fresh && snap && snap.key === key && Date.now() - snap.at < (opts.maxAge || 20000)) return snap;
+      if (loading && loading.key === key && (!opts.fresh || loading.started >= Date.now() - 300)) return loading.p;
+      const fl = f || { bus: [], teams: [], skills: [] };
+      const start = iso(d), next = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1), end = iso(next);
+      const my = ++gen;
+      const p = (async () => {
+        const res = await st.getJSON('/dispatch-center/technicians/resources', 30000, { page: 1, pageSize: 100000, businessUnitIds: fl.bus, skillIds: fl.skills, teamIds: fl.teams,
+          workstreamIds: [], shiftTypes: [], technicianIds: [], orderBy: ['Team', 'Technician'], includeSkills: false, applyTeamsManagement: true, includeLicenseTypes: false, startDate: start, endDate: end });
+        if (!res || !Array.isArray(res.items)) throw bad('technician list');
+        const techs = res.items.filter(t => t && t.id != null).map(t => ({ id: String(t.id), name: norm(t.name), team: norm(t.teamName), teamId: t.teamId }));
+        const ids = techs.map(t => Number(t.id));
+        const [sch, hist] = await Promise.all([
+          ids.length ? st.getJSON('/dispatch-center/daily-assignments', 30000, { technicianIds: ids, startDate: start, endDate: end, page: 1, pageSize: ids.length, fields: 'Tags', showOnHoldJobs: true }) : { items: [] },
+          ids.length && opts.history !== false ? st.getJSON('/dispatch-center/technicians/activity-history', 30000, { technicianIds: ids, start, page: 1, pageSize: ids.length })
+            .catch(e => { if (st.isSignedOut(e)) throw e; return null; }) : null
+        ]);
+        if (!sch || !Array.isArray(sch.items)) throw bad('day');
+        const appts = new Map(), byJob = new Map(), byTech = new Map(), techById = new Map();
+        techs.forEach(t => { techById.set(t.id, t); byTech.set(t.id, []); });
+        sch.items.forEach(it => {
+          if (!it || it.technicianId == null || !Array.isArray(it.technicianSchedule)) throw bad('day');
+          const tid = String(it.technicianId);
+          it.technicianSchedule.forEach(dd => (dd && Array.isArray(dd.assignments) ? dd.assignments : []).forEach(a => {
+            if (!a || a.appointmentId == null || a.jobId == null) return;
+            const k = String(a.appointmentId);
+            let x = appts.get(k);
+            if (!x) {
+              const num = norm(a.appointmentNumber);
+              x = { apptId: k, jobId: String(a.jobId), number: num.indexOf('-') > -1 ? num.split('-').pop() : num, customer: norm(a.customerName), customerId: a.customerId || null,
+                start: toDate(a.appointmentStart), end: toDate(a.appointmentEnd), windowStart: toDate(a.arrivalWindowStart), windowEnd: toDate(a.arrivalWindowEnd),
+                status: norm(a.appointmentStatus), jobStatus: norm(a.jobStatus), confirmed: a.isConfirmed === true, bu: a.businessUnitId, buName: norm(a.businessUnitName),
+                jobType: norm(a.jobTypeName), city: norm(a.city), zip: norm(a.zip), tags: (Array.isArray(a.tags) ? a.tags : []).map(tagOf).filter(Boolean), techs: [], techStatus: {} };
+              appts.set(k, x);
+              if (!byJob.has(x.jobId)) byJob.set(x.jobId, []);
+              byJob.get(x.jobId).push(x);
+            }
+            if (x.techs.indexOf(tid) < 0) x.techs.push(tid);
+            x.techStatus[tid] = norm(a.assignmentStatus);
+            if (!byTech.has(tid)) byTech.set(tid, []);
+            if (byTech.get(tid).indexOf(x) < 0) byTech.get(tid).push(x);
+          }));
+        });
+        // Today's history for each appointment: Dispatched, Arrived, Done... with the time.
+        const history = new Map();
+        ((hist && Array.isArray(hist.items)) ? hist.items : []).forEach(t => (t && Array.isArray(t.technicianActivityHistory) ? t.technicianActivityHistory : []).forEach(e => {
+          if (!e || e.jobAppointmentId == null) return;
+          const at = toDate(e.activityTimestamp);
+          if (!at) return;
+          const k = String(e.jobAppointmentId);
+          if (!history.has(k)) history.set(k, []);
+          history.get(k).push({ status: norm(e.status), at, techId: String(t.technicianId) });
+        }));
+        history.forEach(list => list.sort((a, b) => a.at - b.at));
+        const teams = [];
+        techs.forEach(t => { if (t.team && teams.indexOf(t.team) < 0) teams.push(t.team); });
+        return { key, day: d, at: Date.now(), filtersKnown: !!f, techs, techById, teams, appts, byJob, byTech, history, hasHistory: !!hist };
+      })();
+      loading = { key, p, started: Date.now() };
+      try {
+        const s = await p;
+        // A newer load for another day may have finished first: keep the newest.
+        if (my === gen || !snap || snap.key !== key) { snap = s; changed(); }
+        return s;
+      } finally { if (loading && loading.p === p) loading = null; }
+    };
+    const latest = () => (snap && day() && snap.key === keyFor(day(), filters()) ? snap : null);
+    // Keeps the snapshot in step with the board: a new day or filter is loaded right away.
+    let watchKey = '';
+    const watch = () => {
+      if (!isDay()) return;
+      const d = day();
+      if (!d) return;
+      const k = keyFor(d, filters());
+      if (k === watchKey && snap && snap.key === k) return;
+      watchKey = k;
+      load().catch(() => {});
+    };
+
+    // ---- Canceled appointments ----
+    const isCanceled = s => /^cancell?ed$/i.test(norm(s));
+    const live = x => !isCanceled(x.status);
+
+    // ---- What the board's data says about a job or a tech ----
+    const apptsOf = j => (snap && snap.byJob.get(String(j))) || [];
+    const jobOfAppt = a => { const x = snap && snap.appts.get(String(a)); return x ? x.jobId : null; };
+    const techName = id => { const t = snap && snap.techById.get(String(id)); return t ? t.name : ''; };
+    const firstName = name => { const w = norm(name).split(' ')[0] || ''; return w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : ''; };
+    // A job on the board's day: { jobId, customer, customerId, tech (first name), tags, appts } or null.
+    const job = j => {
+      const list = apptsOf(j).filter(live);
+      if (!list.length) return null;
+      const x = list[0];
+      const tags = [];
+      list.forEach(a => a.tags.forEach(t => { if (!tags.some(y => y.name === t.name)) tags.push(t); }));
+      return { jobId: String(j), customer: x.customer, customerId: x.customerId, tech: firstName(techName(x.techs[0])), tags, appts: list };
+    };
+    // A tech's jobs on the board's day (job numbers, canceled left out).
+    const techJobs = id => {
+      const out = [];
+      ((snap && snap.byTech.get(String(id))) || []).forEach(a => { if (live(a) && out.indexOf(a.jobId) < 0) out.push(a.jobId); });
+      return out;
+    };
+    // Today's history of a job's appointments, oldest first: [{ status, at, techId }].
+    const historyOf = j => {
+      const out = [];
+      apptsOf(j).forEach(a => ((snap && snap.history.get(a.apptId)) || []).forEach(e => out.push(e)));
+      return out.sort((a, b) => a.at - b.at);
+    };
+
+    // ---- Things clicked on the board ----
+    // Works from the click itself (its path goes into the board's sealed-off part) or an element.
+    const findUp = (from, test) => {
+      if (from && typeof from.composedPath === 'function') return from.composedPath().find(n => n && n.nodeType === 1 && test(n)) || null;
+      for (let n = from; n; n = n.parentNode || n.host) if (n.nodeType === 1 && test(n)) return n;
+      return null;
+    };
+    const isCard = n => n.getAttribute('data-cy') === 'wdb-job-appt-card' && /^\d+$/.test(n.getAttribute('data-job-appointment-id') || '');
+    const isTrayRow = n => n.tagName === 'TR' && n.hasAttribute('data-grid-row-index') && !!n.querySelector('[data-cy="dc-jt-job-appointment-cell"]');
+    const isTechHeader = n => /^ddb-technician-header-/.test(n.getAttribute('data-cy') || '') && /^\d+$/.test(n.getAttribute('data-technician-id') || '');
+    const rowJob = tr => { const c = tr && tr.querySelector('[data-cy="dc-jt-job-appointment-cell"]'); const m = c && /^(\d+)(?:-\d+)?$/.exec(norm(c.textContent)); return m ? m[1] : null; };
+    // What the Jobs Tray row knows about its job (the row's own data, when the page shares it).
+    const rowItem = tr => {
+      try {
+        const k = Object.keys(tr).find(x => x.indexOf('__reactFiber') === 0);
+        for (let f = k ? tr[k] : null, i = 0; f && i < 6; f = f.return, i++) {
+          const d = f.memoizedProps && f.memoizedProps.dataItem;
+          if (d && d.job) return d;
+        }
+      } catch (e) {}
+      return null;
+    };
+    const rowInfo = tr => {
+      const j = rowJob(tr);
+      if (!j) return null;
+      const d = rowItem(tr);
+      const cell = tr.querySelector('[data-cy="dc-jt-customer-name-cell"]');
+      const customer = norm((d && d.customer && d.customer.name) || (cell && cell.textContent));
+      const tags = d && Array.isArray(d.tags) ? d.tags.map(tagOf).filter(Boolean) : [];
+      return { jobId: j, customer, customerId: (d && d.customer && d.customer.id) || null, apptId: d && d.jobAppointment ? String(d.jobAppointment.id) : null, tags };
+    };
+    // A job clicked on the board (a job card, or a row in the Jobs Tray): { jobId, apptId, row } or null.
+    // A card whose job the Toolbox hasn't loaded yet comes back with jobId null.
+    const clickedJob = from => {
+      const c = findUp(from, isCard);
+      if (c) { const a = c.getAttribute('data-job-appointment-id'); return { jobId: jobOfAppt(a), apptId: a, row: null }; }
+      const tr = findUp(from, isTrayRow);
+      if (tr) { const j = rowJob(tr); return j ? { jobId: j, apptId: null, row: tr } : null; }
+      return null;
+    };
+    const clickedTech = from => { const h = findUp(from, isTechHeader); return h ? h.getAttribute('data-technician-id') : null; };
+    const trayRows = () => qa('tr[data-grid-row-index]').filter(tr => visible(tr) && rowJob(tr));
+    const trayTab = () => {
+      const t = qa('button[data-cy^="custom-tab-item-"]').find(b => b.getAttribute('aria-selected') === 'true');
+      return t ? norm(t.textContent).replace(/\s*\d+$/, '') : '';
+    };
+
+    // ---- Highlights inside the board ----
+    // A tool's <style> is put inside the board's sealed-off part (styles outside it can't reach
+    // the board), and put back if the board is redrawn. Jobs Tray rows get the job number as
+    // data-st-job so they can be highlighted too.
+    const styles = new Set();
+    const mount = s => { styles.add(s); const r = root(); if (r && s.parentNode !== r) r.appendChild(s); };
+    const unmount = s => { styles.delete(s); if (s.parentNode) s.parentNode.removeChild(s); };
+    const tagTray = () => {
+      qa('tr[data-grid-row-index]').forEach(tr => {
+        const j = rowJob(tr) || '';
+        if ((tr.getAttribute('data-st-job') || '') !== j) { if (j) tr.setAttribute('data-st-job', j); else tr.removeAttribute('data-st-job'); }
+      });
+    };
+    const cardSel = apptId => '[data-cy="wdb-job-appt-card"][data-job-appointment-id="' + apptId + '"]';
+    // The highlight for picked jobs: an outline on their cards and a tint on their Jobs Tray rows.
+    // Job and appointment numbers only (anything else is left out of the CSS).
+    const jobsCss = (jobIds, color, soft, dashed) => {
+      const ids = (jobIds || []).map(String).filter(j => /^\d+$/.test(j));
+      if (!ids.length) return '';
+      const cards = [];
+      ids.forEach(j => apptsOf(j).forEach(a => { if (/^\d+$/.test(a.apptId)) cards.push(cardSel(a.apptId)); }));
+      return (cards.length ? cards.join(',') + '{outline:3px ' + (dashed ? 'dashed' : 'solid') + ' ' + color + ' !important;outline-offset:-2px !important;box-shadow:0 0 0 3px ' + soft + ' !important}' : '') +
+        ids.map(j => 'tr[data-st-job="' + j + '"] > td').join(',') + '{background:' + soft + ' !important;box-shadow:inset 0 2px 0 ' + color + ',inset 0 -2px 0 ' + color + ' !important}';
+    };
+    const techsCss = (techIds, color, soft) => {
+      const ids = (techIds || []).map(String).filter(t => /^\d+$/.test(t));
+      return ids.length ? ids.map(t => '[data-cy^="ddb-technician-header-"][data-technician-id="' + t + '"]').join(',') + '{outline:3px solid ' + color + ' !important;outline-offset:-3px !important;background:' + soft + ' !important;border-radius:6px}' : '';
+    };
+
+    // ---- The board's own Refresh (reloads its data: same day and filters, no page reload) ----
+    const refresh = async () => {
+      const b = q('button[aria-label="Refresh"]');
+      if (!b || b.disabled) return false;
+      b.click();
+      await wait(1200);
+      try { await load({ fresh: true }); } catch (e) {}
+      return true;
+    };
+
+    // ---- A tech's row, brought into view (the board only draws the rows on screen) ----
+    const headerOf = id => qa('[data-cy^="ddb-technician-header-"][data-technician-id="' + id + '"]').find(h => h.hasAttribute('data-hover-popover-trigger')) ||
+      qa('[data-cy^="ddb-technician-header-"][data-technician-id="' + id + '"]')[0] || null;
+    const scrollerOf = el => { for (let e = el; e; e = e.parentElement) { const s = getComputedStyle(e); if (/(auto|scroll)/.test(s.overflowY) && e.scrollHeight > e.clientHeight + 4) return e; } return null; };
+    const showTech = async id => {
+      let h = headerOf(id);
+      if (h && visible(h)) { h.scrollIntoView({ block: 'center' }); await wait(250); return headerOf(id); }
+      const any = qa('[data-cy^="ddb-technician-header-"]')[0];
+      const sc = any && scrollerOf(any);
+      if (!sc) return null;
+      const order = snap ? snap.techs.map(t => t.id) : [];
+      const i = order.indexOf(String(id));
+      // Jump near where the row should be, then step through the list until it's drawn.
+      if (i > -1 && order.length) { sc.scrollTop = Math.max(0, (sc.scrollHeight * i / order.length) - sc.clientHeight / 2); await wait(300); }
+      if ((h = headerOf(id))) { h.scrollIntoView({ block: 'center' }); await wait(250); return headerOf(id); }
+      sc.scrollTop = 0; await wait(250);
+      for (let n = 0; n < 60; n++) {
+        if ((h = headerOf(id))) { h.scrollIntoView({ block: 'center' }); await wait(250); return headerOf(id); }
+        const before = sc.scrollTop;
+        sc.scrollTop += Math.max(200, sc.clientHeight * 0.8);
+        await wait(180);
+        if (sc.scrollTop === before) break;
+      }
+      return headerOf(id);
+    };
+
+    // ---- The whole Unassigned list for the board's day ----
+    // All pages, for the board's branches, from the same request the board's Jobs Tray answers from.
+    // { key, day, rows: [{ jobId, apptId, number, customer, customerId, tags, start, end, status,
+    //   confirmed, bu, raw }], canceled (how many were left out) }. Kept for 30 seconds.
+    let unCache = null;
+    const unassigned = async (tool, opts) => {
+      opts = opts || {};
+      const d = day();
+      if (!d) throw Object.assign(new Error(need()), { kind: 'board' });
+      const key = keyFor(d, filters());
+      if (!opts.fresh && unCache && unCache.key === key && Date.now() - unCache.at < 30000) return unCache;
+      const PAGE = 500, ids = bus();
+      const page = skip => st.getJSON('/Dispatch/GetJobs', 30000, { JobType: 'Unassigned', Date: isoT(d), QueryFilter: { Skip: skip, Take: PAGE, Start: {}, Created: {}, BusinessUnitIds: ids } });
+      const first = await page(0);
+      if (!first || !Array.isArray(first.Jobs)) {
+        health.flag(tool || 'Toolbox', 'the Unassigned list came back in a shape the Toolbox doesn\'t know', '/Dispatch/GetJobs');
+        throw Object.assign(new Error('the Unassigned list came back in a shape the Toolbox doesn\'t know'), { kind: 'bad' });
+      }
+      let raw = first.Jobs.slice();
+      const total = Number(first.Count) || raw.length;
+      for (let skip = PAGE; skip < Math.min(total, 5000); skip += PAGE) { const pg = await page(skip); if (pg && Array.isArray(pg.Jobs)) raw = raw.concat(pg.Jobs); }
+      const rows = [];
+      let canceled = 0;
+      raw.forEach(x => {
+        const j = String(x && x.JobId);
+        if (!/^\d+$/.test(j)) return;
+        // Appointment status 5 (or the word) is Canceled.
+        if (x.AppointmentStatus === 5 || isCanceled(x.AppointmentStatus) || isCanceled(x.Status) || isCanceled(x.JobStatus)) { canceled++; return; }
+        rows.push({ jobId: j, apptId: x.Id != null ? String(x.Id) : null, number: norm(x.AppointmentNumber), customer: norm(x.Customer), customerId: x.CustomerId || null,
+          tags: (Array.isArray(x.Tags) ? x.Tags : []).map(tagOf).filter(Boolean), start: toDate(x.Start), end: toDate(x.End),
+          status: norm(x.AppointmentStatus), confirmed: x.IsConfirmed === true, bu: x.BusinessUnitId, raw: x });
+      });
+      if (tool) health.clear(tool);
+      unCache = { key, day: d, at: Date.now(), rows, canceled };
+      return unCache;
+    };
+
+    const timer = setInterval(() => {
+      watch();
+      const r = root();
+      if (!r) return;
+      let any = false;
+      styles.forEach(s => { if (s.textContent) any = true; if (s.parentNode !== r) r.appendChild(s); });
+      if (any) tagTray();
+    }, 700);
+
+    return { host, root, q, qa, view, isDay, need, onPage, homeHash, HOME, day, dayText, iso, isoT, sameDay, filters, bus, load, latest, snap: () => snap, unassigned,
+      onChange: fn => listeners.push(fn), apptsOf, jobOfAppt, job, techJobs, techName, firstName, historyOf, live, isCanceled, tagOf,
+      clickedJob, clickedTech, rowInfo, trayRows, trayTab, mount, unmount, jobsCss, techsCss, refresh, showTech, headerOf, findUp,
+      stop: () => { clearInterval(timer); Array.from(styles).forEach(unmount); } };
+  })();
+
   // Customer cards: customers in sections (Needs a look, Confirmed, No reply…), one card each with
   // their name, job numbers, full phone number, a status line and anything they replied, plus
   // buttons to copy their name or number and to open their conversation in a new tab. A section
@@ -586,10 +948,11 @@
   // scrolled, the scroll is put back.
   const pickers = [];   // one per tool: { active: is it picking right now?, hit: is this target something it picks? }
   let pressSnap = null;
+  // Every scrolling box from the pressed spot outward (through the board's sealed-off part too).
   const scrollersOf = node => {
     const out = [];
-    for (let e = node; e && e !== document.documentElement; e = e.parentElement) {
-      if (e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1) out.push(e);
+    for (let e = node; e && e !== document.documentElement; e = e.parentElement || (e.parentNode && e.parentNode.host) || null) {
+      if (e.nodeType === 1 && (e.scrollHeight > e.clientHeight + 1 || e.scrollWidth > e.clientWidth + 1)) out.push(e);
     }
     const root = document.scrollingElement || document.documentElement;
     if (out.indexOf(root) < 0) out.push(root);
@@ -597,7 +960,7 @@
   };
   const putBack = snap => snap && snap.forEach(([e, top, left]) => { if (e.scrollTop !== top) e.scrollTop = top; if (e.scrollLeft !== left) e.scrollLeft = left; });
   const pressGuard = e => {
-    if (!onBoard() || panel.contains(e.target) || !pickers.some(p => p.active() && p.hit(e.target))) return;
+    if (!onBoard() || panel.contains(e.target) || !pickers.some(p => p.active() && p.hit(e))) return;
     if (e.type === 'click') {
       // Let the tool handle the click; undo any jump after the page has had its turn.
       const snap = pressSnap; pressSnap = null;
@@ -605,106 +968,158 @@
       setTimeout(() => putBack(snap), 150);
       return;
     }
-    if (e.type === 'pointerdown') pressSnap = scrollersOf(e.target);
-    if (e.type === 'mousedown') e.preventDefault();   // no focus change, no text selection
+    if (e.type === 'pointerdown') pressSnap = scrollersOf((e.composedPath && e.composedPath()[0]) || e.target);
+    // No drag, no focus change, no text selection, and the board doesn't open the job panel.
+    if (e.type === 'pointerdown' || e.type === 'mousedown') e.preventDefault();
     e.stopPropagation(); e.stopImmediatePropagation();
   };
-  const PRESS_EVENTS = ['pointerdown', 'mousedown', 'click'];
+  const PRESS_EVENTS = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
   PRESS_EVENTS.forEach(t => window.addEventListener(t, pressGuard, true));
 
-  // A job on the board's timeline: its customer, and the tech's first name (for {tech}).
-  const timelineJob = j => {
-    try {
-      const jl = document.querySelector('.job-list');
-      const vm = jl && window.ko && window.ko.dataFor(jl);
-      const list = (vm && window.ko.unwrap(vm.Assignments)) || [];
-      const u = window.ko.unwrap;
-      const a = list.find(x => String(u(x.JobId)) === String(j));
-      if (!a) return null;
-      const tech = norm(u(a.FirstName) || u(a.TechnicianName)).split(' ')[0] || '';
-      return { customer: norm(u(a.Customer)), customerId: u(a.CustomerId) || null, tech: tech ? tech.charAt(0).toUpperCase() + tech.slice(1).toLowerCase() : '' };
-    } catch (e) { return null; }
+  // ---- Small pieces shared by the job lists and result cards ----
+  // A tag as ServiceTitan colors it.
+  const tagChip = t => {
+    const c = el('span', 'display:inline-block;max-width:118px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;' +
+      'padding:0 5px;border-radius:4px;font-size:10.5px;line-height:16px;font-weight:600;background:' + t.color + ';color:' + t.text, t.name);
+    c.title = t.name;
+    return c;
+  };
+  // Up to `max` tags, then "+n".
+  const tagChips = (tags, max) => {
+    const box = el('span', 'display:inline-flex;gap:3px;flex-wrap:wrap;align-items:center');
+    (tags || []).slice(0, max || 3).forEach(t => box.appendChild(tagChip(t)));
+    if ((tags || []).length > (max || 3)) {
+      const more = el('span', 'font-size:10.5px;color:var(--st-ink-3);font-weight:600', '+' + (tags.length - (max || 3)));
+      more.title = tags.slice(max || 3).map(t => t.name).join(', ');
+      box.appendChild(more);
+    }
+    return box;
+  };
+  const hm = d => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const STATUS_ICON = { Scheduled: '🗓️', Dispatched: '🚚', Working: '🔧', Hold: '⏸️', Done: '✅', Canceled: '✖️', Arrived: '📍' };
+  // Where a job on the board's day stands, from the board's data and today's history:
+  // { text: 'Working · arrived 10:42', title: the whole history } or null (not on the board's day).
+  const jobNow = j => {
+    const b = board.job(j);
+    if (!b) return null;
+    const a = b.appts.find(x => x.status && !/^scheduled$/i.test(x.status)) || b.appts[0];
+    const hist = board.historyOf(j);
+    const last = hist[hist.length - 1];
+    let text = '';
+    if (/^scheduled$/i.test(a.status) || !a.status) {
+      text = '🗓️ ' + (a.windowStart && a.windowEnd ? hm(a.windowStart) + '–' + hm(a.windowEnd) : a.start ? hm(a.start) : 'Scheduled');
+    } else {
+      text = (STATUS_ICON[a.status] || '•') + ' ' + a.status + (last ? ' · ' + last.status.toLowerCase() + ' ' + hm(last.at) : '');
+    }
+    const title = hist.length ? 'Today: ' + hist.map(e => e.status + ' ' + hm(e.at)).join(' → ') : '';
+    return { text, title };
   };
 
   // ===================================================================
   // Picking jobs: shared by Job Notifications, Business Unit, Customer Texts and Move Jobs.
-  // With 🖱️ Pick on board on, clicking a job on the timeline, or a row in the job list at the
-  // bottom, adds it (click again to take it off). Jobs can also be typed in, or a whole list
-  // tab added at once. Picked jobs are highlighted only while their tool is open.
+  // With 🖱️ Pick on board on, clicking a job on the board, or a row in the Jobs Tray below it,
+  // adds it (click again to take it off). Jobs can also be typed in, a whole Jobs Tray page added
+  // at once, or every job with a tag. Each job shows its customer, its tags and where it stands
+  // today. Picked jobs are highlighted only while their tool is open.
   //   opts: { color, soft, max (a number, or a function for a limit that changes),
   //           fullText(max) (optional: what to say when the list is full), shown() (tool open
-  //           and using picked jobs), busy() (a run is going), say(text), changed() (the list changed) }
-  //   Optional (Job Notifications uses them):
+  //           and using picked jobs), busy() (a run is going), say(text), changed() (the list changed),
+  //           tool (its name, for the yellow bar) }
+  //   Optional:
   //     onTech(techId): clicking a tech's name on the board while picking calls this (and the click
   //       goes no further), for tools that add a tech's whole day.
   //     badge(job): a short mark shown before the job number in the list (🔔 / 🔕).
   //     css(ids): more highlight styling, added after the usual outline (only while shown()).
   //     hint: what to say when picking turns on, and in the empty list.
+  //     byTag: false to leave out ＋ Jobs with a tag.
   // ===================================================================
   const jobPicker = opts => {
-    const picked = new Map();   // job number -> label (usually the customer's name)
+    const picked = new Map();   // job number -> { label (usually the customer's name), tags }
     let picking = false, enabled = true;
-    const style = el('style');
-    (document.head || document.documentElement).appendChild(style);
-    const labelOf = j => {
-      const t = timelineJob(j); if (t && t.customer) return t.customer;
-      const l = listJob(j); if (l && l.customer) return l.customer;
-      const a = document.querySelector('a.appointment[data-job-id="' + j + '"]');
-      return a ? norm(a.innerText || a.textContent).slice(0, 38) : '';
+    const style = el('style');   // goes inside the board (board.mount)
+    const infoOf = j => {
+      const b = board.job(j);
+      if (b) return { label: b.customer, tags: b.tags, customerId: b.customerId };
+      const tr = board.trayRows().find(r => board.rowInfo(r) && board.rowInfo(r).jobId === String(j));
+      const t = tr && board.rowInfo(tr);
+      return t ? { label: t.customer, tags: t.tags, customerId: t.customerId } : { label: '', tags: [] };
     };
     const say = t => opts.say && opts.say(t);
-    const box = el('div', 'display:grid;gap:5px');
+    const box = el('div', 'display:grid;gap:6px');
     const head = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap');
-    const count = el('span', 'font-size:12px;font-weight:600;margin-right:auto');
+    const count = el('span', 'font-size:12px;font-weight:700;margin-right:auto;color:var(--st-ink)');
     const pickBtn = smallBtn('🖱️ Pick on board', () => setPicking(!picking));
-    const allBtn = smallBtn('+ All in the list', () => addListTab());
-    allBtn.title = 'Adds every job showing in the list at the bottom of the board (the tab and page that are open)';
+    const allBtn = smallBtn('+ Tray page', () => addListTab());
+    allBtn.title = 'Adds every job showing in the Jobs Tray under the board (the tab and page that are open)';
     const clearBtn = smallBtn('Clear', () => { if (opts.busy()) return; picked.clear(); changed(); say('List cleared.'); });
     head.append(count, pickBtn, allBtn, clearBtn);
-    const list = el('div', 'max-height:150px;overflow:auto;border:1px solid #ddd;border-radius:6px;background:#fafafa');
+    const list = el('div', 'max-height:180px;overflow:auto;border:1px solid var(--st-line);border-radius:8px;background:var(--st-bg)');
     const typedRow = el('div', 'display:flex;gap:6px');
-    const typed = el('input', 'flex:1;min-width:0;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
+    const typed = el('input', 'flex:1;min-width:0;' + FIELD);
     typed.type = 'text'; typed.placeholder = 'Or type job #s (any day)';
     const typedAdd = smallBtn('Add', () => addTyped());
     typed.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); addTyped(); } };
     typedRow.append(typed, typedAdd);
+    // ＋ Jobs with a tag…: every job on the board's day (timeline and Unassigned list) with that tag.
+    const tagSel = el('select', 'flex:1;min-width:0;' + FIELD + 'cursor:pointer');
+    tagSel.title = 'Adds every job on the board\'s day with the tag you pick: the timeline and the whole Unassigned list (your board\'s branches). Take any off with ✕.';
+    const tagRow = el('div', 'display:flex;gap:6px');
+    tagRow.appendChild(tagSel);
     box.append(head, list, typedRow);
+    if (opts.byTag !== false) box.appendChild(tagRow);
 
     const paint = () => {
       const ids = Array.from(picked.keys());
-      style.textContent = opts.shown() ? pickedCss(ids, opts.color, opts.soft) + (opts.css && ids.length ? opts.css(ids) : '') : '';
+      style.textContent = opts.shown() ? board.jobsCss(ids, opts.color, opts.soft) + (opts.css && ids.length ? opts.css(ids) : '') : '';
+      if (style.textContent) board.mount(style);
     };
-    const HINT = opts.hint || 'Click jobs on the board, or in the Unassigned / Hold list at the bottom, to add them. Click again to take one off.';
+    const HINT = opts.hint || 'Click jobs on the board, or rows in the Jobs Tray below it, to add them. Click again to take one off.';
+    const row = j => {
+      const info = picked.get(j) || {};
+      const live = board.job(j);
+      const tags = live ? live.tags : info.tags || [];
+      const now = jobNow(j);
+      const r = el('div', 'display:flex;gap:6px;align-items:flex-start;padding:5px 8px;border-bottom:1px solid var(--st-line);font-size:12px');
+      const body = el('div', 'flex:1;min-width:0');
+      const top = el('div', 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
+      const mark = opts.badge ? opts.badge(j) : '';
+      if (mark) top.appendChild(el('span', 'margin-right:4px', mark));
+      const lab = (live && live.customer) || info.label || '';
+      top.append(el('b', 'color:var(--st-ink)', '#' + j), document.createTextNode(lab ? '  ' + lab : ''));
+      top.title = lab;
+      body.appendChild(top);
+      if (now || tags.length) {
+        const sub = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px');
+        if (now) { const n = el('span', 'font-size:11px;color:var(--st-ink-2);white-space:nowrap', now.text); if (now.title) n.title = now.title; sub.appendChild(n); }
+        if (tags.length) sub.appendChild(tagChips(tags, 2));
+        body.appendChild(sub);
+      }
+      const x = smallBtn('✕', () => { if (opts.busy()) return; picked.delete(j); changed(); }, 'padding:0 7px;min-height:22px');
+      x.title = 'Take this job off the list';
+      r.append(body, x);
+      return r;
+    };
     const render = () => {
       count.textContent = plural(picked.size, 'job') + ' picked';
       pickBtn.textContent = picking ? '🖱️ Picking: ON' : '🖱️ Pick on board';
-      pickBtn.style.background = picking ? opts.color : '#fff';
-      pickBtn.style.color = picking ? '#fff' : '#111';
-      pickBtn.style.borderColor = picking ? opts.color : '#aaa';
-      pickBtn.style.fontWeight = picking ? '600' : '400';
+      pickBtn.style.background = picking ? opts.color : '';
+      pickBtn.style.color = picking ? '#fff' : '';
+      pickBtn.style.borderColor = picking ? opts.color : '';
       list.textContent = '';
-      if (!picked.size) list.appendChild(el('div', 'padding:6px 8px;font-size:12px;color:#666', picking ? HINT : 'Press 🖱️ Pick on board, use + All in the list, or type job numbers.'));
-      picked.forEach((lab, j) => {
-        const r = el('div', 'display:flex;gap:6px;align-items:center;padding:3px 6px;border-bottom:1px solid #eee;font-size:12px');
-        const n = el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
-        const mark = opts.badge ? opts.badge(j) : '';
-        if (mark) n.appendChild(el('span', 'margin-right:4px', mark));
-        n.append(el('b', '', '#' + j), document.createTextNode(lab ? '  ' + lab : ''));
-        n.title = lab;
-        const x = smallBtn('✕', () => { if (opts.busy()) return; picked.delete(j); changed(); }, 'padding:1px 6px');
-        x.title = 'Take this job off the list';
-        r.append(n, x);
-        list.appendChild(r);
-      });
-      [pickBtn, allBtn, clearBtn, typed, typedAdd].forEach(x => { x.disabled = !enabled; x.style.opacity = enabled ? '1' : '.5'; });
+      if (!picked.size) list.appendChild(el('div', 'padding:8px 10px;font-size:12px;color:var(--st-ink-3)', picking ? HINT : 'Press 🖱️ Pick on board, add a Jobs Tray page, a tag, or type job numbers.'));
+      picked.forEach((info, j) => list.appendChild(row(j)));
+      [pickBtn, allBtn, clearBtn, typed, typedAdd, tagSel].forEach(x => { x.disabled = !enabled; x.style.opacity = enabled ? '1' : '.5'; });
+      fillTags();
       paint();
     };
     const changed = () => { render(); if (opts.changed) opts.changed(); };
-    const add = (j, lab) => {
+    const add = (j, info) => {
       if (picked.has(j)) return false;
       const max = typeof opts.max === 'function' ? opts.max() : opts.max;
       if (max && picked.size >= max) { say(opts.fullText ? opts.fullText(max) : '⚠️ The list is full (' + max + ' jobs per run).'); return false; }
-      picked.set(j, lab || labelOf(j));
+      const known = infoOf(j);
+      const given = typeof info === 'string' ? { label: info } : (info || {});
+      picked.set(j, { label: given.label || known.label || '', tags: (given.tags && given.tags.length ? given.tags : known.tags) || [], customerId: given.customerId || known.customerId || null });
       return true;
     };
     const addTyped = () => {
@@ -717,54 +1132,106 @@
       changed();
       say('Added ' + plural(n, 'job') + '. ' + plural(picked.size, 'job') + ' picked.');
     };
-    // Every job showing in the list at the bottom of the board (the open tab and page).
+    // Every job showing in the Jobs Tray (the open tab and page).
     const addListTab = () => {
       if (opts.busy()) return;
-      let caption = '', jobs = [];
-      try {
-        const jl = document.querySelector('.job-list');
-        const vm = jl && window.ko && window.ko.dataFor(jl);
-        const JL = vm && vm.JobList;
-        const view = JL && window.ko.unwrap(JL.View);
-        caption = (view && view.Caption) || '';
-        jobs = ((JL && window.ko.unwrap(JL.AllVisibleJobs)) || []).map(x => String(window.ko.unwrap(x.JobId)));
-      } catch (e) {}
-      if (!jobs.length) document.querySelectorAll('.job-list tr[class*="qa-job-"]').forEach(tr => { const j = clickedJob(tr); if (j && visible(tr)) jobs.push(j); });
-      if (!jobs.length) { say('The list at the bottom of the board is empty. Open a tab there (Unassigned, Hold, …) first.'); return; }
+      if (!onBoard()) { say(board.need()); return; }
+      const rows = board.trayRows().map(board.rowInfo).filter(Boolean);
+      if (!rows.length) { say('The Jobs Tray under the board is empty. Open a tab there (Unassigned, On Hold, …) first.'); return; }
+      const caption = board.trayTab();
       let n = 0;
-      jobs.forEach(j => { if (/^\d+$/.test(j) && add(j)) n++; });
+      rows.forEach(x => { if (add(x.jobId, { label: x.customer, tags: x.tags, customerId: x.customerId })) n++; });
       changed();
-      say('Added ' + plural(n, 'job') + (caption ? ' from the ' + caption + ' list' : ' from the list') + ' (the page showing).');
+      say('Added ' + plural(n, 'job') + (caption ? ' from the ' + caption + ' tab' : ' from the Jobs Tray') + ' (the page showing).');
+    };
+    // ＋ Jobs with a tag…: the tags on the board's day, most used first.
+    let tagKey = null, unassignedSeen = null;
+    const fillTags = force => {
+      if (opts.byTag === false) return;
+      const s = board.latest();
+      const counts = new Map();
+      const addTag = (name, j) => { if (!counts.has(name)) counts.set(name, new Set()); counts.get(name).add(j); };
+      if (s) s.appts.forEach(a => { if (board.live(a)) a.tags.forEach(t => addTag(t.name, a.jobId)); });
+      if (unassignedSeen && s && unassignedSeen.key === s.key) unassignedSeen.rows.forEach(r => r.tags.forEach(t => addTag(t.name, r.jobId)));
+      const rows = Array.from(counts.entries()).map(([name, set]) => ({ name, n: set.size })).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+      const key = (s ? s.key : 'none') + '|' + rows.map(r => r.name + ':' + r.n).join(',');
+      if (!force && key === tagKey) return;
+      tagKey = key;
+      tagSel.textContent = '';
+      const top = el('option', '', onBoard() ? (rows.length ? '＋ Jobs with a tag…' : '＋ Jobs with a tag (none on the board yet)') : '＋ Jobs with a tag (open the board)');
+      top.value = '';
+      tagSel.appendChild(top);
+      rows.forEach(r => { const o = el('option', '', r.name + '  (' + plural(r.n, 'job') + (unassignedSeen ? '' : ' on the timeline') + ')'); o.value = r.name; tagSel.appendChild(o); });
+      tagSel.value = '';
+    };
+    tagSel.addEventListener('mouseenter', () => fillTags());
+    tagSel.addEventListener('focus', () => fillTags());
+    tagSel.onchange = async () => {
+      const name = tagSel.value;
+      tagSel.value = '';
+      if (!name || opts.busy()) return;
+      if (!onBoard()) { say(board.need()); return; }
+      say('Finding the jobs tagged ' + name + '…');
+      try {
+        const s = await board.load();
+        const un = await board.unassigned(opts.tool || 'Toolbox');
+        unassignedSeen = { key: s.key, rows: un.rows };
+        const onLine = [], unas = [], seen = new Set();
+        s.appts.forEach(a => { if (board.live(a) && a.tags.some(t => t.name === name) && !seen.has(a.jobId)) { seen.add(a.jobId); onLine.push(a.jobId); } });
+        un.rows.forEach(r => { if (r.tags.some(t => t.name === name) && !seen.has(r.jobId)) { seen.add(r.jobId); unas.push(r); } });
+        let n = 0;
+        onLine.forEach(j => { if (add(j)) n++; });
+        unas.forEach(r => { if (add(r.jobId, { label: r.customer, tags: r.tags, customerId: r.customerId })) n++; });
+        changed();
+        const all = onLine.length + unas.length;
+        say(all ? 'Added ' + plural(n, 'job') + ' tagged ' + name + ' (' + onLine.length + ' on the timeline, ' + unas.length + ' unassigned)' + (n < all ? '. ' + (all - n) + ' were already picked or didn\'t fit' : '') + '.' : 'No jobs tagged ' + name + ' on ' + board.dayText() + '.');
+      } catch (e) { say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t load the board: ' + errText(e))); }
     };
     const setPicking = on => {
       picking = !!on && enabled && !opts.busy();
-      if (picking && !onBoard()) say('Open the Dispatch board to pick jobs there.');
-      else if (picking) say(opts.hint || 'Click jobs on the board, or in the Unassigned / Hold list at the bottom, to add them. Click one again to take it off.');
+      if (picking && !onBoard()) say(board.need());
+      else if (picking) say(HINT);
+      if (picking) board.load().catch(() => {});
       render();
     };
-    const onClick = e => {
-      if (!picking || opts.busy() || !onBoard() || !opts.shown() || panel.contains(e.target)) return;
-      const j = clickedJob(e.target);
-      const tech = !j && opts.onTech ? clickedTechId(e.target) : null;
-      if (!j && !tech) return;
-      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      if (tech) { opts.onTech(tech); return; }
+    const toggle = (j, info) => {
       if (picked.has(j)) { picked.delete(j); say('Took #' + j + ' off. ' + plural(picked.size, 'job') + ' picked.'); }
-      else if (add(j)) say('Added #' + j + '. ' + plural(picked.size, 'job') + ' picked.');
+      else if (add(j, info)) say('Added #' + j + '. ' + plural(picked.size, 'job') + ' picked.');
       changed();
     };
+    const onClick = async e => {
+      if (!picking || opts.busy() || !onBoard() || !opts.shown() || panel.contains(e.target)) return;
+      const hit = board.clickedJob(e);
+      const tech = !hit && opts.onTech ? board.clickedTech(e) : null;
+      if (!hit && !tech) return;
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      if (tech) { opts.onTech(tech); return; }
+      if (hit.row) { const info = board.rowInfo(hit.row); if (info) toggle(info.jobId, { label: info.customer, tags: info.tags, customerId: info.customerId }); return; }
+      let j = hit.jobId;
+      if (!j) {
+        // A card the Toolbox hasn't read yet (the board just changed): read the board, then add it.
+        try { await board.load({ fresh: true }); } catch (err) {}
+        j = board.jobOfAppt(hit.apptId);
+        if (!j) { say('⚠️ Couldn\'t tell which job that is. Click it again in a moment.'); return; }
+      }
+      toggle(j);
+    };
     window.addEventListener('click', onClick, true);
-    pickers.push({ active: () => picking && !opts.busy() && opts.shown(), hit: t => !!clickedJob(t) || !!(opts.onTech && clickedTechId(t)) });
+    pickers.push({ active: () => picking && !opts.busy() && opts.shown(), hit: e => !!board.clickedJob(e) || !!(opts.onTech && board.clickedTech(e)) });
+    // The board's data arrived or changed: names, tags, history and highlights follow.
+    board.onChange(() => { if (opts.shown()) render(); });
     render();
     return {
       box,
       size: () => picked.size,
       ids: () => Array.from(picked.keys()),
       has: j => picked.has(j),
-      label: j => picked.get(j) || '',
+      label: j => (picked.get(j) || {}).label || '',
+      info: j => picked.get(String(j)) || null,
+      tags: j => { const b = board.job(j); return b ? b.tags : ((picked.get(j) || {}).tags || []); },
       remove: j => { picked.delete(j); render(); },
       // Adds several jobs at once (another tool handing over its list, or a whole list loaded from
-      // ServiceTitan). labels: optional { job: label }. Returns how many were added.
+      // ServiceTitan). labels: optional { job: label or { label, tags } }. Returns how many were added.
       addMany: (ids, labels) => { if (opts.busy()) return 0; let n = 0; (ids || []).forEach(j => { j = String(j); if (/^\d+$/.test(j) && add(j, labels && labels[j])) n++; }); changed(); return n; },
       // Takes several jobs off at once. Returns how many were on the list.
       removeMany: ids => { if (opts.busy()) return 0; let n = 0; (ids || []).forEach(j => { if (picked.delete(String(j))) n++; }); changed(); return n; },
@@ -772,7 +1239,7 @@
       setPicking,
       isPicking: () => picking,
       setEnabled: on => { enabled = !!on; if (!enabled) picking = false; render(); },
-      cleanup: () => { window.removeEventListener('click', onClick, true); style.remove(); }
+      cleanup: () => { window.removeEventListener('click', onClick, true); board.unmount(style); }
     };
   };
   const pos = (get('stPos') || get('qnPos') || '').split(',').map(Number);
@@ -839,43 +1306,34 @@
       if (changed) render();
     };
 
-    // Board checks run without clicking anything. They only look at the Dispatch board,
-    // and wait for it to finish loading before deciding anything is missing.
+    // Board checks run without clicking anything. They look at the Dispatch board (Day view) and
+    // read its data once, and wait for it to finish loading before deciding anything is missing.
     let checking = false, manualWaiting = false;
     const checkBoard = async manual => {
       // If a check is already running, show its result when it finishes.
       if (checking) { if (manual) manualWaiting = true; return; }
-      if (!/dispatchboard/i.test(location.hash)) { if (manual) { issues.size ? render() : flashOk('Open the Dispatch board to check it.'); } return; }
+      if (!board.onPage()) { if (manual) { issues.size ? render() : flashOk('Open the Dispatch board to check it.'); } return; }
       checking = true;
       try {
-        const techEls = await until(() => { const t = document.querySelectorAll('.technician[data-technician-id]'); return t.length ? t : null; }, 12000, 500);
+        const v = await until(() => { const x = board.view(); return x === 'loading' ? null : x; }, 15000, 500);
+        if (v === 'week') { if (manual || manualWaiting) flashOk('The Toolbox works on the Day view. Switch the board to Day, then check again.'); return; }
         Array.from(issues.keys()).forEach(k => { if (k.indexOf('board|') === 0) issues.delete(k); });
-        const BOARD = 'Job Notifications & Tech Messages';
-        if (!techEls) {
-          flag(BOARD, 'can\'t find the techs on the Dispatch board', '.technician[data-technician-id]', 'board');
-        } else {
-          // Check a tech that's showing: with a board filter on, hidden techs can be missing pieces.
-          const first = Array.from(techEls).find(techShowing) || techEls[0];
-          const id = first.getAttribute('data-technician-id');
-          const nameEl = first.querySelector('.name');
-          if (!nameEl || !nameEl.textContent.trim()) flag(BOARD, 'can\'t read tech names', '.technician .name', 'board');
-          // A team or people filter hides the team headers. That's fine once the Toolbox has
-          // learned everyone's team from an unfiltered board (Tech Messages remembers them).
-          let knownTeams = 0;
-          try { knownTeams = Object.keys(JSON.parse(localStorage.getItem('stMsgTeamMap') || '{}') || {}).length; } catch (e) {}
-          const FILTER_HINT = ' (if a board filter is on, clear it once so the Toolbox can learn the teams)';
-          if (!knownTeams && !document.querySelector('.team-name')) flag('Tech Messages', 'can\'t find team names' + FILTER_HINT, '.team-name', 'board');
-          const row = document.getElementById('team-timeline-row-' + id);
-          if (!row) flag(BOARD, 'can\'t find the tech\'s row on the timeline', '#team-timeline-row-<id>', 'board');
-          else if (!knownTeams) {
-            const tc = row.closest('.team-container');
-            let h = tc && tc.previousElementSibling;
-            while (h && !h.querySelector('.team-name')) h = h.previousElementSibling;
-            if (!h && document.querySelector('.team-name')) flag('Tech Messages', 'can\'t tell which team each tech is on', '.team-container / .team-name', 'board');
-          }
-          // Job bubbles: only a problem if bubbles exist but are missing their job/tech tags.
-          const bubbles = document.querySelectorAll('a.appointment');
-          if (bubbles.length && !document.querySelector('a.appointment[data-job-id][data-technician-id]')) flag('Job Notifications', 'job bubbles are missing their job/tech tags', 'a.appointment[data-job-id][data-technician-id]', 'board');
+        const ALL = 'Every tool';
+        if (!board.root()) flag(ALL, 'can\'t find the Dispatch board on the page', 'SERVICETITAN-DISPATCH-CENTER-*', 'board');
+        else if (!v) flag(ALL, 'the Dispatch board didn\'t finish loading, or its Day view has changed', '[data-cy^="ddb-"]', 'board');
+        else {
+          if (!board.day()) flag(ALL, 'can\'t read the day the board shows', 'date button "Tue, Oct 27, 2026"', 'board');
+          if (!board.filters()) flag(ALL, 'can\'t tell which branches the board is filtered to (it uses every branch instead)', 'SHARED_DISPATCH_FILTERS_KEY_*', 'board');
+          // Techs on the board: only a problem if rows are drawn without their tech labels.
+          const heads = board.qa('[data-cy^="ddb-technician-header-"]');
+          if (!heads.length && board.qa('[data-cy^="ddb-team-group-"]').length) flag('Job Notifications & Tech Messages', 'can\'t find the techs\' names on the board', '[data-cy^="ddb-technician-header-"]', 'board');
+          else if (heads.length && !heads.some(h => /^\d+$/.test(h.getAttribute('data-technician-id') || ''))) flag('Job Notifications & Tech Messages', 'the techs\' names are missing their tech labels', '[data-technician-id]', 'board');
+          // Job cards: only a problem if cards exist but are missing their appointment labels.
+          const cards = board.qa('[data-cy="wdb-job-appt-card"]');
+          if (cards.length && !cards.some(c => /^\d+$/.test(c.getAttribute('data-job-appointment-id') || ''))) flag('Every job-picking tool', 'job cards are missing their appointment labels', '[data-job-appointment-id]', 'board');
+          if (!board.q('button[aria-label="Refresh"]')) flag('Move Jobs', 'can\'t find the board\'s Refresh button (refresh the page after moves instead)', 'button[aria-label="Refresh"]', 'board');
+          try { await board.load({ fresh: true }); }
+          catch (e) { if (!st.isSignedOut(e)) flag(ALL, 'can\'t read the board\'s data (' + errText(e) + ')', '/dispatch-center/daily-assignments', 'board'); }
         }
         render();
         if ((manual || manualWaiting) && !issues.size) flashOk('✅ Everything the Toolbox needs is where it should be.');
@@ -898,180 +1356,67 @@
   // (＋ Whole board, and a tech's jobs).
   // ===================================================================
   const boardData = (() => {
-    // Unwraps a Knockout observable; leaves anything else (including plain functions) alone.
-    const un = v => { try { const k = window.ko; return k && k.isObservable && k.isObservable(v) ? v() : v; } catch (e) { return undefined; } };
-    const vm = () => { try { const jl = document.querySelector('.job-list'); return jl && window.ko && typeof window.ko.dataFor === 'function' ? window.ko.dataFor(jl) || null : null; } catch (e) { return null; } };
-    const day = () => { try { const d = un(vm().Date); return d instanceof Date && !isNaN(d) ? d : null; } catch (e) { return null; } };
-    const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-    const pad2 = n => String(n).padStart(2, '0');
-    const dayISO = d => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + 'T00:00:00';
-    // The Business Units the board is filtered to (the Unassigned and Hold lists use the same filter).
-    const bus = () => { try { const f = vm().BusinessUnitFilter; const ids = f && typeof f.getIds === 'function' ? f.getIds() : []; return (ids || []).map(Number).filter(Boolean); } catch (e) { return []; } };
-    // Appointment status 5 is Canceled (checked on the live account, Oct 2026). Words are checked
-    // too, in case it comes as text.
-    const canceled = x => {
-      const a = un(x.AppointmentStatus);
-      if (a === 5) return true;
-      return [a, un(x.Status), un(x.JobStatus)].some(s => typeof s === 'string' && /^cancell?ed$/i.test(norm(s)));
-    };
-    const firstWord = s => norm(s).split(' ')[0] || '';
-    const titleCase = w => w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : '';
-    // On the board's day? (No start time counts as yes.)
-    const onDay = (a, d) => { const s = un(a.Start), sd = s ? new Date(s) : null; return !sd || isNaN(sd) || !d || sameDay(sd, d); };
-
-    // Teams (departments): the team header above a tech's row on the board (Level 1 Service,
-    // Installers…). A board filter can hide the headers, so each tech's team is remembered once
-    // seen (the same list 💬 Tech Messages keeps), and that's used when the header isn't showing.
-    const TEAM_MAP = 'stMsgTeamMap';
-    const NO_TEAM = 'Other (team not showing)';
-    const liveTeam = id => {
-      if (!/^\d+$/.test(String(id))) return null;
-      const row = document.getElementById('team-timeline-row-' + id) || document.querySelector('.technician[data-technician-id="' + id + '"]');
-      const tc = row && row.closest('.team-container');
-      let h = tc && tc.previousElementSibling;
-      while (h && !h.querySelector('.team-name')) h = h.previousElementSibling;
-      const tn = h && h.querySelector('.team-name');
-      return tn ? norm(tn.textContent) || null : null;
-    };
-    const savedTeams = () => { try { const m = JSON.parse(get(TEAM_MAP) || '{}'); return m && typeof m === 'object' && !Array.isArray(m) ? m : {}; } catch (e) { return {}; } };
-    // A team finder for one pass over the board: each tech looked up once, new findings saved.
-    const teamFinder = () => {
-      const saved = savedTeams(), seen = new Map();
-      let dirty = false;
-      const of = id => {
-        id = String(id);
-        if (!seen.has(id)) {
-          const t = liveTeam(id);
-          if (t && saved[id] !== t) {
-            // Re-read just before saving, so a tech another tab saved meanwhile isn't lost.
-            if (!dirty) Object.assign(saved, savedTeams(), saved);
-            saved[id] = t; dirty = true;
-          }
-          seen.set(id, t || (typeof saved[id] === 'string' ? saved[id] : null));
-        }
-        return seen.get(id);
-      };
-      return { of, save: () => { if (dirty) { set(TEAM_MAP, JSON.stringify(saved)); dirty = false; } } };
-    };
-    // The techs on each job: from the board's data, plus the bubbles drawn on the board.
-    const techIdsOf = (a, drawn) => {
-      const ids = new Set();
-      const t = un(a.TechnicianId);
-      if (t != null && /^\d+$/.test(String(t))) ids.add(String(t));
-      (un(a.Technicians) || []).forEach(x => { const i = x && un(x.Id); if (i != null && /^\d+$/.test(String(i))) ids.add(String(i)); });
-      (drawn.get(String(un(a.JobId))) || []).forEach(i => ids.add(i));
-      return Array.from(ids);
-    };
-    const drawnTechs = () => {
-      const m = new Map();
-      document.querySelectorAll('a.appointment[data-job-id][data-technician-id]').forEach(b => {
-        const j = b.getAttribute('data-job-id'), t = b.getAttribute('data-technician-id');
-        if (!/^\d+$/.test(t)) return;
-        if (!m.has(j)) m.set(j, []);
-        if (m.get(j).indexOf(t) < 0) m.get(j).push(t);
-      });
-      return m;
-    };
-    // Each job's teams. A job with two techs on different teams is in both; one whose techs' team
-    // can't be told is in NO_TEAM.
-    const jobTeamsOf = (a, drawn, finder) => {
-      const teams = Array.from(new Set(techIdsOf(a, drawn).map(finder.of).filter(Boolean)));
-      return teams.length ? teams : [NO_TEAM];
+    // Teams (departments, like Level 1 Service or Installers) come with each tech in the board's
+    // data, so a board filter no longer hides them. A job with no tech on the board's list is in NO_TEAM.
+    const NO_TEAM = 'Other (no team)';
+    const teamsOf = (s, a) => {
+      const ts = Array.from(new Set(a.techs.map(id => { const t = s.techById.get(id); return t && t.team; }).filter(Boolean)));
+      return ts.length ? ts : [NO_TEAM];
     };
     // The teams with jobs on the day the board shows, in the board's order, with their job count
-    // (canceled appointments left out): [{ name, n }].
+    // (canceled appointments left out): [{ name, n }]. From the board's data as last read.
     const teams = () => {
-      const v = vm(), d = day();
-      if (!v || !d) return [];
-      const drawn = drawnTechs(), finder = teamFinder(), byJob = new Map(), skip = new Set();
-      (un(v.Assignments) || []).forEach(a => {
-        try {
-          const j = String(un(a.JobId));
-          if (!/^\d+$/.test(j) || skip.has(j) || !onDay(a, d)) return;
-          if (canceled(a)) { if (!byJob.has(j)) skip.add(j); return; }
-          if (!byJob.has(j)) byJob.set(j, new Set());
-          jobTeamsOf(a, drawn, finder).forEach(t => byJob.get(j).add(t));   // a two-tech job: both techs' teams
-        } catch (e) {}
+      const s = board.latest();
+      if (!s) return [];
+      const byJob = new Map();
+      s.appts.forEach(a => {
+        if (!board.live(a)) return;
+        if (!byJob.has(a.jobId)) byJob.set(a.jobId, new Set());
+        teamsOf(s, a).forEach(t => byJob.get(a.jobId).add(t));   // a two-tech job: both techs' teams
       });
-      finder.save();
       const count = new Map();
-      byJob.forEach(ts => {
-        if (ts.size > 1) ts.delete(NO_TEAM);
-        ts.forEach(t => count.set(t, (count.get(t) || 0) + 1));
-      });
-      const order = Array.from(document.querySelectorAll('.team-name')).map(t => norm(t.textContent));
-      const rank = t => t === NO_TEAM ? 1e6 : (order.indexOf(t) < 0 ? 1e5 : order.indexOf(t));
+      byJob.forEach(ts => { if (ts.size > 1) ts.delete(NO_TEAM); ts.forEach(t => count.set(t, (count.get(t) || 0) + 1)); });
+      const rank = t => t === NO_TEAM ? 1e6 : (s.teams.indexOf(t) < 0 ? 1e5 : s.teams.indexOf(t));
       return Array.from(count.entries()).map(([name, n]) => ({ name, n })).sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
     };
 
-    // Every job on the day the board shows: the timeline (with your board's filters) plus the whole
-    // Unassigned list (all pages, for your board's branches). Holds aren't included. Canceled
-    // appointments are left out. tool: the tool's name, for the yellow bar if the Unassigned list
-    // comes back in a shape the Toolbox doesn't know.
-    // Returns { jobs: [{ jobId, customer, customerId, tech, day, teams, unassigned }], onTimeline,
+    // Every job on the day the board shows: the timeline (your board's filters) plus the whole
+    // Unassigned list (all pages, your board's branches). Holds aren't included. Canceled
+    // appointments are left out. tool: the tool's name, for the yellow bar if something comes back
+    // in a shape the Toolbox doesn't know. One fresh read of the board each time.
+    // Returns { jobs: [{ jobId, customer, customerId, tech, day, teams, tags, unassigned }], onTimeline,
     // unassigned, canceled }. teams: the job's teams (timeline jobs only).
     const whole = async tool => {
-      const v = vm(), d = day();
-      if (!v || !d) throw new Error('open the Dispatch board first');
-      const jobs = [], seen = new Set(), byJob = new Map();
-      const drawn = drawnTechs(), finder = teamFinder();
-      let onTimeline = 0, unassignedN = 0, canceledN = 0;
-      (un(v.Assignments) || []).forEach(a => {
-        try {
-          const j = String(un(a.JobId));
-          if (!/^\d+$/.test(j)) return;
-          // A two-tech job can be on the board twice: its teams are both techs' teams.
-          if (seen.has(j)) { const x = byJob.get(j); if (x && onDay(a, d)) jobTeamsOf(a, drawn, finder).forEach(t => { if (x.teams.indexOf(t) < 0) x.teams.push(t); }); return; }
-          if (!onDay(a, d)) return;
-          if (canceled(a)) { canceledN++; seen.add(j); return; }
-          seen.add(j); onTimeline++;
-          const x = { jobId: j, customer: norm(un(a.Customer)), customerId: un(a.CustomerId) || null, tech: titleCase(firstWord(un(a.FirstName) || un(a.TechnicianName))), day: d, teams: jobTeamsOf(a, drawn, finder), unassigned: false };
-          byJob.set(j, x);
-          jobs.push(x);
-        } catch (e) {}
+      if (!onBoard()) throw new Error(board.need().replace(/\.$/, '').toLowerCase());
+      const s = await board.load({ fresh: true });
+      const jobs = [], byJob = new Map();
+      let onTimeline = 0, unassignedN = 0;
+      s.appts.forEach(a => {
+        if (!board.live(a)) return;
+        const had = byJob.get(a.jobId);
+        // A two-tech job, or a job with two visits: one entry, with every team and tag.
+        if (had) { teamsOf(s, a).forEach(t => { if (had.teams.indexOf(t) < 0) had.teams.push(t); }); a.tags.forEach(t => { if (!had.tags.some(y => y.name === t.name)) had.tags.push(t); }); return; }
+        onTimeline++;
+        const x = { jobId: a.jobId, customer: a.customer, customerId: a.customerId, tech: board.firstName(board.techName(a.techs[0])), day: s.day, teams: teamsOf(s, a), tags: a.tags.slice(), unassigned: false };
+        byJob.set(a.jobId, x);
+        jobs.push(x);
       });
-      // A job with a known team isn't also "team not showing".
       jobs.forEach(x => { if (x.teams.length > 1) x.teams = x.teams.filter(t => t !== NO_TEAM); });
-      finder.save();
-      const PAGE = 500;
-      const page = skip => st.getJSON('/Dispatch/GetJobs', 30000, { JobType: 'Unassigned', Date: dayISO(d), QueryFilter: { Skip: skip, Take: PAGE, Start: {}, Created: {}, BusinessUnitIds: bus() } });
-      const first = await page(0);
-      if (!first || !Array.isArray(first.Jobs)) {
-        health.flag(tool, 'the Unassigned list came back in a shape the Toolbox doesn\'t know', '/Dispatch/GetJobs');
-        throw new Error('the Unassigned list came back in a shape the Toolbox doesn\'t know');
-      }
-      let rows = first.Jobs.slice();
-      const total = Number(first.Count) || rows.length;
-      for (let skip = PAGE; skip < Math.min(total, 5000); skip += PAGE) { const p = await page(skip); if (p && Array.isArray(p.Jobs)) rows = rows.concat(p.Jobs); }
-      rows.forEach(x => {
-        const j = String(x && x.JobId);
-        if (!/^\d+$/.test(j) || seen.has(j)) return;
-        seen.add(j);
-        if (canceled(x)) { canceledN++; return; }
+      const un = await board.unassigned(tool, { fresh: true });
+      un.rows.forEach(r => {
+        if (byJob.has(r.jobId)) return;
         unassignedN++;
-        jobs.push({ jobId: j, customer: norm(x.Customer), customerId: x.CustomerId || null, tech: '', day: d, teams: [], unassigned: true });
+        const x = { jobId: r.jobId, customer: r.customer, customerId: r.customerId, tech: '', day: s.day, teams: [], tags: r.tags, unassigned: true };
+        byJob.set(r.jobId, x);
+        jobs.push(x);
       });
       health.clear(tool);
-      return { jobs, onTimeline, unassigned: unassignedN, canceled: canceledN };
+      return { jobs, onTimeline, unassigned: unassignedN, canceled: un.canceled };
     };
-
-    // A tech's jobs on the day the board shows, from the board's data (it has every job, even ones
+    // A tech's jobs on the day the board shows, from the board's data (every job, even ones
     // scrolled out of view). Canceled appointments are left out. [job numbers]
-    const techJobs = techId => {
-      const v = vm(), d = day(), out = [];
-      if (!v) return out;
-      const id = String(techId);
-      (un(v.Assignments) || []).forEach(a => {
-        try {
-          const j = String(un(a.JobId));
-          if (!/^\d+$/.test(j) || out.indexOf(j) > -1 || !onDay(a, d) || canceled(a)) return;
-          const mine = String(un(a.TechnicianId)) === id || (un(a.Technicians) || []).some(t => String(un(t.Id)) === id);
-          if (mine) out.push(j);
-        } catch (e) {}
-      });
-      return out;
-    };
-    return { whole, techJobs, day, teams, NO_TEAM };
+    const techJobs = techId => board.techJobs(techId);
+    return { whole, techJobs, day: () => board.day(), teams, NO_TEAM };
   })();
 
   // Same look as the note buttons.
@@ -1642,55 +1987,22 @@
     const IN = ['.qa-job-notification-toggle input.ToggleSwitch__input', '.qa-job-notification-toggle input[type=checkbox]'];
     const LB = ['.qa-job-notification-toggle label.ToggleSwitch__html-label', '.qa-job-notification-toggle label'];
     const first = sels => { for (const s of sels) { const x = document.querySelector(s); if (x) return x; } return null; };
-    // The day the board shows, from the board itself (e.g. "Wed, Oct 7, 2026").
-    const boardDate = () => {
-      try {
-        const d = window.ko.unwrap(window.ko.dataFor(document.querySelector('.job-list')).Date);
-        if (d && typeof d.toLocaleDateString === 'function') return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-      } catch (e) {}
-      return (document.body.innerText.match(/(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [A-Z][a-z]{2} \d+, \d{4}/) || ['the day shown'])[0];
-    };
+    // The day the board shows (e.g. "Tue, Oct 27, 2026").
+    const boardDate = () => { const d = board.day(); return d ? d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : 'the day shown'; };
+    // The techs on the board, in the board's order: Map(id -> name).
     const techsOnBoard = () => {
-      const seen = new Map();
-      document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
-        const id = t.getAttribute('data-technician-id');
-        if (seen.has(id) || !/^\d+$/.test(id || '')) return;
-        const n = t.querySelector('.name');
-        const name = (n ? n.textContent : t.textContent).trim().split('\n')[0].trim();
-        if (name) seen.set(id, name);
-      });
+      const seen = new Map(), s = board.latest();
+      if (s) s.techs.forEach(t => { if (t.name) seen.set(t.id, t.name); });
       return seen;
     };
-    // A tech's job bubbles showing on the timeline.
-    const jobsFor = techId => {
-      const ids = new Set();
-      document.querySelectorAll('a.appointment[data-technician-id="' + techId + '"][data-job-id]').forEach(a => { const j = a.getAttribute('data-job-id'); if (/^\d+$/.test(j || '')) ids.add(j); });
-      return Array.from(ids);
-    };
-    // A tech's jobs on the board's day: the board's data (every job, even ones scrolled out of
-    // view) plus any bubbles showing, so nothing either one misses is left out.
-    const techJobs = techId => {
-      const ids = boardData.techJobs(techId);
-      jobsFor(techId).forEach(j => { if (ids.indexOf(j) < 0) ids.push(j); });
-      return ids;
-    };
-    // If neither has anything yet (the tech's row hasn't drawn its jobs), scroll to the row and
-    // wait a moment for the bubbles, the way this tool always has.
+    // A tech's jobs on the board's day, from the board's data (every job, even ones scrolled out of view).
+    const techJobs = techId => boardData.techJobs(techId);
+    // The board's data read fresh enough first (it's read again if it's more than a few seconds old).
     const techJobsWait = async techId => {
-      let ids = techJobs(techId);
-      if (ids.length) return ids;
-      const row = document.getElementById('team-timeline-row-' + techId);
-      if (row) row.scrollIntoView({ block: 'center' });
-      let lastKey = '', calm = 0;
-      for (let w = 0; calm < 4 && w < 4000; w += 250) {
-        await wait(250);
-        ids = techJobs(techId);
-        const key = ids.join(',');
-        if (key === lastKey) calm++; else { calm = 0; lastKey = key; }
-      }
-      return ids;
+      try { await board.load({ maxAge: 5000 }); } catch (e) {}
+      return techJobs(techId);
     };
-    const techName = id => techsOnBoard().get(String(id)) || 'This tech';
+    const techName = id => techsOnBoard().get(String(id)) || board.techName(id) || 'This tech';
     // A job's notification setting from ServiceTitan's job data (no page to open): true, false,
     // or null if it couldn't be read.
     const apiState = async j => {
@@ -1771,12 +2083,7 @@
     const add = s => { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; };
 
     // ---------- The list of jobs (orange outline on the board while this tool is open) ----------
-    const OFF_CSS = ids => {
-      const off = ids.filter(j => { const s = states.get(j); return s && s.on === false; });
-      return !off.length ? '' :
-        off.map(j => 'a.appointment[data-job-id="' + j + '"]').join(',') + '{outline:3px dashed #616161 !important;outline-offset:-3px !important;box-shadow:0 0 0 3px rgba(97,97,97,.25) !important}' +
-        off.map(j => '.job-list tr.qa-job-' + j + ' > td').join(',') + '{background:rgba(97,97,97,.16) !important;box-shadow:inset 0 2px 0 #616161,inset 0 -2px 0 #616161 !important}';
-    };
+    const OFF_CSS = ids => board.jobsCss(ids.filter(j => { const s = states.get(j); return s && s.on === false; }), '#616161', 'rgba(97,97,97,.2)', true);
     const picker = jobPicker({
       color: '#ef6c00', soft: 'rgba(239,108,0,.22)',
       shown: () => jobsPane.style.display !== 'none',
@@ -1784,7 +2091,8 @@
       say: t => say(t),
       changed: () => listChanged(),
       onTech: id => toggleTech(id),
-      hint: 'Click jobs on the board, or in the Unassigned / Hold list at the bottom, to add them (click again to take one off). Click a tech\'s name to add their whole day.',
+      tool: TOOL,
+      hint: 'Click jobs on the board, or rows in the Jobs Tray below it, to add them (click again to take one off). Click a tech\'s name to add their whole day.',
       badge: j => {
         const s = states.get(j);
         if (!s) return noAccess ? '' : '⏳';
@@ -1917,7 +2225,7 @@
       if (!onBoard()) {
         shownKey = null;
         techSel.textContent = '';
-        const o = el('option', '', '＋ A tech\'s jobs (open the board)'); o.value = '';
+        const o = el('option', '', board.view() === 'week' ? '＋ A tech\'s jobs (switch the board to Day)' : '＋ A tech\'s jobs (open the board)'); o.value = '';
         techSel.appendChild(o);
         return;
       }
@@ -1966,13 +2274,13 @@
     };
     const addWhole = async () => {
       if (wholeLoading || running) return;
-      if (!onBoard()) { say('Open the Dispatch board first.'); return; }
+      if (!onBoard()) { say(board.need()); return; }
       wholeLoading = true; wholeBtn.textContent = 'Loading…'; dim(wholeBtn, true);
       say('Loading the whole board…');
       try {
         const r = await boardData.whole(TOOL);
         const labels = {};
-        r.jobs.forEach(x => { labels[x.jobId] = x.customer; });
+        r.jobs.forEach(x => { labels[x.jobId] = { label: x.customer, tags: x.tags }; });
         const n = picker.addMany(r.jobs.map(x => x.jobId), labels);
         say('Added ' + plural(n, 'job') + ' from ' + boardDate() + ' (' + r.onTimeline + ' on the timeline, ' + r.unassigned + ' unassigned' +
           (r.canceled ? ', ' + r.canceled + ' canceled left out' : '') + ')' + (n < r.jobs.length ? '. ' + (r.jobs.length - n) + ' were already picked' : '') + '. Take any off with ✕.');
@@ -1992,7 +2300,8 @@
       if (running) return;
       setEnabled(true);
       fillTechs(true);
-      if (!keepMsg && !msg.textContent) say(onBoard() ? 'Add jobs: 🖱️ Pick on board (click jobs, or a tech\'s name for their whole day), ＋ Whole board, or a tech from the list.' : 'Open the Dispatch board to pick jobs there, or type job numbers.');
+      if (!keepMsg && !msg.textContent) say(onBoard() ? 'Add jobs: 🖱️ Pick on board (click jobs, or a tech\'s name for their whole day), ＋ Whole board, a tag, or a tech from the list.' : board.need() + ' Or type job numbers.');
+      if (onBoard()) board.load().then(() => { if (!running) fillTechs(true); }, () => {});
       if (!holdReads) scheduleRead();
     };
 
@@ -2080,7 +2389,7 @@
       copyBtn.textContent = 'Copy results';
       const list = picker.ids();
       const date = boardDate();
-      const home = location.hash;
+      const home = board.homeHash();
       const NO_SWITCH = 'COULD NOT FIND SWITCH';
       const results = new Map();   // job -> { text, kind, status, retried }; a retry replaces the first result
       let liveTimer = null;
@@ -2281,67 +2590,54 @@
     let pickIdx = Math.max(0, Math.min(parseInt(get(K.pick) || '0', 10) || 0, list.length - 1));
 
     // ---- Reading the board ----
-    const liveTeamOf = id => {
-      const row = document.getElementById('team-timeline-row-' + id);
-      const tc = row && row.closest('.team-container');
-      let h = tc && tc.previousElementSibling;
-      while (h && !h.querySelector('.team-name')) h = h.previousElementSibling;
-      const tn = h && h.querySelector('.team-name');
-      return tn ? norm(tn.textContent) : null;
-    };
-    // Each tech's team, remembered from the board whenever the team headers are showing.
-    // A team or people filter hides those headers, so then the remembered team is used.
-    // A tech the Toolbox has never seen with a team can't be messaged until it has.
-    let teamMap = loadJSON(K.teamMap, {});
-    if (!teamMap || typeof teamMap !== 'object' || Array.isArray(teamMap)) teamMap = {};
-    let teamMapDirty = false;
-    const teamOf = id => {
-      const live = liveTeamOf(id);
-      if (live) {
-        if (teamMap[id] !== live) { teamMap[id] = live; teamMapDirty = true; }
-        return live;
-      }
-      return typeof teamMap[id] === 'string' ? teamMap[id] : null;
+    // The techs on the board come from the board's data, each with their team (it comes with the
+    // tech now, so a board filter can't hide it), their job count on the day, and their status when
+    // it's Dispatched or Working (the statuses that can be trusted; Idle can mean many things, so
+    // it's never used).
+    const liveStatus = new Map();   // tech id -> 'Dispatched' | 'Working'
+    let statusKey = '', statusAt = 0, statusLoading = null;
+    const loadStatus = async () => {
+      const s = board.latest();
+      if (!s || !s.techs.length) return;
+      const key = s.key;
+      if (key === statusKey && Date.now() - statusAt < 60000) return;
+      if (statusLoading) return statusLoading;
+      statusLoading = (async () => {
+        const d = s.day, next = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
+        const r = await st.getJSON('/dispatch-center/technicians', 30000, { page: 1, pageSize: s.techs.length, businessUnitIds: [], skillIds: [], teamIds: [], workstreamIds: [], shiftTypes: [],
+          technicianIds: s.techs.map(t => Number(t.id)), orderBy: [], includeSkills: false, applyTeamsManagement: false, includeLicenseTypes: true, startDate: board.iso(d), endDate: board.iso(next) });
+        liveStatus.clear();
+        ((r && Array.isArray(r.items)) ? r.items : []).forEach(t => {
+          const w = norm(t && (t.status || t.statusKey || t.currentActivityDisplayedStatus));
+          const v = /dispatch/i.test(w) ? 'Dispatched' : /work/i.test(w) ? 'Working' : '';
+          if (t && t.id != null && v) liveStatus.set(String(t.id), v);
+        });
+        statusKey = key; statusAt = Date.now();
+      })().catch(() => {}).then(() => { statusLoading = null; });
+      return statusLoading;
     };
     const boardTechs = () => {
-      const out = new Map();
-      teamMapDirty = false;
-      // Job bubbles per tech, counted in one pass over the board.
-      const jobCount = new Map();
-      document.querySelectorAll('a.appointment[data-technician-id][data-job-id]').forEach(a => {
-        const id = a.getAttribute('data-technician-id');
-        jobCount.set(id, (jobCount.get(id) || 0) + 1);
-      });
-      document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
-        const id = t.getAttribute('data-technician-id');
-        if (out.has(id)) return;
-        const n = t.querySelector('.name');
-        const name = norm(n ? n.textContent : '');
-        if (!name) return;
-        out.set(id, { id, name, team: teamOf(id), jobs: jobCount.get(id) || 0, hidden: true });
-      });
-      // Everyone stays in the list. "hidden" just notes who a board filter is hiding right now.
-      document.querySelectorAll('.technician[data-technician-id]').forEach(t => {
-        const x = out.get(t.getAttribute('data-technician-id'));
-        if (x && x.hidden && techShowing(t)) x.hidden = false;
-      });
-      if (teamMapDirty) set(K.teamMap, JSON.stringify(teamMap));
+      const out = new Map(), s = board.latest();
+      if (!s) return out;
+      s.techs.forEach(t => { if (t.name) out.set(t.id, { id: t.id, name: t.name, team: t.team || null, jobs: board.techJobs(t.id).length, status: liveStatus.get(t.id) || '' }); });
       return out;
     };
-    const teamsOnBoard = () => Array.from(new Set(Array.from(boardTechs().values()).map(t => t.team || '(no team)')));
+    const teamsOnBoard = () => { const s = board.latest(); return s ? s.teams.slice().concat(s.techs.some(t => !t.team) ? ['(no team)'] : []) : []; };
     const teamAllowed = team => !!(teamRules && team && teamRules[team] === true);
     const canMessage = t => !!t && teamAllowed(t.team) && !never[t.id];
     const firstName = name => norm(name).split(' ')[0] || '';
+    const STATUS_MARK = { Dispatched: '🚚 Dispatched', Working: '🔧 Working' };
 
-    // ---- The Send Message panel (lives inside ServiceTitan's Activity Center) ----
-    // Finding it means looking through every element on the page, so remember it once found,
-    // and while it's missing, look again at most twice a second.
+    // ---- The Send Message panel (ServiceTitan's Activity Center, inside the board) ----
+    // Finding it means looking through the board, so remember it once found, and while it's
+    // missing, look again at most twice a second.
     let acCache = null, acLastMiss = 0;
     const acHost = fresh => {
       if (acCache && acCache.isConnected) return acCache;
       acCache = null;
       if (!fresh && Date.now() - acLastMiss < 500) return null;
-      acCache = Array.from(document.querySelectorAll('*')).find(e => /^SERVICETITAN-ACTIVITY-CENTER/i.test(e.tagName)) || null;
+      const find = r => r ? Array.from(r.querySelectorAll('*')).find(e => /^SERVICETITAN-ACTIVITY-CENTER/i.test(e.tagName)) || null : null;
+      acCache = find(board.root()) || find(document);
       if (!acCache) acLastMiss = Date.now();
       return acCache;
     };
@@ -2358,14 +2654,25 @@
       if (b) b.click();
       return !!(await until(() => !jobDrawer(), 3000));
     };
+    // The element actually showing at a spot, looking inside the board's sealed-off parts
+    // (the message panel sits inside the board, inside its own sealed-off part).
+    const deepAt = (x, y) => {
+      let e = document.elementsFromPoint(x, y).find(n => !panel.contains(n));
+      for (let i = 0; e && e.shadowRoot && i < 6; i++) {
+        const inner = e.shadowRoot.elementsFromPoint(x, y).find(n => !panel.contains(n));
+        if (!inner || inner === e) break;
+        e = inner;
+      }
+      return e || null;
+    };
     // True only if the message box is the thing actually showing on screen at that spot.
     const boxOnTop = () => {
-      const box = chatBox(), host = acHost();
-      if (!box || !host) return false;
+      const box = chatBox();
+      if (!box) return false;
       const r = box.getBoundingClientRect();
       if (r.width < 20 || r.bottom > innerHeight || r.top < 0) return false;
-      const topEl = document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2).find(e => !panel.contains(e));
-      return topEl === host;
+      const top = deepAt(r.left + r.width / 2, r.top + r.height / 2);
+      return !!top && (top === box || box.contains(top));
     };
     // Moves the Toolbox panel to the left of the message panel so it doesn't cover it.
     // The run puts it back where it was afterward (see go()).
@@ -2382,27 +2689,26 @@
     };
     // A missing ServiceTitan piece (not a one-off glitch): flag it and stop the whole run.
     const changed = (what, detail) => { health.flag('Tech Messages', what, detail); return { changed: true, what }; };
+    const menuItem = () => board.qa('[data-cy="tmi-send-message"]').find(visible) || null;
     const openChatFor = async t => {
-      // A board filter can leave a hidden copy of a tech on the page, so use the copy that's showing.
-      const copies = Array.from(document.querySelectorAll('[id="team-technician-' + t.id + '"]'));
-      const el2 = copies.find(techShowing) || copies[0];
-      if (!el2) return 'not on the board';
+      if (!board.root()) return changed('can\'t find the Dispatch board on the page', 'SERVICETITAN-DISPATCH-CENTER-*');
+      // The board only draws the rows on screen: bring the tech's row into view first.
+      const h = await board.showTech(t.id);
+      if (!h) return 'not showing on the board right now (a board filter may hide them)';
+      if (!h.hasAttribute('data-hover-popover-trigger')) return 'their name on the board has no menu (ServiceTitan doesn\'t offer messages for them)';
+      // The tech menu opens with a right-click on their name (seen Oct 2026).
       const openMenu = async () => {
-        el2.scrollIntoView({ block: 'center' });
-        await wait(250);
-        (el2.querySelector('.name') || el2).click();
-        return until(() => Array.from(document.querySelectorAll('.technician-menu.dropdown-menu')).find(visible), 3000);
+        if (menuItem()) { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true })); await wait(200); }
+        const r = h.getBoundingClientRect();
+        h.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, composed: true, cancelable: true, view: window, clientX: r.left + Math.min(40, r.width / 2), clientY: r.top + r.height / 2, button: 2, buttons: 2 }));
+        return until(menuItem, 3000);
       };
-      let menu = await openMenu();
-      // Hidden by a team/people filter: skip just this person. That's not a ServiceTitan change.
-      if (!menu && !techShowing(el2)) return 'hidden by the board filter right now (clear the filter to message them)';
-      if (!menu) { await wait(500); menu = await openMenu(); }   // one retry for a slow board
-      if (!menu && !techShowing(el2)) return 'hidden by the board filter right now (clear the filter to message them)';
-      if (!menu) return changed('the tech menu didn\'t open when clicking a tech\'s name', '.technician-menu.dropdown-menu');
-      // Only ever click the link whose text is exactly "Send Message" (never the memo "Send" button).
-      const link = Array.from(menu.querySelectorAll('a')).find(a => norm(a.textContent) === 'Send Message');
-      if (!link) return changed('the tech menu has no "Send Message" option', '.technician-menu a: Send Message');
-      link.click();
+      let item = await openMenu();
+      if (!item) { await wait(500); item = await openMenu(); }   // one retry for a slow board
+      if (!item) return changed('the tech menu didn\'t open from a tech\'s name', '[data-cy="tmi-send-message"]');
+      // Only ever the item that says exactly "Send Message" (never the memo or call items).
+      if (norm(item.textContent) !== 'Send Message') return changed('the tech menu has no "Send Message" option', '[data-cy="tmi-send-message"]: Send Message');
+      item.click();
       const ok = await until(() => chatBox() && panelName().toLowerCase() === t.name.toLowerCase(), 8000);
       if (!ok) {
         if (!acHost(true)) return changed('can\'t find the message panel', 'SERVICETITAN-ACTIVITY-CENTER-*');
@@ -2492,7 +2798,7 @@
         b.onclick = () => { pickIdx = i; set(K.pick, String(i)); renderMain(); };
         msgList.appendChild(b);
       });
-      if (!onBoard()) { say('Open the Dispatch board to send messages.'); startBtn.disabled = true; startBtn.style.opacity = '.5'; toLine.textContent = ''; return; }
+      if (!onBoard()) { say(board.need()); startBtn.disabled = true; startBtn.style.opacity = '.5'; toLine.textContent = ''; toList.style.display = 'none'; return; }
       if (!teamRules) { say('First, set up who can be messaged (🛡️ below). Nothing can be sent until you do.'); startBtn.disabled = true; startBtn.style.opacity = '.5'; toLine.textContent = 'To: nobody yet'; toList.style.display = 'none'; return; }
       const r = recipients();
       // The picked techs, each with ✕ to take them off.
@@ -2501,16 +2807,17 @@
       r.forEach(t => {
         const line = el('div', 'display:flex;gap:6px;align-items:center;padding:3px 6px;border-bottom:1px solid #eee;font-size:12px');
         const nm = el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap');
-        nm.append(el('b', '', t.name), document.createTextNode('  · ' + (t.team || 'no team') + (t.hidden ? ' · hidden by board filter' : '')));
+        nm.append(el('b', '', t.name), document.createTextNode('  · ' + (t.team || 'no team') + (t.status ? ' · ' + STATUS_MARK[t.status] : '')));
         line.append(nm, smallBtn('✕', () => { if (running) return; selected.delete(t.id); saveSel(); renderMain(); }, 'padding:1px 6px'));
         toList.appendChild(line);
       });
       toLine.textContent = 'To: ' + (r.length ? r.length + ' tech' + (r.length === 1 ? '' : 's') + ' (' + r.slice(0, 4).map(t => t.name).join(', ') + (r.length > 4 ? ', …' : '') + ')' : 'nobody picked yet. Click 👥 Choose techs.');
-      const hiddenPicked = r.filter(t => t.hidden).length;
-      if (hiddenPicked) toLine.textContent += ' · ' + hiddenPicked + ' hidden by the board filter will be skipped';
+      const techsNow = boardTechs();
+      const offBoard = Array.from(selected).filter(id => !techsNow.has(id)).length;
+      if (offBoard && board.latest()) toLine.textContent += ' · ' + offBoard + ' picked before aren\'t on the board now (left out)';
       startBtn.disabled = !r.length; startBtn.style.opacity = r.length ? '1' : '.5';
       startBtn.textContent = mode === 'auto' ? 'Review and send…' : 'Start (type only)';
-      if (!mainMsg.textContent || /^(Open the Dispatch|First, set up)/.test(mainMsg.textContent)) say('Pick a message, choose techs (👥 or 🖱️ Pick on board), then Start.');
+      if (!mainMsg.textContent || /^(Open the Dispatch|Switch the Dispatch|Wait for the Dispatch|First, set up)/.test(mainMsg.textContent)) say('Pick a message, choose techs (👥 or 🖱️ Pick on board), then Start.');
       paintTechs();
     };
     const say = s => { mainMsg.textContent = s; };
@@ -2519,43 +2826,38 @@
     // While it's on, clicking a tech's name on the board adds them (or takes them off) instead
     // of opening their menu. Only techs your 🛡️ settings allow can be added.
     let picking = false;
-    const techStyle = el('style');
-    (document.head || document.documentElement).appendChild(techStyle);
+    const techStyle = el('style');   // goes inside the board (board.mount)
     const paintTechs = () => {
       const ids = msgsPane.style.display !== 'none' ? Array.from(selected).filter(id => /^\d+$/.test(id)) : [];
-      techStyle.textContent = ids.length ? ids.map(id => '.technician[data-technician-id="' + id + '"]').join(',') +
-        '{outline:3px solid #6a1b9a !important;outline-offset:-3px !important;background:rgba(106,27,154,.14) !important}' : '';
+      techStyle.textContent = board.techsCss(ids, '#6a1b9a', 'rgba(106,27,154,.14)');
+      if (techStyle.textContent) board.mount(techStyle);
     };
-    const clickedTech = target => {
-      const t = target && target.closest && target.closest('.technician[data-technician-id]');
-      const id = t ? t.getAttribute('data-technician-id') : null;
-      return /^\d+$/.test(id || '') ? id : null;   // tech IDs are numbers; anything else is ignored
-    };
+    // A tech's name clicked on the board (tech IDs are numbers; anything else is ignored).
+    const clickedTech = e => board.clickedTech(e);
     const setPicking = on => {
       if (on && !teamRules) { openSafety(); return; }
       picking = !!on && !running;
       pickTechBtn.textContent = picking ? '🖱️ Picking: ON' : '🖱️ Pick on board';
-      pickTechBtn.style.background = picking ? '#6a1b9a' : '#fff';
-      pickTechBtn.style.color = picking ? '#fff' : '#111';
-      pickTechBtn.style.borderColor = picking ? '#6a1b9a' : '#aaa';
-      pickTechBtn.style.fontWeight = picking ? '600' : '400';
-      if (picking) say('Click techs\' names on the board to add them. Click again to take one off.');
+      pickTechBtn.style.background = picking ? '#6a1b9a' : '';
+      pickTechBtn.style.color = picking ? '#fff' : '';
+      pickTechBtn.style.borderColor = picking ? '#6a1b9a' : '';
+      if (picking) { say(onBoard() ? 'Click techs\' names on the board to add them. Click again to take one off.' : board.need()); board.load().catch(() => {}); }
     };
     const onTechClick = e => {
       if (!picking || running || !onBoard() || panel.contains(e.target) || views.main.style.display === 'none') return;
-      const id = clickedTech(e.target);
+      const id = clickedTech(e);
       if (!id) return;
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
       const t = boardTechs().get(id);
-      if (!t) return;
+      if (!t) { say('That tech isn\'t in the board\'s data yet. Try again in a moment.'); board.load({ fresh: true }).catch(() => {}); return; }
       syncSafety();
       if (selected.has(id)) { selected.delete(id); say('Took ' + t.name + ' off.'); }
-      else if (!canMessage(t)) { say('🛡️ ' + t.name + ' can\'t be messaged: ' + (never[id] ? 'they\'re on the never-message list.' : !t.team ? 'their team isn\'t known yet (clear the board filter once).' : 'their team (' + t.team + ') is blocked.')); return; }
+      else if (!canMessage(t)) { say('🛡️ ' + t.name + ' can\'t be messaged: ' + (never[id] ? 'they\'re on the never-message list.' : !t.team ? 'they aren\'t on a team.' : 'their team (' + t.team + ') is blocked.')); return; }
       else { selected.add(id); say('Added ' + t.name + '.'); }
       saveSel(); renderMain();
     };
     window.addEventListener('click', onTechClick, true);
-    pickers.push({ active: () => picking && !running && views.main.style.display !== 'none', hit: tg => !!clickedTech(tg) });
+    pickers.push({ active: () => picking && !running && views.main.style.display !== 'none', hit: e => !!clickedTech(e) });
 
     // ===== Choose techs =====
     const vPick = mkView('pick');
@@ -2571,11 +2873,24 @@
       smallBtn('Clear', () => { selected.clear(); saveSel(); renderPicker(); }),
       smallBtn('Done', () => { sub('main'); renderMain(); }, PRIMARY)
     );
-    vPick.append(head('👥 Choose techs'), pickMsg, search, jobsOnlyRow, pickList, pickNav);
+    // Quick picks by status: the techs ServiceTitan shows as Dispatched (on the way) or Working.
+    const statusRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 6px');
+    const statusBtn = (st2, label) => {
+      const b = smallBtn(label, () => { shown.filter(t => t.status === st2).forEach(t => selected.add(t.id)); saveSel(); renderPicker(); });
+      b.title = 'Adds every tech showing below whose status in ServiceTitan is ' + st2 + '.';
+      return b;
+    };
+    const workingBtn = statusBtn('Working', '＋ 🔧 Working'), dispatchedBtn = statusBtn('Dispatched', '＋ 🚚 Dispatched');
+    statusRow.append(workingBtn, dispatchedBtn);
+    vPick.append(head('👥 Choose techs'), pickMsg, search, jobsOnlyRow, statusRow, pickList, pickNav);
     search.oninput = () => renderPicker();
     let shown = [];
     const saveSel = () => { set(K.sel, JSON.stringify(Array.from(selected))); paintTechs(); };
-    const openPicker = () => { if (!teamRules) return openSafety(); sub('pick'); renderPicker(); };
+    const openPicker = () => {
+      if (!teamRules) return openSafety();
+      sub('pick'); renderPicker();
+      board.load().then(() => loadStatus()).then(() => { if (views.pick.style.display !== 'none') renderPicker(); }, () => {});
+    };
     const renderPicker = () => {
       syncSafety();
       const techs = Array.from(boardTechs().values());
@@ -2593,17 +2908,19 @@
         th.style.fontWeight = '700'; th.style.marginTop = '4px';
         pickList.appendChild(th);
         ts.forEach(t => {
-          const c = check(t.name + (t.jobs ? '  · ' + t.jobs + ' job' + (t.jobs === 1 ? '' : 's') : '') + (t.hidden ? '  · hidden by board filter' : ''), selected.has(t.id), v => { v ? selected.add(t.id) : selected.delete(t.id); saveSel(); renderPicker(); });
+          const c = check(t.name + (t.jobs ? '  · ' + t.jobs + ' job' + (t.jobs === 1 ? '' : 's') : '') + (t.status ? '  · ' + STATUS_MARK[t.status] : ''), selected.has(t.id), v => { v ? selected.add(t.id) : selected.delete(t.id); saveSel(); renderPicker(); });
           c.style.paddingLeft = '16px';
           pickList.appendChild(c);
         });
       });
       if (!shown.length) pickList.appendChild(el('div', 'font-size:12px;color:#666;padding:6px 0', jobsOnly ? 'No allowed techs with jobs on the board. Untick "Only show techs with jobs" or check 🛡️ Who can be messaged.' : 'No allowed techs found. Check 🛡️ Who can be messaged.'));
-      const unknownTeam = techs.filter(t => !t.team).length;
-      const blockedCount = techs.filter(t => t.team && !canMessage(t)).length;
-      pickMsg.textContent = selected.size + ' picked. ' + blockedCount + ' people are hidden because their team is blocked or they\'re on the never-message list.' +
-        (unknownTeam ? '\n' + unknownTeam + ' more are hidden because their team isn\'t showing (board filter). Clear the filter once and the Toolbox will remember their teams.' : '');
+      const blockedCount = techs.filter(t => !canMessage(t)).length;
+      pickMsg.textContent = !board.latest() ? (onBoard() ? 'Reading the board…' : board.need()) :
+        selected.size + ' picked. ' + blockedCount + ' people are hidden because their team is blocked or they\'re on the never-message list.';
       pickMsg.style.whiteSpace = 'pre-wrap';
+      const nW = shown.filter(t => t.status === 'Working').length, nD = shown.filter(t => t.status === 'Dispatched').length;
+      workingBtn.textContent = '＋ 🔧 Working (' + nW + ')'; dispatchedBtn.textContent = '＋ 🚚 Dispatched (' + nD + ')';
+      [[workingBtn, nW], [dispatchedBtn, nD]].forEach(([b, n]) => { b.disabled = !n; b.style.opacity = n ? '1' : '.5'; });
     };
 
     // ===== Who can be messaged (safety settings) =====
@@ -2622,8 +2939,12 @@
       smallBtn('Cancel', () => { sub('main'); renderMain(); })
     );
     vSafe.append(head('🛡️ Who can be messaged'), safeMsg, teamList, neverHead, neverList, neverAdd, neverResults, safeNav);
-    const openSafety = () => {
-      if (!onBoard()) { sub('main'); say('Open the Dispatch board first, so the Toolbox can see the teams.'); return; }
+    const openSafety = async () => {
+      if (!onBoard()) { sub('main'); say(board.need().replace(/\.$/, ', so the Toolbox can see the teams.')); return; }
+      if (!board.latest()) {
+        sub('main'); say('Reading the board…');
+        try { await board.load(); } catch (e) { say('⚠️ Couldn\'t read the board: ' + errText(e)); return; }
+      }
       // Start from what's saved right now, so saving here doesn't undo a change made in another tab.
       syncSafety();
       const teams = teamsOnBoard();
@@ -2785,8 +3106,9 @@
           if (stopRun) { add('Stopped. ' + (people.length - n) + ' not messaged.'); break; }
           const planned = people[n];
           runMsg.textContent = (auto ? 'Sending ' : 'Typing ') + (n + 1) + ' of ' + people.length + ': ' + planned.name;
-          if (!onBoard()) { out(planned, 'stopped: not on the Dispatch board', 'problem'); break; }
-          // Re-check the live board and the saved 🛡️ settings right before each person.
+          if (!onBoard()) { out(planned, 'stopped: not on the Dispatch board (Day view)', 'problem'); break; }
+          // Re-check the board and the saved 🛡️ settings right before each person.
+          try { await board.load({ maxAge: 30000 }); } catch (e) { if (st.isSignedOut(e)) { out(planned, 'stopped: ' + e.message, 'problem'); break; } }
           const t = boardTechs().get(planned.id);
           if (!t) { out(planned, 'skipped: not on the board any more', 'skipped'); continue; }
           syncSafety();
@@ -2867,11 +3189,16 @@
     msgsPane.appendChild(pane);
     sub('main');
     return {
-      refresh: () => { if (!running) { sub('main'); renderMain(); } paintTechs(); },
+      refresh: () => {
+        if (!running) { sub('main'); renderMain(); }
+        paintTechs();
+        // The board's techs and statuses, read in the background; the list follows.
+        if (onBoard()) board.load().then(() => loadStatus()).then(() => { if (!running && msgsPane.style.display !== 'none' && views.main.style.display !== 'none') renderMain(); }, () => {});
+      },
       leave: () => { if (picking) setPicking(false); techStyle.textContent = ''; },
       isRunning: () => running,
       stop: requestStop,
-      cleanup: () => { window.removeEventListener('click', onTechClick, true); techStyle.remove(); }
+      cleanup: () => { window.removeEventListener('click', onTechClick, true); board.unmount(techStyle); }
     };
   })();
 
@@ -2921,11 +3248,12 @@
 
     // The jobs to change: picked on the board or typed in. Blue outline while this tool is open.
     const picker = jobPicker({
-      color: '#1a6ed8', soft: 'rgba(26,110,216,.25)', max: MAX_PER_RUN,
+      color: '#0265dc', soft: 'rgba(2,101,220,.22)', max: MAX_PER_RUN,
       shown: () => bizPane.style.display !== 'none',
       busy: () => running,
       say: t => say(t),
-      changed: () => updateButtons()
+      changed: () => updateButtons(),
+      tool: TOOL
     });
 
     const actions = el('div', 'display:flex;flex-wrap:wrap;gap:6px');
@@ -3162,7 +3490,7 @@
       stopBtn.disabled = false; stopBtn.textContent = 'Stop'; stopBtn.style.display = 'inline-block';
       copyBtn.textContent = 'Copy results';
       updateButtons();
-      const home = onBoard() ? location.hash : '#/DispatchBoard';
+      const home = board.homeHash();
       const results = new Map();
       const record = (it, r, retry) => { results.set(it.job, r); add('#' + it.job + ': ' + (retry ? 'retry: ' : '') + r.text); };
       const verb = mode === 'check' ? 'Checking' : mode === 'putback' ? 'Putting back' : 'Changing';
@@ -3229,7 +3557,7 @@
       }
     };
 
-    const refresh = () => { if (running) return; renderBranches(); picker.render(); if (!onBoard() && !msg.textContent) say('Open the Dispatch board to pick jobs.'); };
+    const refresh = () => { if (running) return; renderBranches(); picker.render(); if (!onBoard() && !msg.textContent) say(board.need() + ' Or type job numbers.'); };
     renderBranches();
     return {
       refresh,
@@ -3393,15 +3721,8 @@
       // it's read fresh below instead.)
       const b = boardInfo.get(String(j));
       if (b && b.day instanceof Date && sameDay(b.day, day)) return day;
-      try {
-        const on = (un(boardVM().Assignments) || []).some(a => {
-          if (String(un(a.JobId)) !== String(j) || canceled(a)) return false;
-          const sd = un(a.Start) ? new Date(un(a.Start)) : null;
-          return !sd || isNaN(sd) || sameDay(sd, day);
-        });
-        if (on) return day;
-      } catch (e) {}
-      return null;
+      // On the board's timeline that day (the board's data, as last read for this day).
+      return board.latest() && board.job(j) ? day : null;
     };
 
     // ---------- Settings ----------
@@ -3416,18 +3737,13 @@
     };
 
     // ---------- Reading the board ----------
-    const boardVM = () => { const jl = document.querySelector('.job-list'); return jl ? vmOf(jl) : null; };
-    const boardDateISO = () => {
-      try { const d = un(boardVM().Date); if (d && typeof d.toISOString === 'function') return d.toISOString(); } catch (e) {}
-      const d = new Date(); d.setHours(0, 0, 0, 0); return d.toISOString();
-    };
+    // The day the board shows (for the Hold list: today if the board isn't showing).
+    const boardDateISO = () => { const d = board.day(); if (d) return board.isoT(d); const t = new Date(); t.setHours(0, 0, 0, 0); return board.isoT(t); };
     // The Business Units the board is filtered to (the Hold list uses the same filter).
-    const boardBUs = () => {
-      try { const f = boardVM().BusinessUnitFilter; const ids = f && typeof f.getIds === 'function' ? f.getIds() : []; return (ids || []).map(Number).filter(Boolean); } catch (e) { return []; }
-    };
+    const boardBUs = () => board.bus();
     const buNames = ids => {
       const all = (window.App && window.App.Data && window.App.Data.BusinessUnits) || [];
-      return ids.map(id => (all.find(b => b.Id === id) || {}).Name).filter(Boolean);
+      return ids.map(id => (all.find(b => Number(b.Id) === Number(id)) || {}).Name).filter(Boolean);
     };
     const xhrHeaders = { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' };
 
@@ -3475,24 +3791,22 @@
     // Customer and tech: from the timeline if the job is on it, else from the job list at the bottom,
     // else from what ＋ Everyone on the board loaded (it also loads Unassigned jobs that aren't showing).
     const boardInfo = new Map();   // job -> { jobId, customer, customerId, tech }
-    const jobInfo = j => timelineJob(j) || listJob(j) || boardInfo.get(String(j)) || null;
+    const jobInfo = j => {
+      const b = board.job(j);
+      if (b) return { customer: b.customer, customerId: b.customerId, tech: b.tech };
+      const loaded = boardInfo.get(String(j));
+      if (loaded) return loaded;
+      const p = picker.info(j);
+      return p ? { customer: p.label, customerId: p.customerId || null, tech: '' } : null;
+    };
 
     // ---------- ＋ Everyone on the board ----------
     // Every job on the day the board shows: the timeline (with your board's filters) plus the whole
     // Unassigned list (all pages, for your board's branches). Holds aren't included: they have
     // their own choice under Who. Canceled appointments are left out.
     let everyoneLoading = false;
-    const pad2 = n => String(n).padStart(2, '0');
-    const localDayISO = d => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + 'T00:00:00';
-    const boardDay = () => { try { const d = un(boardVM().Date); return d instanceof Date && !isNaN(d) ? d : null; } catch (e) { return null; } };
-    const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-    // Appointment status 5 is Canceled (checked on the live account, Oct 2026). Words are checked
-    // too, in case it comes as text.
-    const canceled = x => {
-      const a = un(x.AppointmentStatus);
-      if (a === 5) return true;
-      return [a, un(x.Status), un(x.JobStatus)].some(s => typeof s === 'string' && /^cancell?ed$/i.test(norm(s)));
-    };
+    const boardDay = () => board.day();
+    const sameDay = (a, b) => board.sameDay(a, b);
     // The board's whole day (shared with Job Notifications' ＋ Whole board).
     const loadEveryone = () => boardData.whole(TOOL);
 
@@ -3557,7 +3871,8 @@
       shown: () => textsPane.style.display !== 'none' && source === 'picked',
       busy: () => running,
       say: t => say(t),
-      changed: () => renderMain()
+      changed: () => renderMain(),
+      tool: TOOL
     });
     let mode = get(K.mode) === 'auto' ? 'auto' : 'type';
     const openGroups = new Set();
@@ -3581,7 +3896,7 @@
       const info = el('span', 'font-size:12px;flex:1;min-width:120px');
       const loadBtn = smallBtn(holds ? '↻ Reload' : 'Load holds', () => doLoadHolds());
       if (holdsLoading) { info.textContent = 'Loading holds…'; loadBtn.disabled = true; loadBtn.style.opacity = '.5'; }
-      else if (!holds) info.textContent = onBoard() ? 'Loads every hold on the board\'s Hold list.' : 'Open the Dispatch board first.';
+      else if (!holds) info.textContent = onBoard() ? 'Loads every hold on the board\'s Hold list.' : board.need();
       else info.textContent = s1(holds.jobs.length, 'hold') + (holds.bus.length ? ' · ' + holds.bus.join(', ') : ' · all business units') +
         ' · ' + holds.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
       top.append(info, loadBtn);
@@ -3620,7 +3935,7 @@
     const sumOf = m => Array.from(m.values()).reduce((a, b) => a + b, 0);
     const doLoadHolds = async () => {
       if (holdsLoading || running) return;
-      if (!onBoard()) { say('Open the Dispatch board first.'); return; }
+      if (!onBoard()) { say(board.need()); return; }
       holdsLoading = true; renderMain();
       try { holds = await loadHolds(); say('Loaded ' + s1(holds.jobs.length, 'hold') + '. Tick the kinds to text.'); }
       catch (e) { say('⚠️ Couldn\'t load the Hold list: ' + errText(e)); }
@@ -3642,7 +3957,7 @@
       if (!force && key === deptKey) return;   // nothing changed: leave the list alone (it may be open)
       deptKey = key;
       deptSel.textContent = '';
-      const top = el('option', '', onBoard() ? '＋ A department…' : '＋ A department (open the board)');
+      const top = el('option', '', onBoard() ? '＋ A department…' : board.view() === 'week' ? '＋ A department (switch the board to Day)' : '＋ A department (open the board)');
       top.value = '';
       deptSel.appendChild(top);
       rows.forEach(r => { const o = el('option', '', r.name + '  (' + s1(r.n, 'job') + ')'); o.value = r.name; deptSel.appendChild(o); });
@@ -3667,7 +3982,7 @@
     };
     const addDept = async name => {
       if (everyoneLoading || running) return;
-      if (!onBoard()) { say('Open the Dispatch board first.'); return; }
+      if (!onBoard()) { say(board.need()); return; }
       const what = name === UNASSIGNED_OPT ? 'the Unassigned list' : name;
       everyoneLoading = true; renderMain();
       say('Loading ' + what + '…');
@@ -3677,7 +3992,7 @@
         const jobs = r.jobs.filter(x => name === UNASSIGNED_OPT ? x.unassigned : (x.teams || []).indexOf(name) > -1);
         if (!jobs.length) { say('No jobs ' + (name === UNASSIGNED_OPT ? 'in the Unassigned list' : 'for ' + name) + ' on ' + boardDay().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + '.'); return; }
         const labels = {};
-        jobs.forEach(x => { labels[x.jobId] = x.customer; });
+        jobs.forEach(x => { labels[x.jobId] = { label: x.customer, tags: x.tags, customerId: x.customerId }; });
         const n = picker.addMany(jobs.map(x => x.jobId), labels);
         say('Added ' + s1(n, 'job') + ' from ' + what + (n < jobs.length ? ' (' + (jobs.length - n) + ' already picked)' : '') +
           '. That\'s ' + s1(recipients().length, 'customer') + ' in the list (one text each). Take anyone off with ✕.');
@@ -3686,13 +4001,13 @@
     };
     const addEveryone = async () => {
       if (everyoneLoading || running) return;
-      if (!onBoard()) { say('Open the Dispatch board first.'); return; }
+      if (!onBoard()) { say(board.need()); return; }
       everyoneLoading = true; renderMain();
       say('Loading everyone on the board…');
       try {
         const r = await loadEveryone();
         const labels = {};
-        r.jobs.forEach(x => { boardInfo.set(x.jobId, x); labels[x.jobId] = x.customer; });
+        r.jobs.forEach(x => { boardInfo.set(x.jobId, x); labels[x.jobId] = { label: x.customer, tags: x.tags, customerId: x.customerId }; });
         const n = picker.addMany(r.jobs.map(x => x.jobId), labels);
         say('Added ' + s1(n, 'job') + ' from the board (' + r.onTimeline + ' on the timeline, ' + r.unassigned + ' unassigned' +
           (r.canceled ? ', ' + r.canceled + ' canceled left out' : '') + '). That\'s ' + s1(recipients().length, 'customer') + ' (one text each). Take anyone off with ✕.');
@@ -3742,9 +4057,9 @@
       startBtn.disabled = !ok; startBtn.style.opacity = ok ? '1' : '.5';
       startBtn.textContent = (mode === 'auto' ? 'Review and send to ' : 'Start (type only): ') + s1(r.length, 'customer');
       picker.render();   // the list and its highlights
-      if (!onBoard()) say('Open the Dispatch board to use this.');
+      if (!onBoard()) say(board.need());
       else if (m && uses(m[1], 'dispatcher') && !myName()) say('⚠️ This message uses {dispatcher}, but your name couldn\'t be found. Set it in ⚙️ Settings.');
-      else if (!mainMsg.textContent || /^(Open the Dispatch|⚠️ This message uses)/.test(mainMsg.textContent)) say(myName() ? 'Texts are signed as ' + myName() + '.' : '');
+      else if (!mainMsg.textContent || /^(Open the Dispatch|Switch the Dispatch|Wait for the Dispatch|⚠️ This message uses)/.test(mainMsg.textContent)) say(myName() ? 'Texts are signed as ' + myName() + '.' : '');
     };
 
     // ===== Edit messages =====
@@ -4041,7 +4356,7 @@
     };
     const openChat = async (num, jobId) => {
       const want = '#/ChatCenter/' + num;
-      if (location.hash.split('?')[0] === want) { goTo('#/DispatchBoard'); await wait(800); }
+      if (location.hash.split('?')[0] === want) { goTo(board.HOME); await wait(800); }
       goTo(want + (jobId ? '?jobid=' + jobId : ''));
       const c = await until(() => chatFor(num), 15000, 100);
       if (!c) return null;
@@ -4234,7 +4549,7 @@
       if (!m) { sub('main'); return; }
       running = true; stopRun = false; lock = TOOL;
       const auto = mode === 'auto';
-      const home = onBoard() ? location.hash : '#/DispatchBoard';
+      const home = board.homeHash();
       runLog.textContent = ''; runMsg.textContent = '';
       stopBtn.disabled = false; stopBtn.textContent = 'Stop'; stopBtn.style.display = 'inline-block';
       doneBtn.style.display = 'none'; copyBtn.textContent = 'Copy results';
@@ -4499,29 +4814,18 @@
     // Every appointment on the board's day (timeline and the whole Unassigned list), canceled ones
     // left out: [{ apptId, jobId, customer, customerId, confirmed }].
     const dayAppts = async () => {
-      const vm = boardVM(), day = boardDay();
-      if (!vm || !day) throw new Error('open the Dispatch board first');
-      const out = new Map();
-      const take = x => {
-        const a = un(x.Id), j = String(un(x.JobId));
-        if (a == null || !/^\d+$/.test(String(a)) || !/^\d+$/.test(j) || out.has(String(a))) return;
-        const start = un(x.Start), sd = start ? new Date(start) : null;
-        if (sd && !isNaN(sd) && !sameDay(sd, day)) return;
-        if (canceled(x)) return;
-        out.set(String(a), { apptId: a, jobId: j, customer: norm(un(x.Customer)), customerId: un(x.CustomerId) || null, confirmed: un(x.IsConfirmed) === true });
+      if (!onBoard()) throw new Error(board.need().replace(/\.$/, '').toLowerCase());
+      const snap = await board.load({ fresh: true });
+      const day = snap.day, out = new Map();
+      const take = (a, j, customer, customerId, confirmed, start, status) => {
+        if (a == null || !/^\d+$/.test(String(a)) || !/^\d+$/.test(String(j)) || out.has(String(a))) return;
+        if (start && !sameDay(start, day)) return;
+        if (board.isCanceled(status)) return;
+        out.set(String(a), { apptId: a, jobId: String(j), customer, customerId: customerId || null, confirmed: confirmed === true });
       };
-      (un(vm.Assignments) || []).forEach(x => { try { take(x); } catch (e) {} });
-      const PAGE = 500;
-      const page = skip => st.getJSON('/Dispatch/GetJobs', 30000, { JobType: 'Unassigned', Date: localDayISO(day), QueryFilter: { Skip: skip, Take: PAGE, Start: {}, Created: {}, BusinessUnitIds: boardBUs() } });
-      const first = await page(0);
-      if (!first || !Array.isArray(first.Jobs)) {
-        health.flag(TOOL, 'the Unassigned list came back in a shape the Toolbox doesn\'t know', '/Dispatch/GetJobs');
-        throw new Error('the Unassigned list came back in a shape the Toolbox doesn\'t know');
-      }
-      let rows = first.Jobs.slice();
-      const total = Number(first.Count) || rows.length;
-      for (let skip = PAGE; skip < Math.min(total, 5000); skip += PAGE) { const d = await page(skip); if (d && Array.isArray(d.Jobs)) rows = rows.concat(d.Jobs); }
-      rows.forEach(x => { try { take(x); } catch (e) {} });
+      snap.appts.forEach(x => take(x.apptId, x.jobId, x.customer, x.customerId, x.confirmed, x.start, x.status));
+      const un = await board.unassigned(TOOL, { fresh: true });
+      un.rows.forEach(x => take(x.apptId, x.jobId, x.customer, x.customerId, x.confirmed, x.start, x.status));
       return Array.from(out.values());
     };
     // One customer's replies. ctx.readUnread decides whether an unread conversation can be read
@@ -4621,7 +4925,7 @@
     const openReplies = async () => {
       if (running || rBusy) return;
       if (lock) return say('Wait for ' + lock + ' to finish first.');
-      if (!onBoard()) return say('Open the Dispatch board first.');
+      if (!onBoard()) return say(board.need());
       const pats = [];
       folders.filter(isConfirmFolder).forEach(f => f.msgs.forEach(m => { if (norm(m[1])) pats.push(tmplMatcher(m[1])); }));
       if (!pats.length) return say('This folder has no messages to look for replies to.');
@@ -4873,14 +5177,13 @@
     const hasId = (list, id) => list.some(x => S(x) === S(id));
 
     // ---------- The board ----------
-    const boardVM = () => { try { const jl = document.querySelector('.job-list'); return jl && window.ko ? window.ko.dataFor(jl) || null : null; } catch (e) { return null; } };
-    const boardDay = () => { const vm = boardVM(); const d = vm && u(vm.Date); return d instanceof Date && !isNaN(d) ? d : null; };
-    const sameDay = (a, b) => !!(a && b) && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const boardDay = () => board.day();
+    const sameDay = (a, b) => board.sameDay(a, b);
     const pad = n => String(n).padStart(2, '0');
     const dayISO = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T00:00:00';
     const dayText = d => d ? d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'the day shown';
     const toDate = v => { v = u(v); if (v == null || v === '') return null; const d = v instanceof Date ? v : new Date(v); return isNaN(d) ? null : d; };
-    const boardBUs = () => { try { const f = boardVM().BusinessUnitFilter; const ids = f && typeof f.getIds === 'function' ? f.getIds() : []; return (ids || []).map(Number).filter(Boolean); } catch (e) { return []; } };
+    const boardBUs = () => board.bus();
     const buName = id => { try { const b = ((window.App && window.App.Data && window.App.Data.BusinessUnits) || []).find(x => Number(x.Id) === Number(id)); if (b && b.Name) return norm(b.Name); } catch (e) {} return 'another branch'; };
     const otherBranch = id => { const ids = boardBUs(); return !!(ids.length && id != null && ids.indexOf(Number(id)) < 0); };
     const skillsOn = () => { try { return !(window.App && window.App.Data && window.App.Data.EnableSkillsManagement === false); } catch (e) { return true; } };
@@ -4898,38 +5201,36 @@
       return r;
     };
     let unassigned = { day: null, rows: [] };   // the whole Unassigned list for a day, once loaded
+    // An appointment from the board's data.
+    const snapRow = a => {
+      const r = { apptId: Number(a.apptId), jobId: S(a.jobId), number: a.number, customer: a.customer, start: a.start, end: a.end,
+        techs: a.techs.map(id => ({ id: Number(id), name: board.techName(id) })), bu: a.bu };
+      r.techs.forEach(t => { if (t.name) seenNames.set(S(t.id), t.name); });
+      return r;
+    };
     // Every appointment on the day the board shows, one entry each (a job with two techs is on the
-    // board twice, once in each tech's row).
+    // board twice, once in each tech's row): the board's data as last read, plus the Unassigned
+    // list when it's been loaded for that day.
     const dayRows = () => {
-      const day = boardDay(), vm = boardVM(), out = new Map();
-      const take = list => (list || []).forEach(x => {
+      const day = boardDay(), s = board.latest(), out = new Map();
+      if (s) s.appts.forEach(a => { if (board.live(a)) out.set(S(a.apptId), snapRow(a)); });
+      if (day && unassigned.day && sameDay(unassigned.day, day)) unassigned.rows.forEach(x => {
         try {
           const r = rowOf(x);
-          if (r.apptId == null || !/^\d+$/.test(r.jobId)) return;
-          if (day && r.start && !sameDay(r.start, day)) return;
-          const prev = out.get(S(r.apptId));
-          if (!prev) { out.set(S(r.apptId), r); return; }
-          r.techs.forEach(t => { if (!prev.techs.some(p => S(p.id) === S(t.id))) prev.techs.push(t); });
-          if (!prev.customer) prev.customer = r.customer;
+          if (r.apptId == null || !/^\d+$/.test(r.jobId) || out.has(S(r.apptId))) return;
+          if (r.start && !sameDay(r.start, day)) return;
+          out.set(S(r.apptId), r);
         } catch (e) {}
       });
-      if (vm) { take(u(vm.Assignments)); take(vm.JobList && u(vm.JobList.AllVisibleJobs)); }
-      if (day && unassigned.day && sameDay(unassigned.day, day)) take(unassigned.rows);
       return Array.from(out.values());
     };
     // The whole Unassigned list for the day the board shows (all pages), for your board's branches.
     const loadUnassigned = async () => {
       const day = boardDay();
-      if (!day) throw new Error('Open the Dispatch board first.');
-      const PAGE = 500;
-      const page = skip => st.getJSON('/Dispatch/GetJobs', 30000, { JobType: 'Unassigned', Date: dayISO(day), QueryFilter: { Skip: skip, Take: PAGE, Start: {}, Created: {}, BusinessUnitIds: boardBUs() } });
-      const first = await page(0);
-      if (!first || !Array.isArray(first.Jobs)) { health.flag(TOOL, 'the Unassigned list came back in a shape the Toolbox doesn\'t know', '/Dispatch/GetJobs'); throw new Error('unexpected reply'); }
-      let rows = first.Jobs.slice();
-      const total = Number(first.Count) || rows.length;
-      for (let skip = PAGE; skip < Math.min(total, 5000); skip += PAGE) { const d = await page(skip); if (d && Array.isArray(d.Jobs)) rows = rows.concat(d.Jobs); }
-      unassigned = { day, rows };
-      return rows.map(rowOf).filter(r => r.apptId != null && /^\d+$/.test(r.jobId) && !r.techs.length);
+      if (!day) throw new Error(board.need());
+      const un = await board.unassigned(TOOL, { fresh: true });
+      unassigned = { day, rows: un.rows.map(r => r.raw) };
+      return un.rows.map(r => rowOf(r.raw)).filter(r => r.apptId != null && /^\d+$/.test(r.jobId) && !r.techs.length);
     };
 
     // ---------- Techs ----------
@@ -5026,7 +5327,8 @@
       shown: () => movesPane.style.display !== 'none' && mode !== 'swapDays',
       busy: () => busy,
       say: t => say(t),
-      changed: () => { clearReview(); updateButtons(); }
+      changed: () => { clearReview(); updateButtons(); },
+      tool: TOOL
     });
     const uaBtn = smallBtn('＋ All Unassigned', () => addUnassigned());
     uaBtn.title = 'Adds every job in the Unassigned list for the day the board shows (all pages), for your board\'s branches';
@@ -5140,7 +5442,7 @@
 
     const addUnassigned = async () => {
       if (busy) return;
-      if (!onBoard()) return say('Open the Dispatch board first.');
+      if (!onBoard()) return say(board.need());
       busy = true; updateButtons();
       say('Loading the Unassigned list for ' + dayText(boardDay()) + '...');
       try {
@@ -5304,9 +5606,18 @@
     const review = async m => {
       if (busy) return;
       if (lock) return say('Wait for ' + lock + ' to finish first.');
-      if (!onBoard()) return say('Open the Dispatch board first.');
+      if (!onBoard()) return say(board.need());
       let day = boardDay();
       let list = [], missing = [];
+      // The board's data, read fresh, and the Unassigned list too when a picked job isn't on the timeline.
+      if (m !== 'putback') {
+        say('Reading the board...');
+        try {
+          const s = await board.load({ fresh: true });
+          if (m !== 'swapDays' && picker.ids().some(j => !board.apptsOf(j).length)) await loadUnassigned();
+          day = s.day;
+        } catch (e) { return say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t read the board: ' + errText(e))); }
+      }
       if (m === 'putback') {
         // The saved copy is the one to trust (another tab, or a reload, may have changed it).
         loadUndo(); updateButtons();
@@ -5500,33 +5811,6 @@
         goBtn.textContent = n ? 'Swap them' : ready === 2 ? 'Tick the warning to swap' : 'Can\'t swap';
       } else goBtn.textContent = GO[planned ? planned.mode : 'move'] + ' ' + plural(n, 'job');
       goBtn.disabled = !n; goBtn.style.opacity = n ? '1' : '.5';
-    };
-
-    // ---------- The board catching up ----------
-    // Jobs from a run that the board (on the day it shows) doesn't show with their new techs yet.
-    const boardBehind = runList => {
-      const rows = dayRows();
-      return runList.filter(z => {
-        if (!z.after) return false;
-        const row = rows.find(rr => S(rr.apptId) === S(z.apptId));
-        if (!row) return false;
-        const ids = row.techs.map(t => t.id);
-        return !sameSet(ids, z.after);
-      });
-    };
-    // Reloads the board's data with the board's own refresh (seen Oct 2026: refreshData, the
-    // same reload the board does itself; keeps the day and filters). Waits until it's done.
-    // Returns false if it couldn't (then the run says to press F5).
-    const refreshBoard = async () => {
-      const vm = boardVM();
-      if (!vm || typeof vm.refreshData !== 'function') return false;
-      // The board skips its refresh while one of its menus is open (and then stays "refreshing").
-      if (document.querySelector('.trello-dropdown.open')) return false;
-      const loading = v => !!(v && (u(v.IsRefreshing) || u(v.LoadingData)));
-      if (loading(vm) && !await until(() => !loading(boardVM()), 15000, 300)) return false;
-      try { vm.refreshData(); } catch (e) { return false; }
-      await wait(400);
-      return !!await until(() => { const v = boardVM(); return v && !loading(v); }, 20000, 300);
     };
 
     // ---------- Doing it ----------
@@ -5775,19 +6059,10 @@
         if (unsure.length) add('⚠️ Couldn\'t confirm what ServiceTitan did on ' + unsure.map(z => '#' + z.jobId).join(', ') + '. Check ' + (unsure.length === 1 ? 'it' : 'them') + ' on the board.');
         if (undo.length && m !== 'putback') add('↩ Put back can undo ' + plural(undo.length, 'job') + '.');
         if (lastRun.length) {
-          // The board usually updates by itself, often within a second: it's checked every 0.2
-          // seconds, and the run ends as soon as it shows every change. If it hasn't caught up
-          // after 2.5 seconds, reload the board's data (the board's own refresh: same day and
-          // filters, no page reload), then check again.
-          say('Waiting for the board to show the changes...');
-          await until(() => !boardBehind(lastRun).length, 2500, 200);
-          let behind = boardBehind(lastRun);
-          if (behind.length && onBoard()) {
-            say('Refreshing the board...');
-            if (await refreshBoard()) behind = boardBehind(lastRun);
-            if (!behind.length) add('Refreshed the board to show the changes.');
-          }
-          if (behind.length) add('The board hasn\'t caught up yet on ' + plural(behind.length, 'job') + '. ServiceTitan has the change; refresh the page (F5) if the board doesn\'t update in a moment.');
+          // The board's own Refresh (same day and filters, no page reload), so it shows the changes.
+          let refreshed = false;
+          if (onBoard()) { say('Refreshing the board...'); refreshed = await board.refresh(); }
+          add(refreshed ? 'Refreshed the board to show the changes.' : 'ServiceTitan has the changes. Press the board\'s ⟳ Refresh (or F5) if it doesn\'t show them in a moment.');
         }
         if (lastRun.length) health.clear(TOOL);
         say('Done: ' + summary + '.');
@@ -5824,7 +6099,7 @@
       loadUndo();   // a run in another tab may have saved a newer one
       layout();
       fit();
-      if (!onBoard()) say('Open the Dispatch board to move jobs.');
+      if (!onBoard()) say(board.need());
       else if (!msg.textContent) say('Pick what to do, then the jobs. Nothing changes until you review and press the button.');
       if (!techList) {
         try { await loadTechs(); } catch (e) { say('⚠️ ' + (st.isSignedOut(e) ? e.message : errText(e))); }
@@ -5880,6 +6155,7 @@
     biz.cleanup();
     texts.cleanup();
     moves.cleanup();
+    board.stop();
     panel.remove();
     delete window.__stToolbox;
   };
