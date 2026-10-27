@@ -646,7 +646,10 @@
     };
 
     // ---- Techs and teams ----
-    const techHeader = id => /^\d+$/.test(String(id)) ? q('[data-cy="ddb-technician-header-' + id + '"]') : null;
+    // A tech's name: ddb-technician-header-<id> in the Day view, wdb-technician-header-<id> in the Week view.
+    const HEADERS = '[data-cy^="ddb-technician-header-"],[data-cy^="wdb-technician-header-"]';
+    const techHeader = id => /^\d+$/.test(String(id)) ? q('[data-cy="ddb-technician-header-' + id + '"],[data-cy="wdb-technician-header-' + id + '"]') : null;
+    const techHeaders = () => qa(HEADERS);
     // The new board's techs ([{ id, name, team }], in its order), or null on the old board.
     const techs = () => kind() === 'new' ? (fresh() ? data.techs.slice() : []) : null;
     const teamOf = id => { const t = kind() === 'new' && data.techs.find(x => x.id === String(id)); return t && t.team ? t.team : null; };
@@ -679,7 +682,7 @@
     };
     // A tech's name clicked. Returns the tech's ID (numbers only), or null.
     const clickedTechId = node => {
-      const t = node && node.closest && (node.closest('[data-cy^="ddb-technician-header-"][data-technician-id]') || node.closest('.technician[data-technician-id]'));
+      const t = node && node.closest && (node.closest('[data-cy^="ddb-technician-header-"][data-technician-id],[data-cy^="wdb-technician-header-"][data-technician-id]') || node.closest('.technician[data-technician-id]'));
       const id = t ? t.getAttribute('data-technician-id') : null;
       return /^\d+$/.test(id || '') ? id : null;
     };
@@ -774,10 +777,20 @@
     // ---- A tech's row and menu (the new board) ----
     // Scrolls the board until the tech's name is drawn (it only draws the rows on screen). Starts
     // where they probably are (their place among the board's techs), then looks from the top.
+    // What scrolls the techs: the Day view's timeline, or the Week view's list (the box around it that scrolls).
+    const scroller = () => {
+      const vp = q('[data-testid="timeline-scroll-viewport"]');
+      if (vp) return vp;
+      const vl = q('[data-cy="dc-wdb-virtual-list"]');
+      for (let x = vl; x && x.nodeType === 1; x = x.parentElement) {
+        if (x.scrollHeight > x.clientHeight + 5 && /(auto|scroll)/.test(getComputedStyle(x).overflowY)) return x;
+      }
+      return null;
+    };
     const findTech = async id => {
       let h = techHeader(id);
       if (h) return h;
-      const vp = q('[data-testid="timeline-scroll-viewport"]');
+      const vp = scroller();
       if (!vp) return null;
       const at = async y => { vp.scrollTop = Math.max(0, Math.round(y)); await wait(120); return techHeader(id); };
       const i = data.techs.findIndex(t => t.id === String(id));
@@ -797,21 +810,23 @@
       const nameEl = Array.from(h2.querySelectorAll('p')).find(p => !p.hasAttribute('data-cy') && norm(p.textContent)) || h2;
       const r = nameEl.getBoundingClientRect();
       nameEl.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, composed: true, cancelable: true, button: 2, buttons: 2, clientX: r.left + 5, clientY: r.top + 5, view: window }));
-      return until(() => { const m = q('[data-cy="ddb-technician-menu"]'); const x = m && m.querySelector('[data-cy="' + cy + '"]'); return x && visible(x) ? x : null; }, 3000);
+      return until(() => { const m = openMenu(); const x = m && m.querySelector('[data-cy="' + cy + '"]'); return x && visible(x) ? x : null; }, 3000);
     };
+    // The tech menu that's open (it stays on the page, hidden, once closed), or null.
+    const openMenu = () => qa('[data-cy="ddb-technician-menu"],[data-cy="wdb-technician-menu"]').find(visible) || null;
     const closeMenu = async () => {
-      const m = q('[data-cy="ddb-technician-menu"]');
+      const m = openMenu();
       if (!m) return true;
-      (m.querySelector('[role=menuitem]') || m).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true, composed: true }));
-      return !!(await until(() => !q('[data-cy="ddb-technician-menu"]'), 1500, 100));
+      (m.querySelector('[role=menuitem]') || m.querySelector('button') || m).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, composed: true, cancelable: true }));
+      return !!(await until(() => !openMenu(), 1500, 100));
     };
     // ServiceTitan's Activity Center (the message panel): on the page (old board) or inside the new board.
     const findIn = (r, re) => r ? Array.from(r.querySelectorAll('*')).find(e => re.test(e.tagName)) || null : null;
 
     return {
       kind, on: () => !!kind(), isNew: () => kind() === 'new', host, root, q, qa, fiberProp, evTarget,
-      day, filter, bus, load, ready, onData, vm, techs, teamOf, teamOrder, techHeader,
-      clickedJob, clickedTechId, retag, sheet, watch, stop, home, refresh, findTech, techMenuItem, closeMenu, findIn,
+      day, filter, bus, load, ready, onData, vm, techs, teamOf, teamOrder, techHeader, techHeaders,
+      clickedJob, clickedTechId, retag, sheet, watch, stop, home, refresh, findTech, techMenuItem, openMenu, closeMenu, findIn,
       trayRowEls, trayJobOf
     };
   })();
@@ -1317,16 +1332,16 @@
     // The new board: the pieces the tools look for inside it (waiting for it to finish loading).
     const checkNewBoard = async () => {
       const B = 'Dispatch board';
-      const loaded = await until(() => board.root() && board.qa('[data-cy^="ddb-technician-header-"]').length ? true : null, 15000, 500);
+      const loaded = await until(() => board.root() && board.techHeaders().length ? true : null, 15000, 500);
       Array.from(issues.keys()).forEach(k => { if (k.indexOf('board|') === 0) issues.delete(k); });
       if (!board.host()) flag(B, 'can\'t find the new Dispatch board on the page', '[data-mfe-name=servicetitan-dispatch-center]', 'board');
       else if (!board.root()) flag(B, 'can\'t look inside the new Dispatch board', 'shadowRoot', 'board');
-      else if (!loaded) flag(B, 'can\'t find the techs on the Dispatch board', '[data-cy^=ddb-technician-header-]', 'board');
+      else if (!loaded) flag(B, 'can\'t find the techs on the Dispatch board', '[data-cy^=ddb-technician-header-] (Day) / [data-cy^=wdb-technician-header-] (Week)', 'board');
       else {
         if (!board.q('[data-auto-sel="dc-header-date-picker"]')) flag(B, 'can\'t read which day the board shows', '[data-auto-sel=dc-header-date-picker]', 'board');
         else if (!board.day()) flag(B, 'can\'t read the day on the board\'s date button', '[data-auto-sel=dc-header-date-picker]', 'board');
-        const h = board.qa('[data-cy^="ddb-technician-header-"]')[0];
-        if (h && !h.getAttribute('data-technician-id')) flag(B, 'tech names are missing their tech number', '[data-cy^=ddb-technician-header-][data-technician-id]', 'board');
+        const h = board.techHeaders()[0];
+        if (h && !h.getAttribute('data-technician-id')) flag(B, 'tech names are missing their tech number', '[data-cy^=ddb-/wdb-technician-header-][data-technician-id]', 'board');
         const bubbles = board.qa('[data-cy="wdb-job-appt-card"]');
         if (bubbles.length && !bubbles.some(x => /^\d+$/.test(x.getAttribute('data-job-appointment-id') || ''))) flag(B, 'job bubbles are missing their appointment number', '[data-cy=wdb-job-appt-card][data-job-appointment-id]', 'board');
         try { await board.ready(true); }
@@ -2873,11 +2888,11 @@
     // The new board: right-click the tech's name (scrolling to it first), then Send Message.
     const openChatForNew = async t => {
       let item = await board.techMenuItem(t.id, 'tmi-send-message');
-      if (item === 'missing') return board.techs() && board.techs().some(x => x.id === String(t.id)) ? changed('can\'t find the tech\'s name on the board', '[data-cy=ddb-technician-header-<id>]') : 'not on the board';
+      if (item === 'missing') return board.techs() && board.techs().some(x => x.id === String(t.id)) ? changed('can\'t find the tech\'s name on the board', '[data-cy=ddb-/wdb-technician-header-<id>]') : 'not on the board';
       if (!item) { await board.closeMenu(); await wait(500); item = await board.techMenuItem(t.id, 'tmi-send-message'); }   // one retry for a slow board
       if (!item || item === 'missing') {
-        if (board.q('[data-cy="ddb-technician-menu"]')) { await board.closeMenu(); return changed('the tech menu has no "Send Message" option', '[data-cy=tmi-send-message]'); }
-        return changed('the tech menu didn\'t open when right-clicking a tech\'s name', '[data-cy=ddb-technician-menu]');
+        if (board.openMenu()) { await board.closeMenu(); return changed('the tech menu has no "Send Message" option', '[data-cy=tmi-send-message]'); }
+        return changed('the tech menu didn\'t open when right-clicking a tech\'s name', '[data-cy=ddb-technician-menu / wdb-technician-menu]');
       }
       // Only ever the item marked Send Message, and only if it says so.
       if (!/^send message$/i.test(norm(item.textContent))) { await board.closeMenu(); return changed('the tech menu\'s Send Message item says something else', '[data-cy=tmi-send-message]'); }
@@ -3032,7 +3047,7 @@
     const techStyle = board.sheet();
     const paintTechs = () => {
       const ids = msgsPane.style.display !== 'none' ? Array.from(selected).filter(id => /^\d+$/.test(id)) : [];
-      techStyle.set(ids.length ? ids.map(id => '.technician[data-technician-id="' + id + '"],[data-cy="ddb-technician-header-' + id + '"]').join(',') +
+      techStyle.set(ids.length ? ids.map(id => '.technician[data-technician-id="' + id + '"],[data-cy="ddb-technician-header-' + id + '"],[data-cy="wdb-technician-header-' + id + '"]').join(',') +
         '{outline:3px solid #6a1b9a !important;outline-offset:-3px !important;background:rgba(106,27,154,.14) !important}' : '');
     };
     // A tech's name clicked (either board). Tech IDs are numbers; anything else is ignored.

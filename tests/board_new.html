@@ -25,6 +25,9 @@
   //   today). #/DispatchBoard goes there. The code is decoded by /dispatch-center/decoding.
   // Plus the pages the tools visit: a job's page (notifications switch), its Edit page (Business
   // Unit), a customer's page (Add Note) and a conversation (Chat Center).
+  // ?week: the Week view (tech names wdb-technician-header-<id>, the menu wdb-technician-menu, and the
+  // list [data-cy="dc-wdb-virtual-list"] inside a box that scrolls, with no name). Like the real one,
+  // a closed tech menu stays on the page, hidden.
   // Test switches: BOARD_STUCK (the board doesn't redraw after a change until Refresh), DRIFT
   // ('noTechId', 'noApptId', 'noDate'), DECODE_DOWN, DISPATCH_DRIFT.
   (function () {
@@ -248,6 +251,7 @@
 
   // ---------- The new Dispatch board ----------
   const ROW = 44;
+  const WEEK = location.search.indexOf('week') > -1, PFX = WEEK ? 'wdb' : 'ddb';
   let host = null, sr = null, shown = {}, scrollTopKeep = 0, menu = null, ac = null, trayTab = 'unassigned';
   const params = () => new URLSearchParams(location.hash.split('?')[1] || '');
   const boardDay = () => { const d = params().get('date'); if (!d) return new Date(today); const [y, mo, da] = d.split('-').map(Number); return new Date(y, mo - 1, da); };
@@ -269,7 +273,7 @@
     });
     return out;
   };
-  const closeMenu = () => { if (menu) { menu.remove(); menu = null; } };
+  const closeMenu = () => { if (menu) menu.style.display = 'none'; };
   const openChat = name => {
     if (!ac || !ac.isConnected) {
       ac = document.createElement('servicetitan-activity-center-x');
@@ -312,7 +316,7 @@
   };
   // Draws the rows on screen (and two more either side), like the real board.
   const drawRows = () => {
-    const vp = sr && sr.querySelector('[data-testid="timeline-scroll-viewport"]');
+    const vp = sr && sr.querySelector('.fake-scroll');
     if (!vp) return;
     const inner = vp.firstElementChild, list = rows();
     inner.style.height = list.length * ROW + 'px';
@@ -329,7 +333,7 @@
       } else {
         const t = it.tech;
         const h = document.createElement('div');
-        h.setAttribute('data-cy', 'ddb-technician-header-' + t.id);
+        h.setAttribute('data-cy', PFX + '-technician-header-' + t.id);
         if (window.DRIFT !== 'noTechId') h.setAttribute('data-technician-id', String(t.id));
         h.style.cssText = 'width:150px;padding:2px 6px;cursor:pointer';
         h.innerHTML = '<p style="margin:0"></p><p data-cy="ddb-technician-status" style="margin:0;font-size:10px">Idle</p>';
@@ -338,16 +342,19 @@
         // The tech menu opens on a right-click on the name.
         h.firstChild.addEventListener('contextmenu', e => {
           e.preventDefault();
-          closeMenu();
-          menu = document.createElement('div');
-          menu.setAttribute('data-cy', 'ddb-technician-menu');
-          menu.setAttribute('role', 'menu');
+          if (!menu || !menu.isConnected) {
+            menu = document.createElement('div');
+            menu.setAttribute('data-cy', PFX + '-technician-menu');
+            menu.innerHTML = '<button data-cy="tmi-call-technician" style="display:block;padding:4px 8px">Call Technician</button><button data-cy="tmi-send-message" style="display:block;padding:4px 8px">Send Message</button><button data-cy="tmi-view-profile" style="display:block;padding:4px 8px">View Profile</button>';
+            menu.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeMenu(); });
+            menu.querySelector('[data-cy=tmi-send-message]').addEventListener('click', () => { closeMenu(); openChat(menu.__tech.name); });
+            menu.querySelector('[data-cy=tmi-view-profile]').addEventListener('click', () => { closeMenu(); window.opened.push('profile' + menu.__tech.id); });
+            menu.querySelector('[data-cy=tmi-call-technician]').addEventListener('click', () => { closeMenu(); window.opened.push('call' + menu.__tech.id); });
+            sr.appendChild(menu);
+          }
+          menu.__tech = t;
           menu.style.cssText = 'position:fixed;left:' + (e.clientX + 4) + 'px;top:' + (e.clientY + 4) + 'px;background:#fff;border:1px solid #999;z-index:30';
-          menu.innerHTML = '<div role="menuitem" tabindex="0" data-cy="tmi-send-message" style="padding:4px 8px">Send Message</div><div role="menuitem" tabindex="0" data-cy="tmi-view-profile" style="padding:4px 8px">View Profile</div>';
-          menu.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeMenu(); });
-          menu.querySelector('[data-cy=tmi-send-message]').addEventListener('click', () => { closeMenu(); openChat(t.name); });
-          menu.querySelector('[data-cy=tmi-view-profile]').addEventListener('click', () => { closeMenu(); window.opened.push('profile' + t.id); });
-          sr.appendChild(menu);
+          window.menuOpens = (window.menuOpens || 0) + 1;
         });
         row.appendChild(h);
         const lane = document.createElement('div');
@@ -407,14 +414,15 @@
       '<button data-auto-sel="dc-header-today-btn">Today</button><button data-auto-sel="dc-header-prevDay-btn">‹</button>' +
       '<button data-auto-sel="dc-header-date-picker"></button><button data-auto-sel="dc-header-nextDay-btn">›</button>' +
       '<button data-auto-sel="dis-wdb-refresh-btn" aria-label="Refresh">⟳</button></div>' +
-      '<div data-testid="timeline-scroll-viewport" style="height:300px;overflow:auto;position:relative"><div style="position:relative"></div></div>' +
+      (WEEK ? '<div class="fake-scroll" style="height:300px;overflow:auto;position:relative"><div data-cy="dc-wdb-virtual-list" style="position:relative"></div></div>'
+        : '<div class="fake-scroll" data-testid="timeline-scroll-viewport" style="height:300px;overflow:auto;position:relative"><div style="position:relative"></div></div>') +
       '<div id="tray" style="border-top:2px solid #999;padding:4px;max-height:200px;overflow:auto"></div>';
     if (window.DRIFT !== 'noDate') sr.querySelector('[data-auto-sel="dc-header-date-picker"]').textContent = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
     sr.querySelector('[data-auto-sel="dc-header-prevDay-btn"]').addEventListener('click', () => { const x = boardDay(); x.setDate(x.getDate() - 1); setDay(x); });
     sr.querySelector('[data-auto-sel="dc-header-nextDay-btn"]').addEventListener('click', () => { const x = boardDay(); x.setDate(x.getDate() + 1); setDay(x); });
     sr.querySelector('[data-auto-sel="dc-header-today-btn"]').addEventListener('click', () => setDay(new Date(today)));
     sr.querySelector('[data-auto-sel="dis-wdb-refresh-btn"]').addEventListener('click', () => { window.refreshClicks++; setTimeout(() => { snapshot(); drawBoard(); }, 100); });
-    const vp = sr.querySelector('[data-testid="timeline-scroll-viewport"]');
+    const vp = sr.querySelector('.fake-scroll');
     vp.addEventListener('scroll', () => { scrollTopKeep = vp.scrollTop; drawRows(); });
     snapshot();
     drawBoard();
