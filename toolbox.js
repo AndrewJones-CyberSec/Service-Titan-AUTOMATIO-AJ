@@ -5921,7 +5921,8 @@
   // Tool 7: Closest Techs
   // Type a zip code or a job number, or click a job on the board, and it lists the techs closest to
   // it by drive time, closest first (3, and up to 10 with Show more). Only techs on the board for
-  // your board's branches; a department can be picked. It only reads: Assign hands the job and the
+  // your board's branches, in the departments with jobs that day (so office teams on the board don't
+  // crowd the list), or every department, or one picked. It only reads: Assign hands the job and the
   // tech to 🔀 Move Jobs, where nothing changes until you review it and press Move.
   //   Where each tech is measured from:
   //     - Where they are now (the board shows today): the job they're working, else the one they're
@@ -6034,9 +6035,11 @@
       return out;
     };
     // A town from a profile address ("street, City, MS 39402 USA" → City), and its zip code.
-    const townOf = addr => { const p = String(addr || '').split(',').map(norm).filter(Boolean); return p.length >= 3 ? p[p.length - 2] : ''; };
+    // Town names typed in capitals ("MENDENHALL") shown as Mendenhall.
+    const tidy = t => { t = norm(t); return /[a-z]/.test(t) ? t : t.toLowerCase().replace(/(^|[\s'-])([a-z])/g, (m, a, b) => a + b.toUpperCase()); };
+    const townOf = addr => { const p = String(addr || '').split(',').map(norm).filter(Boolean); return p.length >= 3 ? tidy(p[p.length - 2]) : ''; };
     const zipOf = addr => { const m = String(addr || '').match(/\b\d{5}(?:-\d{4})?\b/g); return m ? m[m.length - 1].slice(0, 5) : ''; };
-    const inTown = (city, zip) => city ? ' in ' + city : zip ? ' in ' + zip : '';
+    const inTown = (city, zip) => city ? ' in ' + tidy(city) : zip ? ' in ' + zip : '';
 
     // ---------- Pane ----------
     const wrap = el('div', 'padding:8px 10px 10px;display:grid;gap:8px');
@@ -6071,10 +6074,11 @@
     const teamSel = el('select', 'flex:1;min-width:0;padding:4px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
     teamSel.id = 'st-near-team';
     teamRow.append(el('span', 'font-weight:600', 'Department:'), teamSel);
+    // '': the departments with jobs that day (the usual), '*': every department, or one team.
     const fillTeams = names => {
       const keep = teamSel.value || get('stNearTeam') || '';
       teamSel.textContent = '';
-      const any = el('option', '', 'Any department'); any.value = ''; teamSel.appendChild(any);
+      [['', 'Departments with jobs that day'], ['*', 'Every department']].forEach(([v, t]) => { const o = el('option', '', t); o.value = v; teamSel.appendChild(o); });
       names.forEach(n => { const o = el('option', '', n); o.value = n; teamSel.appendChild(o); });
       teamSel.value = Array.from(teamSel.options).some(o => o.value === keep) ? keep : '';
     };
@@ -6223,9 +6227,13 @@
           }
           if (!place.zip) return say('⚠️ Job #' + target.jobId + ' has no zip code in ServiceTitan, so there\'s nothing to measure to.');
         }
-        // Who: everyone on the board (your board's branches), in the department picked.
+        // Who: everyone on the board (your board's branches), in the department picked. The usual
+        // choice is the departments with jobs that day, so office teams on the board are left out.
         const team = teamSel.value;
-        const pool = techs.filter(t => (!team || t.team === team) && (!homes.get(S(t.id)) || homes.get(S(t.id)).active));
+        const live = a => !/^cancell?ed$/i.test(a.status) && (!a.start || sameDay(toDate(a.start), day));
+        const working = new Set(techs.filter(t => t.appts.some(live)).map(t => t.team));
+        const inTeam = t => team === '*' ? true : team ? t.team === team : working.has(t.team);
+        const pool = techs.filter(t => inTeam(t) && (!homes.get(S(t.id)) || homes.get(S(t.id)).active));
         const mode = from;
         const places = pool.map(t => ({ t, at: placeOf(t, mode, today, day) }));
         const zips = [place.zip].concat(places.filter(x => x.at && x.at.zip).map(x => x.at.zip));
@@ -6249,7 +6257,7 @@
           x.drive = drives[i];
           x.min = x.drive ? x.drive.min : guessMin(x.line);
           x.onIt = place.techIds.indexOf(S(x.t.id)) > -1;
-          x.jobsToday = new Set(x.t.appts.filter(a => !/^cancell?ed$/i.test(a.status) && (!a.start || sameDay(toDate(a.start), day))).map(a => a.jobId)).size;
+          x.jobsToday = new Set(x.t.appts.filter(live).map(a => a.jobId)).size;
         });
         top.sort((a, b) => a.min - b.min || a.line - b.line);
         render({ target, place, top, unplaced, noDrive: top.filter(x => !x.drive).length, noKey: !key, error, day, today, mode, team, total: pool.length });
@@ -6270,14 +6278,14 @@
     const render = r => {
       results.textContent = '';
       const what = r.target.jobId
-        ? 'job #' + r.target.jobId + (r.place.customer ? ' ' + r.place.customer : '') + ' (' + (r.place.city ? r.place.city + ' ' : '') + r.place.zip + ')'
+        ? 'job #' + r.target.jobId + (r.place.customer ? ' ' + r.place.customer : '') + ' (' + (r.place.city ? tidy(r.place.city) + ' ' : '') + r.place.zip + ')'
         : r.place.zip;
       const head = el('div', 'font-size:12px;font-weight:700;color:#111');
-      head.textContent = 'Closest to ' + what + (r.team ? ' · ' + r.team : '');
+      head.textContent = 'Closest to ' + what + (r.team === '*' ? ' · every department' : r.team ? ' · ' + r.team : '');
       results.appendChild(head);
       if (r.mode === 'now' && !r.today) results.appendChild(el('div', 'font-size:12px;color:#8a5300;background:#fffaf0;border-radius:6px;padding:4px 7px', 'The board shows ' + dayText(r.day) + ', so everyone is measured from home ("where they are now" is for today).'));
       if (!r.top.length) {
-        results.appendChild(el('div', 'font-size:12px;color:#555', r.total ? 'No one in this department could be placed (see below).' : 'No techs on the board' + (r.team ? ' in ' + r.team : '') + ' for ' + dayText(r.day) + '.'));
+        results.appendChild(el('div', 'font-size:12px;color:#555', r.total ? 'No one in this department could be placed (see below).' : 'No techs on the board' + (r.team && r.team !== '*' ? ' in ' + r.team : !r.team ? ' in a department with jobs' : '') + ' for ' + dayText(r.day) + '.'));
       }
       const shownList = showAll ? r.top : r.top.slice(0, SHOW);
       shownList.forEach((x, i) => results.appendChild(card(x, i + 1, r)));
@@ -6309,7 +6317,7 @@
       if (x.onIt) c.appendChild(el('div', 'margin-top:3px;color:#1a4f8a;font-weight:600', 'Already on this job.'));
       const btns = el('div', 'display:flex;gap:5px;flex-wrap:wrap;margin-top:6px');
       const dir = smallBtn('🗺️ Directions', () => {
-        const u2 = 'https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=' + r2(x.pt.lat) + ',' + r2(x.pt.lon) + '&destination=' + encodeURIComponent(r.place.zip + (r.place.city ? ' ' + r.place.city : ''));
+        const u2 = 'https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=' + r2(x.pt.lat) + ',' + r2(x.pt.lon) + '&destination=' + encodeURIComponent(r.place.zip + (r.place.city ? ' ' + tidy(r.place.city) : ''));
         try { window.open(u2, '_blank', 'noopener'); } catch (e) {}
       }, 'padding:3px 7px');
       dir.title = 'Opens Google Maps in a new tab (from about where they are to the zip code)';
@@ -6332,7 +6340,7 @@
     const refresh = async () => {
       fit(); paint();
       // The departments showing on the board, until a look fills in the full list.
-      if (onBoard() && teamSel.options.length < 2) fillTeams(Array.from(new Set(Array.from(document.querySelectorAll('.team-name')).map(t => norm(t.textContent)).filter(Boolean))));
+      if (onBoard() && teamSel.options.length < 3) fillTeams(Array.from(new Set(Array.from(document.querySelectorAll('.team-name')).map(t => norm(t.textContent)).filter(Boolean))));
       if (!onBoard()) say('Open the Dispatch board to find the closest techs.');
       else if (!last) say('Type a zip code or job number, or pick a job on the board. It reads only; nothing changes.');
       if (!homes) { try { await loadHomes(); } catch (e) { if (st.isSignedOut(e)) say('⚠️ ' + e.message); } }

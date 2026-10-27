@@ -62,7 +62,7 @@ with sync_playwright() as p:
     B(page, 'Closest Techs').click()
     time.sleep(0.3)
     teams = ev(page, "() => Array.from(document.querySelectorAll('#st-near-team option')).map(o => o.textContent)")
-    check(teams == ['Any department', 'Level 1 Service', 'Installers', 'Dispatch'], 'departments from the board, in its order: %s' % teams)
+    check(teams == ['Departments with jobs that day', 'Every department', 'Level 1 Service', 'Installers', 'Dispatch'], 'departments from the board, in its order: %s' % teams)
     check('nothing changes' in T(page), 'says it only reads')
 
     # ---- No drive-time key yet: straight-line guesses, and nothing sent to Mapbox ----
@@ -101,14 +101,14 @@ with sync_playwright() as p:
     check('Ana R' not in n, 'Ana (closest in a straight line, across the river) is not in the top 3')
     t = T(page)
     check('Closest to 39114' in t, 'says what it measured to')
-    check('from home (Braxton)' in t and 'by road' in t, 'shows the town and road miles')
+    check('from home (Braxton)' in t and 'by road' in t, 'shows the town (BRAXTON tidied) and road miles')
     check(not re.search(r'Oak St|Pine Rd|Elm Dr|Cedar Ln|Ash St|Birch Ct|Main St|Secret Rd', t), 'no street address shown')
     check('Can\'t place 1 tech' in t and 'Eli G' in t, 'a tech with no home address is listed as can\'t place')
     check('Ivy N' not in t, 'inactive tech left out')
     check('Mapbox' in t and 'zip code' in t, 'says where drive times and places come from')
     B(page, 'Show more').click()
     n = names(page)
-    check(n == ['Ben T', 'Fay H', 'Gus K', 'Cal M', 'Dee F', 'Ana R', 'Hal L'], 'Show more: everyone placed, closest first: %s' % n)
+    check(n == ['Ben T', 'Fay H', 'Gus K', 'Cal M', 'Dee F', 'Ana R'], 'Show more: everyone placed, closest first, the Dispatch team (no jobs today) left out: %s' % n)
     check('from home (Florence)' in T(page), 'a home with no map point uses its zip code (town from the address, not the unit)')
     check(B(page, 'Show fewer').count() == 1, 'Show fewer offered')
     B(page, 'Show fewer').click()
@@ -134,6 +134,10 @@ with sync_playwright() as p:
     ev(page, "() => { window.zctaCalls = []; }")
     find_zip(page, '39114')
     check(ev(page, "() => window.zctaCalls.length") == 0, 'saved zip codes are not looked up again')
+    team(page, '*')
+    B(page, 'Show more').click()
+    check('Hal L' in names(page) and 'every department' in T(page), 'Every department includes the Dispatch team: %s' % names(page))
+    team(page, '')
 
     # ---- Where they are now ----
     measure(page, 'now')

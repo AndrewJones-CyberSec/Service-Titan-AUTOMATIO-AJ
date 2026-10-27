@@ -95,7 +95,7 @@ It sends the same requests the job panel's ⋮ → Assign/Unassign sends. Up to 
 Find the techs closest to a place by drive time. Type a **zip code** or a **job number** (pick which in the box next to it, since both can be 5 digits), or press **🖱️ Pick a job on the board** and click a job on the timeline or in the Unassigned / Hold list. The 3 closest techs show first, closest first; **Show more** lists up to 10.
 
 - **Measure from:** **Where they are now** (the board shows today): the job each tech is working, else the one they're on the way to (Dispatched), else the last job they finished today, else their home. ServiceTitan's truck GPS isn't used. **Their home**: the address on their tech profile in ServiceTitan.
-- **Department:** any department, or one team on the board (remembered). Only techs on the board for your board's branches are listed.
+- **Department:** **Departments with jobs that day** (the usual: teams on the board with no jobs, like office teams, are left out), **Every department**, or one team on the board (remembered). Only techs on the board for your board's branches are listed.
 - Each tech shows the drive time, road miles and where it's measured from (*working a job in Magee*, *from home (Braxton)*), their department and how many jobs they have that day. Only towns are shown, never street addresses.
 - **🗺️ Directions** opens Google Maps in a new tab. For a job, **➡️ Assign…** opens 🔀 Move Jobs with that job and tech filled in (Move to a tech); nothing changes until you review it and press Move.
 - Techs it can't place (no home address on their profile, and no job with a zip code today) are listed by name at the bottom, so their profile can be filled in.
