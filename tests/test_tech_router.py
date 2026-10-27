@@ -192,6 +192,7 @@ with sync_playwright() as p:
     check('another department usually does' in t and 'no zip code' in t, 'says what was left out and why')
     check('no recent jobs like it' in t, 'a job type with nothing to go by is kept, marked ⚠️')
     check('Level 1 Service did' in t, 'says the department does jobs like it')
+    check('same zip code · Maintenance' in t, 'a job in the same zip code says so (not "0.0 mi")')
     past = ev(page, "() => window.dataCalls.filter(b => new Date(b.date) < new Date(new Date().toDateString())).length")
     check(past == 14, 'two weeks of past boards read once each to learn departments (%d)' % past)
     page.locator('#st-toolbox .st-near-seg', has_text='Closest techs').click()

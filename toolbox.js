@@ -6594,7 +6594,7 @@
         const nm = el('span', 'font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis', '#' + x.job.jobId + (x.job.customer ? ' ' + x.job.customer : ''));
         nm.className = 'st-next-job';
         top.append(el('span', 'color:#00796b;font-weight:700', (i + 1) + '.'), nm, el('span', 'margin-left:auto;font-weight:700;white-space:nowrap', (x.guess ? '~' : '') + timeText(x.min)));
-        const detail = [[x.job.city ? tidy(x.job.city) : x.job.zip, timeSpan(x.job.start, x.job.end)].filter(Boolean).join(' '), (x.guess ? '~' : '') + miText(x.mi) + ' from this job', x.job.type, x.dept].filter(Boolean).join(' · ');
+        const detail = [[x.job.city ? tidy(x.job.city) : x.job.zip, timeSpan(x.job.start, x.job.end)].filter(Boolean).join(' '), x.job.zip === r.place.zip ? 'same zip code' : (x.guess ? '~' : '') + miText(x.mi) + ' from this job', x.job.type, x.dept].filter(Boolean).join(' · ');
         const d2 = el('div', 'color:' + (x.noHistory ? '#8a5300' : '#666') + ';font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis', detail);
         d2.title = detail;
         left.append(top, d2);
