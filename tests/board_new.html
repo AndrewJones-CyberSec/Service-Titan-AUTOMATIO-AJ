@@ -262,9 +262,13 @@
   const setDay = d => { const p = params(); p.set('date', ymd(d)); location.hash = '#/widget-app/dispatch-center?' + p.toString(); };
   const filterOf = () => CODES[boardCode()] || CODES.ALL;
   const onBoardDay = k => same(APPTS[k].s, boardDay()) && (!filterOf().businessUnitIds.length || filterOf().businessUnitIds.indexOf(APPTS[k].bu) > -1);
+  // The Week view lists Dispatch first (the data has it last), and a tech's row is taller the more
+  // jobs they have that week.
+  const boardTeams = () => WEEK ? TEAMS.filter(t => t[1] === 'Dispatch').concat(TEAMS.filter(t => t[1] !== 'Dispatch')) : TEAMS;
+  const heightOf = it => it.group ? 40 : WEEK ? ROW + 30 * Object.keys(APPTS).filter(k => APPTS[k].techs.indexOf(it.tech.id) > -1).length : ROW;
   const rows = () => {
     const f = filterOf(), out = [];
-    TEAMS.forEach(t => {
+    boardTeams().forEach(t => {
       if (f.teamIds.length && f.teamIds.indexOf(t[0]) < 0) return;
       const techs = TECHS.filter(x => x.active && x.team === t[1]);
       if (!techs.length) return;
@@ -319,12 +323,25 @@
     const vp = sr && sr.querySelector('.fake-scroll');
     if (!vp) return;
     const inner = vp.firstElementChild, list = rows();
-    inner.style.height = list.length * ROW + 'px';
-    const first = Math.max(0, Math.floor(vp.scrollTop / ROW) - 2), last = Math.min(list.length - 1, Math.ceil((vp.scrollTop + vp.clientHeight) / ROW) + 2);
+    const tops = [];
+    let y0 = 0;
+    list.forEach(it => { tops.push(y0); y0 += heightOf(it); });
+    inner.style.height = y0 + 'px';
+    // Like the real Week view: the page keeps every row's place (a virtualizer's measurementsCache).
+    if (WEEK) {
+      const virt = { measurementsCache: [{ index: 0, key: 'DateHeader', start: 0, size: 0, end: 0, lane: 0 }].concat(list.map((it, i) => ({ index: i + 1, key: it.group ? 'Team-' + it.group : 'Technician-' + it.tech.id, start: tops[i], size: heightOf(it), end: tops[i] + heightOf(it), lane: 0 }))), scrollToIndex: () => { throw new Error('the Toolbox must not call the board'); } };
+      inner['__reactFiber$x1y2z3'] = { memoizedProps: {}, memoizedState: null, return: { memoizedProps: {}, memoizedState: null, return: { memoizedProps: {}, memoizedState: { memoizedState: 1, next: { memoizedState: [1, 2], next: { memoizedState: virt, next: null } } }, return: null } } };
+    }
+    let first = 0;
+    while (first < list.length - 1 && tops[first + 1] <= vp.scrollTop) first++;
+    first = Math.max(0, first - 2);
+    let last = first;
+    while (last < list.length - 1 && tops[last] < vp.scrollTop + vp.clientHeight) last++;
+    last = Math.min(list.length - 1, last + 2);
     inner.textContent = '';
     for (let i = first; i <= last; i++) {
       const it = list[i], row = document.createElement('div');
-      row.style.cssText = 'position:absolute;left:0;right:0;height:' + (ROW - 2) + 'px;top:' + i * ROW + 'px;display:flex;border-bottom:1px solid #ddd';
+      row.style.cssText = 'position:absolute;left:0;right:0;height:' + (heightOf(it) - 2) + 'px;top:' + tops[i] + 'px;display:flex;border-bottom:1px solid #ddd';
       if (it.group) {
         const g = document.createElement('div');
         g.setAttribute('data-cy', 'ddb-team-group-' + it.group + '-header');

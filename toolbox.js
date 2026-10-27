@@ -650,12 +650,44 @@
     const HEADERS = '[data-cy^="ddb-technician-header-"],[data-cy^="wdb-technician-header-"]';
     const techHeader = id => /^\d+$/.test(String(id)) ? q('[data-cy="ddb-technician-header-' + id + '"],[data-cy="wdb-technician-header-' + id + '"]') : null;
     const techHeaders = () => qa(HEADERS);
-    // The new board's techs ([{ id, name, team }], in its order), or null on the old board.
-    const techs = () => kind() === 'new' ? (fresh() ? data.techs.slice() : []) : null;
+    // The board's list of rows, as the page keeps it (read only): the Week view keeps every row's
+    // place in its list ("Technician-<id>", where it starts and how tall it is, Oct 2026), even the
+    // rows it hasn't drawn. [{ id, start, size }] in the board's order, or null if it can't be found.
+    const virtualizer = () => {
+      const starts = [q('[data-cy="dc-wdb-virtual-list"]'), scroller()].filter(Boolean);
+      for (const n of starts) {
+        const k = Object.keys(n).find(x => x.indexOf('__reactFiber') === 0);
+        for (let f = k && n[k], i = 0; f && i < 12; i++, f = f.return) {
+          for (let h = f.memoizedState, j = 0; h && typeof h === 'object' && j < 40; h = h.next, j++) {
+            const v = h.memoizedState;
+            if (v && typeof v === 'object' && Array.isArray(v.measurementsCache) && v.measurementsCache.some(m => m && /^Technician-\d+$/.test(String(m.key)))) return v;
+          }
+        }
+      }
+      return null;
+    };
+    const boardRows = () => {
+      try {
+        const v = virtualizer();
+        if (!v) return null;
+        return v.measurementsCache.filter(m => m && /^Technician-\d+$/.test(String(m.key)) && isFinite(m.start))
+          .map(m => ({ id: String(m.key).slice(11), start: Number(m.start), size: Number(m.size) || 0 }));
+      } catch (e) { return null; }
+    };
+    // The new board's techs ([{ id, name, team }]), in the board's order where it can be told (the
+    // data comes in another order), or null on the old board.
+    const ordered = () => {
+      const rows = boardRows();
+      if (!rows || !rows.length) return data.techs.slice();
+      const pos = new Map(rows.map((r, i) => [r.id, i]));
+      const at = t => pos.has(t.id) ? pos.get(t.id) : 1e6;
+      return data.techs.slice().sort((a, b) => at(a) - at(b));
+    };
+    const techs = () => kind() === 'new' ? (fresh() ? ordered() : []) : null;
     const teamOf = id => { const t = kind() === 'new' && data.techs.find(x => x.id === String(id)); return t && t.team ? t.team : null; };
     // The teams in the board's order.
     const teamOrder = () => kind() === 'new'
-      ? Array.from(new Set(data.techs.map(t => t.team).filter(Boolean)))
+      ? Array.from(new Set(ordered().map(t => t.team).filter(Boolean)))
       : Array.from(document.querySelectorAll('.team-name')).map(t => norm(t.textContent));
 
     // ---- What was clicked ----
@@ -792,11 +824,20 @@
       if (h) return h;
       const vp = scroller();
       if (!vp) return null;
-      const at = async y => { vp.scrollTop = Math.max(0, Math.round(y)); await wait(120); return techHeader(id); };
-      const i = data.techs.findIndex(t => t.id === String(id));
-      if (i >= 0 && data.techs.length) { h = await at(i / data.techs.length * vp.scrollHeight - vp.clientHeight / 2); if (h) return h; }
+      const at = async (y, ms) => { vp.scrollTop = Math.max(0, Math.round(y)); return until(() => techHeader(id), ms || 150, 50); };
+      // Straight to their row when the board says where it is.
+      const row = (boardRows() || []).find(r => r.id === String(id));
+      if (row) {
+        const list = q('[data-cy="dc-wdb-virtual-list"]');
+        const offset = list ? list.getBoundingClientRect().top - vp.getBoundingClientRect().top + vp.scrollTop : 0;
+        h = await at(offset + row.start - 60, 1500);
+        if (h) return h;
+      }
+      // Otherwise where they probably are (their place among the board's techs), then look from the top.
+      const all = ordered(), i = all.findIndex(t => t.id === String(id));
+      if (i >= 0 && all.length) { h = await at(i / all.length * vp.scrollHeight - vp.clientHeight / 2); if (h) return h; }
       const step = Math.max(150, vp.clientHeight - 60);
-      for (let y = 0; y <= vp.scrollHeight; y += step) { h = await at(y); if (h) return h; }
+      for (let y = 0; y <= vp.scrollHeight; y += step) { h = await at(y, 300); if (h) return h; }
       return null;
     };
     // Opens a tech's right-click menu and returns the item with that data-cy (tmi-send-message…),
