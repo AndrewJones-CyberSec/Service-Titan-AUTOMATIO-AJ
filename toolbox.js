@@ -5987,7 +5987,10 @@
   //       - Free then, if anyone is: a job on top of another of the tech's jobs at that time (this
   //         plan's jobs count too) costs STACK minutes, so it only happens when no one in the right
   //         department is free (or it saves that much driving), and it's marked ⚠️. (Arrival windows
-  //         aren't hard limits at AirSouth.) Move Jobs then asks you to tick it.
+  //         aren't hard limits at AirSouth.) Move Jobs then asks you to tick it. Never on top of a
+  //         job LONG_JOB hours or longer (an all-day install).
+  //       - Not too far: a job whose closest fit is more than MAX_DRIVE minutes away is left out,
+  //         with how far it is.
   //       - Routed: measured from where that tech will be just before it (their previous job that
   //         day, or home), by drive time.
   //       - Spread the work: each job a tech already has that day counts as PER_JOB minutes of driving,
@@ -6017,7 +6020,8 @@
     const ZIP_KEY = 'stZipPoints';
     const HIST_KEY = 'stRouterHistory';
     const SHOW = 3, MAX = 10;
-    const HISTORY_DAYS = 14, PER_JOB = 15, STACK = 60, CANDIDATES = 8;
+    const HISTORY_DAYS = 14, PER_JOB = 15, STACK = 60, CANDIDATES = 8, LONG_JOB = 4, MAX_DRIVE = 90;
+    const hours = b => { const s0 = toDate(b.start), e0 = toDate(b.end); return s0 && e0 ? (e0 - s0) / 3600000 : 0; };
     const u = v => { try { return window.ko && typeof window.ko.unwrap === 'function' ? window.ko.unwrap(v) : (typeof v === 'function' ? v() : v); } catch (e) { return v; } };
     const S = x => String(x);
 
@@ -6295,7 +6299,7 @@
       if (last && tab === 'near') find(last);
     };
     keyLabel();
-    optsBox.append(fromBox, teamRow, fieldRow, el('div', 'color:#555', '📋 Plan Unassigned: each job a tech already has that day counts as ' + PER_JOB + ' minutes of driving, so lighter days get the work. A job on top of another of theirs at the same time counts as ' + STACK + ' more, so that only happens when no one in the department is free.'), keyBtn, keyBox);
+    optsBox.append(fromBox, teamRow, fieldRow, el('div', 'color:#555', '📋 Plan Unassigned: each job a tech already has that day counts as ' + PER_JOB + ' minutes of driving, so lighter days get the work. A job on top of another of theirs at the same time counts as ' + STACK + ' more, so that only happens when no one in the department is free (never on an all-day job). Nothing more than ' + timeText(MAX_DRIVE) + ' away.'), keyBtn, keyBox);
     const optsLabel = () => {
       const open = optsBox.style.display !== 'none';
       const parts = tab === 'near' ? [from === 'home' ? 'from home' : 'where they are now', fieldBox.checked ? 'field techs' : 'everyone', teamSel.value || 'any department']
@@ -6748,9 +6752,12 @@
           const fit_ = teamsFor(job.type, counts);
           const okTeam = p => !fit_ || fit_.teams.indexOf(p.t.team) > -1;
           const team = pool.filter(okTeam);
-          const cands = team.map(p => { const b = before(p, job); return b ? { p, at: b, line: miles(b.pt, to), clash: p.blocks.find(x => overlap(x, job)) || null } : null; }).filter(Boolean);
+          // Never on top of a long job (an all-day install); on top of a shorter one only as a last resort.
+          const open = team.filter(p => !p.blocks.some(x => overlap(x, job) && hours(x) >= LONG_JOB));
+          const cands = open.map(p => { const b = before(p, job); return b ? { p, at: b, line: miles(b.pt, to), clash: p.blocks.find(x => overlap(x, job)) || null } : null; }).filter(Boolean);
           if (!cands.length) {
-            left.push({ job, why: !team.length ? 'no ' + (fieldOnly ? 'field tech' : 'one') + (fit_ ? ' in ' + fit_.teams.join(' / ') : '') + ' on the board' : 'no one in that department could be placed (no home address)' });
+            left.push({ job, why: !team.length ? 'no ' + (fieldOnly ? 'field tech' : 'one') + (fit_ ? ' in ' + fit_.teams.join(' / ') : '') + ' on the board'
+              : !open.length ? 'everyone in ' + (fit_ ? fit_.teams.join(' / ') : 'the department') + ' is on an all-day job then' : 'no one in that department could be placed (no home address)' });
             continue;
           }
           const extra = c => PER_JOB * c.p.n + (c.clash ? STACK : 0);
@@ -6761,10 +6768,13 @@
           if (stale()) return;
           top.forEach((c, k) => { c.drive = drives[k]; c.min = c.drive ? c.drive.min : guessMin(c.line); c.score = c.min + extra(c); });
           top.sort((a, b) => a.score - b.score || a.min - b.min || a.p.t.name.localeCompare(b.p.t.name));
-          const best = top[0];
+          const near_ = top.filter(c => c.min <= MAX_DRIVE);
+          if (!near_.length) { left.push({ job, why: 'the closest fit (' + top.slice().sort((a, b) => a.min - b.min)[0].p.t.name + ') is ' + timeText(top.slice().sort((a, b) => a.min - b.min)[0].min) + ' away, more than ' + timeText(MAX_DRIVE) }); continue; }
+          const best = near_[0];
           const why = fit_ ? best.p.t.team + ' did ' + (fit_.by[best.p.t.team] || 0) + ' of ' + fit_.total + (fit_.exact ? ' like it' : ' "' + fit_.kind + '" jobs') : '⚠️ no recent jobs like it to go by: any department';
           rows.push({ job, t: best.p.t, min: best.min, guess: !best.drive, from: best.at.why, dept: why, noHistory: !fit_, had: best.p.n,
-            stacked: best.clash ? '⚠️ on top of their ' + (timeSpan(best.clash.start, best.clash.end) || 'other') + ' job' + (best.clash.planned ? ' (also in this plan)' : '') + ': no one in the department is free then' : '' });
+            stacked: best.clash ? '⚠️ on top of their ' + (timeSpan(best.clash.start, best.clash.end) || 'other') + ' job' + (best.clash.planned ? ' (also in this plan)' : '') +
+              (near_.some(c => !c.clash) ? ': much closer than anyone free then' : ': no one in the department is free then') : '' });
           best.p.blocks.push({ start: job.start, end: job.end, zip: job.zip, city: job.city, planned: true });
           best.p.n++; best.p.added++;
         }
@@ -6817,7 +6827,7 @@
       if (p.failedDays) warn.push(plural(p.failedDays, 'past board') + ' couldn\'t be read, so departments come from fewer days.');
       if (p.error) warn.push('Some zip codes couldn\'t be looked up: ' + p.error + '.');
       warn.forEach(t => planOut.appendChild(small('⚠️ ' + t, 'color:#8a5300')));
-      planOut.appendChild(small('Departments from the last 2 weeks of boards. Each job a tech already has counts as ' + PER_JOB + ' min of driving; one on top of another job at the same time as ' + STACK + ' more (Move Jobs asks you to tick those). Drive times © Mapbox © OpenStreetMap.', 'color:#999'));
+      planOut.appendChild(small('Departments from the last 2 weeks of boards. Each job a tech already has counts as ' + PER_JOB + ' min of driving; one on top of another job at the same time as ' + STACK + ' more (Move Jobs asks you to tick those), never on an all-day job. At most ' + timeText(MAX_DRIVE) + ' away. Drive times © Mapbox © OpenStreetMap.', 'color:#999'));
       planOut.style.display = 'grid';
       say(p.rows.length ? 'Check the plan, take off anything you don\'t want (✕), then send it to Move Jobs.' : 'Nothing could be planned (see why below).');
       fit();

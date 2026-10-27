@@ -270,9 +270,10 @@ with sync_playwright() as p:
     plan = ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox .st-plan-row')).map(r => ({ text: r.innerText, tech: r.querySelector('.st-plan-tech').textContent, job: (r.innerText.match(/#(\\d+)/) || [])[1] }))")
     got = {x['job']: x['tech'] for x in plan}
     print(got)
-    check(len(plan) == 5 and '1 left' in t, 'five jobs planned, one left: %s' % got)
+    check(len(plan) == 5 and '2 left' in t, 'five jobs planned, two left: %s' % got)
     stacked = [x for x in plan if x['job'] == '8024']
-    check(stacked and stacked[0]['tech'] in ('Cal M', 'Dee F', 'Fay H') and 'on top of their' in stacked[0]['text'] and '(1 on top of another job ⚠️)' in t, 'no installer free: planned on top of one, marked ⚠️: %s' % (stacked and stacked[0]['text']))
+    check(stacked and stacked[0]['tech'] in ('Dee F', 'Fay H') and 'on top of their' in stacked[0]['text'] and 'no one in the department is free then' in stacked[0]['text'] and '(1 on top of another job ⚠️)' in t, 'no installer free: planned on top of a short job, marked ⚠️: %s' % (stacked and stacked[0]['text']))
+    check(got.get('8024') != 'Cal M' and got.get('8020') != 'Cal M', 'never on top of an all-day install (Cal)')
     check(got.get('8021') == 'Ben T', 'spread the work: the busier tech next door (Gus, 2 jobs) loses to a free one a little farther (Ben)')
     check(got.get('8020') in ('Cal M', 'Dee F', 'Fay H'), 'a generator install goes to an installer: %s' % got.get('8020'))
     check(got.get('8001') in ('Ana R', 'Ben T', 'Eli G', 'Gus K'), 'fall maintenance goes to Level 1 Service: %s' % got.get('8001'))
@@ -289,6 +290,7 @@ with sync_playwright() as p:
         check(clash == (tech == got.get('8024')), 'double-booked only where marked (%s): %s' % (tech, allts))
     B(page, 'not planned').click()
     check('no zip code in ServiceTitan' in T(page), 'the job with no zip is listed with why')
+    check(re.search(r'#8025 Abe Bell · Natchez · 1–3 PM: the closest fit \(\w+ \w\) is \d+ hr( \d+ min)? away, more than 1 hr 30 min', T(page)) is not None, 'a job too far from everyone is left out, with how far')
     check(re.search(r'→ Ben T · ~?\d+ min from home \(Braxton\)', T(page)) is not None, 'each planned job says the drive and where from')
     hist = ev(page, "() => JSON.parse(localStorage.getItem('stRouterHistory') || '{}')")
     check(len(hist) == 14, 'two weeks of past boards learned and saved (%d days)' % len(hist))
@@ -297,7 +299,7 @@ with sync_playwright() as p:
     past = ev(page, "() => window.dataCalls.filter(b => new Date(b.date) < new Date(new Date().toDateString())).length")
     check(past == 0, 'the past boards learned for Next job are reused (%d read)' % past)
     mx = ev(page, "() => window.mbCalls.filter(c => /directions-matrix\\/v1\\/mapbox\\/driving\\//.test(c.url)).length")
-    check(mx == 5, 'one Matrix request per planned job (%d)' % mx)
+    check(mx == 6, 'one Matrix request per job that could be placed (%d)' % mx)
     ev(page, "() => { window.dataCalls = []; }")
     B(page, 'Plan again').click()
     page.wait_for_function("() => document.querySelector('#st-toolbox .st-plan-head')", timeout=30000)
@@ -306,7 +308,7 @@ with sync_playwright() as p:
     check(past == 0, 'planning again uses the saved past boards (%d read)' % past)
     # Take one out
     page.locator('#st-toolbox .st-plan-row', has_text='8022').locator('button', has_text='✕').click()
-    check(len(ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox .st-plan-row'))")) == 4 and '2 left' in T(page), 'a job taken out with ✕')
+    check(len(ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox .st-plan-row'))")) == 4 and '3 left' in T(page), 'a job taken out with ✕')
     check('Send 4 jobs to Move Jobs' in T(page), 'the send button counts what it sends')
     # Send to Move Jobs
     B(page, 'Send 4 jobs to Move Jobs').click()

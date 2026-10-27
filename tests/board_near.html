@@ -26,7 +26,8 @@
     '39149': [31.840, -90.020],   // Pinola
     '39073': [32.150, -90.130],   // Florence
     '39201': [32.290, -90.180],   // Jackson
-    '39151': [32.200, -89.950]    // Puckett
+    '39151': [32.200, -89.950],   // Puckett
+    '39120': [31.560, -91.400]    // Natchez (far west)
   };
   // Techs. home: [lat, lon] or null; addr: the profile address (street parts must never show or be sent).
   // managed: false for office staff (ServiceTitan's managed-technician flag); field techs are managed.
@@ -60,10 +61,12 @@
     9821: { job: 8021, n: 1, cust: 'Vic Wade', s: at(9), e: at(11), techs: [], status: 'Scheduled', zip: '39044', city: 'Braxton', type: MAINT, prio: 'High' },
     9822: { job: 8022, n: 1, cust: 'Wes Xu', s: at(10), e: at(12), techs: [], status: 'Scheduled', zip: '39151', city: 'Puckett', type: 'Quote - Solar Panels', prio: 'Normal' },
     9823: { job: 8023, n: 1, cust: 'Xia Yao', s: at(13), e: at(14), techs: [], status: 'Scheduled', zip: '', city: '', type: MAINT, prio: 'Low' },
-    // Every installer is busy 9-11 (Cal has a job then, Fay is on her way to one, Dee gets the 10-12
-    // quote), so an install at 9-11 can only go on top of someone's job.
-    9830: { job: 8030, n: 1, cust: 'Yul Zane', s: at(9), e: at(11), techs: [203], status: 'Scheduled', zip: '39149', city: 'Pinola', type: INSTALL },
-    9824: { job: 8024, n: 1, cust: 'Zed Abel', s: at(9), e: at(11), techs: [], status: 'Scheduled', zip: '39149', city: 'Pinola', type: INSTALL, prio: 'Low' }
+    // Every installer is busy 9-11 (Cal is on an all-day install, Fay is on her way to a job, Dee gets
+    // the 10-12 quote), so an install at 9-11 can only go on top of a shorter job, never Cal's.
+    9830: { job: 8030, n: 1, cust: 'Yul Zane', s: at(8), e: at(17), techs: [203], status: 'Scheduled', zip: '39149', city: 'Pinola', type: INSTALL },
+    9824: { job: 8024, n: 1, cust: 'Zed Abel', s: at(9), e: at(11), techs: [], status: 'Scheduled', zip: '39149', city: 'Pinola', type: INSTALL, prio: 'Low' },
+    // Far from everyone (more than an hour and a half).
+    9825: { job: 8025, n: 1, cust: 'Abe Bell', s: at(13), e: at(15), techs: [], status: 'Scheduled', zip: '39120', city: 'Natchez', type: INSTALL, prio: 'Low' }
   };
   // The last two weeks of boards (history): Level 1 Service did fall maintenance, Installers did
   // generator installs. Hal (office staff, not a managed tech) has a pile of maintenance jobs that
