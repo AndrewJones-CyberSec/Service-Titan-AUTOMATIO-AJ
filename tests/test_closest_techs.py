@@ -66,12 +66,13 @@ with sync_playwright() as p:
     check(ev(page, "() => document.getElementById('st-near-field').checked"), 'Field techs only is on to start with')
     check('nothing changes' in T(page), 'says it only reads')
 
-    # ---- No drive-time key yet: straight-line guesses, and nothing sent to Mapbox ----
-    check('Drive-time key: not added' in T(page), 'no drive-time key to start with')
+    # ---- The built-in key: drive times with no setup ----
+    check('Drive-time key: built in' in T(page), 'the built-in key is used to start with')
     measure(page, 'home')
     find_zip(page, '39114')
-    check(names(page)[0] == 'Ana R' and 'No drive-time key added' in T(page) and '~' in T(page), 'without a key: straight-line guesses, said plainly')
-    check(ev(page, "() => window.mbCalls.length") == 0, 'nothing sent to Mapbox without a key')
+    check(names(page) == ['Ben T', 'Fay H', 'Gus K'], 'drive times with the built-in key: %s' % names(page))
+    mb = ev(page, "() => window.mbCalls")
+    check(mb and all('access_token=pk.' in c['url'] for c in mb), 'a public key (pk.) is sent to Mapbox')
 
     # ---- 🔑 Drive-time key: checked with Mapbox, saved in this browser ----
     B(page, 'Drive-time key').click()
@@ -88,10 +89,12 @@ with sync_playwright() as p:
     check("didn't accept it" in T(page) and not ev(page, "() => localStorage.getItem('stNearKey')"), 'a key Mapbox refuses is not saved')
     ev(page, "() => { window.MB_DOWN = false; }")
     B(page, 'Save').click()
-    page.wait_for_function("() => /Saved\\. Drive times are on/.test(document.getElementById('st-toolbox').innerText)", timeout=10000)
-    check(ev(page, "() => localStorage.getItem('stNearKey')") == 'pk.test-user.test-key' and 'Drive-time key: added' in T(page), 'a key Mapbox accepts is saved')
+    page.wait_for_function("() => /Saved\\. Drive times use this key/.test(document.getElementById('st-toolbox').innerText)", timeout=10000)
+    check(ev(page, "() => localStorage.getItem('stNearKey')") == 'pk.test-user.test-key' and 'Drive-time key: your own' in T(page), 'a key Mapbox accepts is saved')
     settle(page)
     check(names(page) == ['Ben T', 'Fay H', 'Gus K'], 'saving the key looks again with drive times: %s' % names(page))
+    mb = ev(page, "() => window.mbCalls")
+    check(mb and all('access_token=pk.test-user.test-key' in c['url'] for c in mb[-6:]), 'your own key is used instead of the built-in one')
     ev(page, "() => { window.mbCalls = []; }")
 
     # ---- From home, a zip code: ranked by drive time, not straight line ----
@@ -270,9 +273,14 @@ with sync_playwright() as p:
     find_zip(page, '39114')
     check(len(names(page)) == 3, 'works again once the data is readable')
 
-    # ---- Removing the key ----
-    B(page, 'Remove').click()
-    check(not ev(page, "() => localStorage.getItem('stNearKey')") and 'Drive-time key: not added' in T(page), 'key removed')
+    # ---- Back to the built-in key ----
+    ev(page, "() => { window.mbCalls = []; }")
+    if not B(page, 'Use the built-in key').count(): B(page, 'Drive-time key').click()
+    B(page, 'Use the built-in key').click()
+    settle(page)
+    check(not ev(page, "() => localStorage.getItem('stNearKey')") and 'Drive-time key: built in' in T(page), 'back to the built-in key')
+    mb = ev(page, "() => window.mbCalls")
+    check(mb and not any('pk.test-user' in c['url'] for c in mb), 'the built-in key is used again: %d calls' % len(mb))
 
     # ---- Leaving the tool ----
     B(page, '← Menu').click()

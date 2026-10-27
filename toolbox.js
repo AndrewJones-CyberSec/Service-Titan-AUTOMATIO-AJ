@@ -23,7 +23,7 @@
 (() => {
   const VERSION = '1.8';
   const WHATS_NEW = {
-    '1.8': 'New: 🧭 Closest Techs. Type a zip code or job number, or click a job on the board, to see the 3 techs closest by drive time (with traffic), or up to 10 with Show more. Measure from where they are now (the job they\'re working, on the way to, or last finished today) or from home, and pick a department. Each tech has 🗺️ Directions, and for a job ➡️ Assign… opens 🔀 Move Jobs with the job and tech filled in (nothing changes until you review and press Move). Drive times need a Mapbox key, added once under 🔑 Drive-time key. Only towns are shown, never addresses.',
+    '1.8': 'New: 🧭 Closest Techs. Type a zip code or job number, or click a job on the board, to see the 3 techs closest by drive time (with traffic), or up to 10 with Show more. Measure from where they are now (the job they\'re working, on the way to, or last finished today) or from home, and pick a department. Each tech has 🗺️ Directions, and for a job ➡️ Assign… opens 🔀 Move Jobs with the job and tech filled in (nothing changes until you review and press Move). Only towns are shown, never addresses.',
     '1.7.2': 'New in 📱 Customer Texts: ＋ A department… next to ＋ Everyone on the board adds just one team\'s customers for the day (Level 1 Service, Installers…) or just the Unassigned list. Pick another to add it too. 📥 Check replies then looks only at those customers.',
     '1.7.1': '📥 Check replies counts earlier confirm texts: a C to Saturday\'s text for Monday still counts after a newer reminder, if all they said after it was "already confirmed", "already did" or "thanks". A coworker\'s text that only says the weekday ("your appointment Monday") counts for that day, and one naming another day ("Saturday") no longer counts for Monday.',
     '1.7': 'Smarter 🔕 Job Notifications: one list instead of two modes. Add jobs by clicking them, clicking a tech\'s name on the board (their whole day), ＋ Whole board, or a tech from the list. Each job shows 🔔 on or 🔕 off as soon as it\'s added (off jobs get a gray dashed outline on the board), and the buttons say how many jobs they\'d change, like 🔕 Turn off (11). Results come back as cards, with problems first.',
@@ -5934,14 +5934,17 @@
   //   this browser after the first look). Customer addresses are never sent anywhere.
   //   Drive times: Mapbox, with traffic, for the 10 techs closest in a straight line. Tech homes are
   //   rounded to about half a mile before they're sent. Street addresses are never shown, only towns.
-  //   The Mapbox key (a public key, pk.…, set in Mapbox to only work from go.servicetitan.com) is
-  //   added under 🔑 Drive-time key and saved in this browser, never in this file. Without one, or
-  //   if drive times can't be had, it ranks by straight-line miles and says so.
+  //   The Mapbox key is a public key (pk.…), the kind Mapbox makes for browser code, set in Mapbox to
+  //   only work from go.servicetitan.com. One is built in; 🔑 Drive-time key can use a different one
+  //   in this browser. If drive times can't be had, it ranks by straight-line miles and says so.
   // ===================================================================
   const near = (() => {
     const TOOL = 'Closest Techs';
-    const KEY = 'stNearKey';   // the Mapbox key, saved in this browser
-    const driveKey = () => norm(get(KEY) || '');
+    // A public Mapbox key (not a secret): in Mapbox it only works from go.servicetitan.com.
+    const BUILT_IN_KEY = 'pk.eyJ1IjoiYWpvbmVzNTY2IiwiYSI6ImNtdnFuajN1bzAxNDkyenB2YzNmY3FoNGsifQ.DMF49WglFplflrSntyyoMQ';
+    const KEY = 'stNearKey';   // a different Mapbox key, saved in this browser (🔑 Drive-time key)
+    const ownKey = () => norm(get(KEY) || '');
+    const driveKey = () => ownKey() || BUILT_IN_KEY;
     const DRIVE = 'https://api.mapbox.com/directions/v5/mapbox/driving-traffic/';
     const ZCTA = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/PUMA_TAD_TAZ_UGA_ZCTA/MapServer/1/query';
     const ZIP_KEY = 'stZipPoints';
@@ -6093,15 +6096,21 @@
     fillTeams([]);
     const results = el('div', 'display:none;gap:6px');
     // 🔑 Drive-time key: a Mapbox public key, saved in this browser.
-    const keyBtn = smallBtn('', () => { keyBox.style.display = keyBox.style.display === 'none' ? 'grid' : 'none'; keyInput.value = driveKey(); keyMsg.textContent = ''; fit(); });
+    const keyBtn = smallBtn('', () => { keyBox.style.display = keyBox.style.display === 'none' ? 'grid' : 'none'; keyInput.value = ownKey(); keyMsg.textContent = ''; fit(); });
     const keyBox = el('div', 'display:none;gap:5px;padding:7px;border:1px solid #ddd;border-radius:6px;background:#fafafa;font-size:12px');
     const keyInput = el('input', FULL + 'padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
     keyInput.type = 'text'; keyInput.id = 'st-near-key'; keyInput.placeholder = 'pk.…'; keyInput.autocomplete = 'off'; keyInput.spellcheck = false;
     const keyMsg = el('div', 'color:#444;min-height:14px');
     const keyBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
-    keyBtns.append(smallBtn('Save', () => saveKey(), PRIMARY), smallBtn('Remove', () => { try { localStorage.removeItem(KEY); } catch (e) {} keyInput.value = ''; keyMsg.textContent = 'Removed. Techs are ranked by straight-line miles.'; keyLabel(); }));
-    keyBox.append(el('div', '', 'A Mapbox public key (it starts with pk.), set in Mapbox to only work from go.servicetitan.com. It\'s saved in this browser only.'), keyInput, keyBtns, keyMsg);
-    const keyLabel = () => { keyBtn.textContent = driveKey() ? '🔑 Drive-time key: added' : '🔑 Drive-time key: not added'; };
+    keyBtns.append(smallBtn('Save', () => saveKey(), PRIMARY), smallBtn('Use the built-in key', () => {
+      try { localStorage.removeItem(KEY); } catch (e) {}
+      keyInput.value = '';
+      keyMsg.textContent = BUILT_IN_KEY ? 'Using the built-in key.' : 'Removed. Techs are ranked by straight-line miles.';
+      keyLabel();
+      if (last) find(last);
+    }));
+    keyBox.append(el('div', '', 'Drive times use the Toolbox\'s built-in Mapbox key. To use a different one in this browser, paste a Mapbox public key (it starts with pk.), set in Mapbox to only work from go.servicetitan.com.'), keyInput, keyBtns, keyMsg);
+    const keyLabel = () => { keyBtn.textContent = ownKey() ? '🔑 Drive-time key: your own' : BUILT_IN_KEY ? '🔑 Drive-time key: built in' : '🔑 Drive-time key: not added'; };
     const saveKey = async () => {
       const k = norm(keyInput.value);
       if (/^sk\./.test(k)) { keyMsg.textContent = '⚠️ That\'s a secret key (sk.). Use a public key (pk.) that only works from go.servicetitan.com.'; return; }
@@ -6111,7 +6120,7 @@
       try { ok = await driveTime({ lat: 31.96, lon: -89.87 }, { lat: 31.87, lon: -89.73 }, k); } catch (e) { ok = null; }
       if (!ok) { keyMsg.textContent = '⚠️ Mapbox didn\'t accept it from this page (check the key and its URL restriction). Not saved.'; return; }
       set(KEY, k);
-      keyMsg.textContent = '✓ Saved. Drive times are on.';
+      keyMsg.textContent = '✓ Saved. Drive times use this key in this browser.';
       keyLabel();
       if (last) find(last);
     };
@@ -6303,7 +6312,7 @@
         results.appendChild(more);
       }
       const notes = [];
-      if (r.noKey && r.top.length) notes.push('No drive-time key added (🔑 below), so these are guesses from straight-line miles (marked ~).');
+      if (r.noKey && r.top.length) notes.push('No drive-time key (🔑 below), so these are guesses from straight-line miles (marked ~).');
       else if (r.noDrive) notes.push(r.noDrive === r.top.length ? '⚠️ Drive times aren\'t available right now, so these are guesses from straight-line miles (marked ~).' : '⚠️ ' + plural(r.noDrive, 'drive time') + ' couldn\'t be had; those are guesses from straight-line miles (marked ~).');
       if (r.unplaced.length) notes.push('Can\'t place ' + plural(r.unplaced.length, 'tech') + (r.mode === 'home' || !r.today ? ' (no home address on their profile)' : ' (no job with a zip code today and no home address on their profile)') + ': ' + r.unplaced.map(t => t.name).sort().join(', ') + '.');
       if (r.error) notes.push('⚠️ Some zip codes couldn\'t be looked up: ' + r.error + '.');
