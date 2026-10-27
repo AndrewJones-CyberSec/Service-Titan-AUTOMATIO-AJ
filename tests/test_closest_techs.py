@@ -62,7 +62,8 @@ with sync_playwright() as p:
     B(page, 'Closest Techs').click()
     time.sleep(0.3)
     teams = ev(page, "() => Array.from(document.querySelectorAll('#st-near-team option')).map(o => o.textContent)")
-    check(teams == ['Departments with jobs that day', 'Every department', 'Level 1 Service', 'Installers', 'Dispatch'], 'departments from the board, in its order: %s' % teams)
+    check(teams == ['Any department', 'Level 1 Service', 'Installers', 'Dispatch'], 'departments from the board, in its order: %s' % teams)
+    check(ev(page, "() => document.getElementById('st-near-field').checked"), 'Field techs only is on to start with')
     check('nothing changes' in T(page), 'says it only reads')
 
     # ---- No drive-time key yet: straight-line guesses, and nothing sent to Mapbox ----
@@ -108,7 +109,7 @@ with sync_playwright() as p:
     check('Mapbox' in t and 'zip code' in t, 'says where drive times and places come from')
     B(page, 'Show more').click()
     n = names(page)
-    check(n == ['Ben T', 'Fay H', 'Gus K', 'Cal M', 'Dee F', 'Ana R'], 'Show more: everyone placed, closest first, the Dispatch team (no jobs today) left out: %s' % n)
+    check(n == ['Ben T', 'Fay H', 'Gus K', 'Cal M', 'Dee F', 'Ana R'], 'Show more: everyone placed, closest first, office staff (not a managed tech) left out: %s' % n)
     check('from home (Florence)' in T(page), 'a home with no map point uses its zip code (town from the address, not the unit)')
     check(B(page, 'Show fewer').count() == 1, 'Show fewer offered')
     B(page, 'Show fewer').click()
@@ -134,9 +135,16 @@ with sync_playwright() as p:
     ev(page, "() => { window.zctaCalls = []; }")
     find_zip(page, '39114')
     check(ev(page, "() => window.zctaCalls.length") == 0, 'saved zip codes are not looked up again')
-    team(page, '*')
+    page.uncheck('#st-near-field')
+    settle(page)
     B(page, 'Show more').click()
-    check('Hal L' in names(page) and 'every department' in T(page), 'Every department includes the Dispatch team: %s' % names(page))
+    check('Hal L' in names(page) and 'everyone on the board' in T(page), 'unticking Field techs only adds office staff: %s' % names(page))
+    check(ev(page, "() => localStorage.getItem('stNearField')") == '0', 'the box is remembered')
+    page.check('#st-near-field')
+    settle(page)
+    check('Hal L' not in names(page), 'ticked again: office staff left out')
+    team(page, 'Dispatch')
+    check('No field techs on the board in Dispatch' in T(page) and 'untick Field techs only' in T(page), 'a department with no field techs says so')
     team(page, '')
 
     # ---- Where they are now ----

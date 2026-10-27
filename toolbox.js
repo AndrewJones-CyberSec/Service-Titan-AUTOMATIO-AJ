@@ -5921,8 +5921,9 @@
   // Tool 7: Closest Techs
   // Type a zip code or a job number, or click a job on the board, and it lists the techs closest to
   // it by drive time, closest first (3, and up to 10 with Show more). Only techs on the board for
-  // your board's branches, in the departments with jobs that day (so office teams on the board don't
-  // crowd the list), or every department, or one picked. It only reads: Assign hands the job and the
+  // your board's branches: field techs only (ServiceTitan's managed technicians, so office staff on
+  // the board don't crowd the list) unless that box is unticked, and one department if picked. It
+  // only reads: Assign hands the job and the
   // tech to 🔀 Move Jobs, where nothing changes until you review it and press Move.
   //   Where each tech is measured from:
   //     - Where they are now (the board shows today): the job they're working, else the one they're
@@ -6070,15 +6071,21 @@
       l.append(r, document.createTextNode(text));
       fromBox.appendChild(l);
     });
+    // Field techs only: ServiceTitan's managed technicians (every install, service, plumbing,
+    // electrical and generator team; no office team), so office staff on the board are left out.
+    const fieldRow = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer;font-size:12px');
+    const fieldBox = el('input'); fieldBox.type = 'checkbox'; fieldBox.id = 'st-near-field';
+    fieldBox.checked = get('stNearField') !== '0';
+    fieldBox.onchange = () => { set('stNearField', fieldBox.checked ? '1' : '0'); if (last) find(last); };
+    fieldRow.append(fieldBox, document.createTextNode('Field techs only (managed techs in ServiceTitan)'));
     const teamRow = el('div', 'display:flex;gap:6px;align-items:center;font-size:12px');
     const teamSel = el('select', 'flex:1;min-width:0;padding:4px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
     teamSel.id = 'st-near-team';
     teamRow.append(el('span', 'font-weight:600', 'Department:'), teamSel);
-    // '': the departments with jobs that day (the usual), '*': every department, or one team.
     const fillTeams = names => {
       const keep = teamSel.value || get('stNearTeam') || '';
       teamSel.textContent = '';
-      [['', 'Departments with jobs that day'], ['*', 'Every department']].forEach(([v, t]) => { const o = el('option', '', t); o.value = v; teamSel.appendChild(o); });
+      const any = el('option', '', 'Any department'); any.value = ''; teamSel.appendChild(any);
       names.forEach(n => { const o = el('option', '', n); o.value = n; teamSel.appendChild(o); });
       teamSel.value = Array.from(teamSel.options).some(o => o.value === keep) ? keep : '';
     };
@@ -6111,7 +6118,7 @@
     keyLabel();
     const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
     navRow.append(smallBtn('← Menu', () => showView('menu')), keyBtn);
-    wrap.append(msg, whereRow, pickBtn, fromBox, teamRow, results, navRow, keyBox);
+    wrap.append(msg, whereRow, pickBtn, fromBox, fieldRow, teamRow, results, navRow, keyBox);
     nearPane.appendChild(wrap);
 
     const fit = () => {
@@ -6227,13 +6234,15 @@
           }
           if (!place.zip) return say('⚠️ Job #' + target.jobId + ' has no zip code in ServiceTitan, so there\'s nothing to measure to.');
         }
-        // Who: everyone on the board (your board's branches), in the department picked. The usual
-        // choice is the departments with jobs that day, so office teams on the board are left out.
-        const team = teamSel.value;
+        // Who: everyone on the board (your board's branches): field techs only unless that box is
+        // unticked (a tech the technician list doesn't have counts as not a field tech), in the
+        // department picked. Inactive techs are left out.
+        const team = teamSel.value, fieldOnly = fieldBox.checked;
         const live = a => !/^cancell?ed$/i.test(a.status) && (!a.start || sameDay(toDate(a.start), day));
-        const working = new Set(techs.filter(t => t.appts.some(live)).map(t => t.team));
-        const inTeam = t => team === '*' ? true : team ? t.team === team : working.has(t.team);
-        const pool = techs.filter(t => inTeam(t) && (!homes.get(S(t.id)) || homes.get(S(t.id)).active));
+        const pool = techs.filter(t => {
+          const h = homes.get(S(t.id));
+          return (!team || t.team === team) && (h ? h.active : !fieldOnly) && (!fieldOnly || (h && h.managed));
+        });
         const mode = from;
         const places = pool.map(t => ({ t, at: placeOf(t, mode, today, day) }));
         const zips = [place.zip].concat(places.filter(x => x.at && x.at.zip).map(x => x.at.zip));
@@ -6260,7 +6269,7 @@
           x.jobsToday = new Set(x.t.appts.filter(live).map(a => a.jobId)).size;
         });
         top.sort((a, b) => a.min - b.min || a.line - b.line);
-        render({ target, place, top, unplaced, noDrive: top.filter(x => !x.drive).length, noKey: !key, error, day, today, mode, team, total: pool.length });
+        render({ target, place, top, unplaced, noDrive: top.filter(x => !x.drive).length, noKey: !key, error, day, today, mode, team, fieldOnly, total: pool.length });
       } catch (e) {
         if (stale()) return;
         say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t find the closest techs: ' + errText(e)));
@@ -6281,11 +6290,11 @@
         ? 'job #' + r.target.jobId + (r.place.customer ? ' ' + r.place.customer : '') + ' (' + (r.place.city ? tidy(r.place.city) + ' ' : '') + r.place.zip + ')'
         : r.place.zip;
       const head = el('div', 'font-size:12px;font-weight:700;color:#111');
-      head.textContent = 'Closest to ' + what + (r.team === '*' ? ' · every department' : r.team ? ' · ' + r.team : '');
+      head.textContent = 'Closest to ' + what + (r.team ? ' · ' + r.team : '') + (r.fieldOnly ? '' : ' · everyone on the board');
       results.appendChild(head);
       if (r.mode === 'now' && !r.today) results.appendChild(el('div', 'font-size:12px;color:#8a5300;background:#fffaf0;border-radius:6px;padding:4px 7px', 'The board shows ' + dayText(r.day) + ', so everyone is measured from home ("where they are now" is for today).'));
       if (!r.top.length) {
-        results.appendChild(el('div', 'font-size:12px;color:#555', r.total ? 'No one in this department could be placed (see below).' : 'No techs on the board' + (r.team && r.team !== '*' ? ' in ' + r.team : !r.team ? ' in a department with jobs' : '') + ' for ' + dayText(r.day) + '.'));
+        results.appendChild(el('div', 'font-size:12px;color:#555', r.total ? 'No one could be placed (see below).' : 'No ' + (r.fieldOnly ? 'field techs' : 'techs') + ' on the board' + (r.team ? ' in ' + r.team : '') + ' for ' + dayText(r.day) + (r.fieldOnly ? ' (untick Field techs only to see everyone)' : '') + '.'));
       }
       const shownList = showAll ? r.top : r.top.slice(0, SHOW);
       shownList.forEach((x, i) => results.appendChild(card(x, i + 1, r)));
@@ -6340,7 +6349,7 @@
     const refresh = async () => {
       fit(); paint();
       // The departments showing on the board, until a look fills in the full list.
-      if (onBoard() && teamSel.options.length < 3) fillTeams(Array.from(new Set(Array.from(document.querySelectorAll('.team-name')).map(t => norm(t.textContent)).filter(Boolean))));
+      if (onBoard() && teamSel.options.length < 2) fillTeams(Array.from(new Set(Array.from(document.querySelectorAll('.team-name')).map(t => norm(t.textContent)).filter(Boolean))));
       if (!onBoard()) say('Open the Dispatch board to find the closest techs.');
       else if (!last) say('Type a zip code or job number, or pick a job on the board. It reads only; nothing changes.');
       if (!homes) { try { await loadHomes(); } catch (e) { if (st.isSignedOut(e)) say('⚠️ ' + e.message); } }

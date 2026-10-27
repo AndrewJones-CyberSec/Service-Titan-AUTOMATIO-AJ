@@ -29,6 +29,7 @@
     '39151': [32.200, -89.950]    // Puckett
   };
   // Techs. home: [lat, lon] or null; addr: the profile address (street parts must never show or be sent).
+  // managed: false for office staff (ServiceTitan's managed-technician flag); field techs are managed.
   window.TECHS = [
     { id: 201, name: 'Ana R', team: 'Level 1 Service', home: [31.90, -89.75], addr: '12 Oak St, Magee, MS 39111 USA', active: true },
     { id: 202, name: 'Ben T', team: 'Level 1 Service', home: [32.05, -89.90], addr: '9 Pine Rd, BRAXTON, MS 39044 USA', active: true },
@@ -37,7 +38,7 @@
     { id: 205, name: 'Eli G', team: 'Level 1 Service', home: null, addr: '', active: true },
     { id: 206, name: 'Fay H', team: 'Installers', home: [31.80, -89.95], addr: '3 Ash St, Pinola, MS 39149 USA', active: true },
     { id: 207, name: 'Gus K', team: 'Level 1 Service', home: [32.20, -89.95], addr: '8 Birch Ct, Puckett, MS 39151 USA', active: true },
-    { id: 208, name: 'Hal L', team: 'Dispatch', home: [32.30, -90.18], addr: '1 Main St, Jackson, MS 39201 USA', active: true },
+    { id: 208, name: 'Hal L', team: 'Dispatch', home: [32.30, -90.18], addr: '1 Main St, Jackson, MS 39201 USA', active: true, managed: false },   // office staff
     { id: 209, name: 'Ivy N', team: 'Dispatch', home: [31.95, -89.82], addr: '4 Gone Way, Mendenhall, MS 39114 USA', active: false }
   ];
   const tname = id => (TECHS.find(t => t.id === id) || {}).name || ('#' + id);
@@ -87,7 +88,7 @@
       return json({ features: zips.filter(z => ZIPS[z]).map(z => ({ attributes: { ZCTA5: z, INTPTLAT: '+' + ZIPS[z][0].toFixed(7), INTPTLON: ZIPS[z][1].toFixed(7) } })) });
     }
     if (u.indexOf('/api/cp/settings/special/permission-settings') === 0) return json({ Settings: [] });
-    if (u.indexOf('/app/api/data/technicians') === 0) return json(TECHS.map(t => ({ id: t.id, name: t.name, active: t.active, isManagedTechnician: true, skillIds: [],
+    if (u.indexOf('/app/api/data/technicians') === 0) return json(TECHS.map(t => ({ id: t.id, name: t.name, active: t.active, isManagedTechnician: t.managed !== false, skillIds: [],
       houseLatitude: t.home ? t.home[0] : null, houseLongitude: t.home ? t.home[1] : null, houseAddress: t.addr || null })));
     if (u.indexOf('/Dispatch/Data') === 0) {
       window.dataCalls.push(body);
