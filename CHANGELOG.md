@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.8
+
+- **New: 🧭 Closest Techs.** The techs closest to a zip code or a job, by drive time with traffic.
+  - **Where:** a typed zip code or job number (a Zip code / Job # box next to it, since both can be 5 digits), or **🖱️ Pick a job on the board** (the timeline or the Unassigned / Hold list; the job gets a green outline). A job's zip code comes from the board's own data, or from its job panel for a job that isn't on the board.
+  - **Measure from:** *Where they are now* (today only): the job they're Working, else the one they're Dispatched to, else the last job they finished today, else home. ServiceTitan's truck GPS isn't used. *Their home*: the address on the tech's profile (its map point, or its zip code if it has no map point). On another day everyone is measured from home, and it says so.
+  - **Who:** techs on the board for your board's branches (read from the board's data without its team or people filter, so a filter doesn't hide anyone), inactive techs left out, optionally one **Department** (remembered).
+  - **Results:** the 3 closest, **Show more** for up to 10: drive time, road miles, where it's measured from (*working a job in Magee*, *from home (Braxton)*, *same zip code*), department, and jobs that day. Techs it can't place are named at the bottom. **🗺️ Directions** (Google Maps, new tab), and for a job **➡️ Assign…**, which opens 🔀 Move Jobs with the job and tech filled in (nothing changes until Review and Move).
+  - **Places:** jobs and zip codes are measured to the middle of the zip code, the US Census's point for it (only zip codes are sent; points are saved in the browser after the first look). Drive times come from Mapbox for the 10 techs closest in a straight line, with tech homes rounded to about half a mile; no names or street addresses are sent anywhere, or shown. Without Mapbox, techs are ranked by straight-line miles, marked ~ and explained.
+  - **🔑 Drive-time key:** a Mapbox public key (`pk.`), pasted once and saved in that browser only (never in the project, so GitHub's secret scanning stays happy). It's checked with Mapbox before it's saved; secret keys (`sk.`) are refused. Without a key, techs are ranked by straight-line miles, marked ~ and explained, and nothing is sent to Mapbox.
+  - It only reads. A job number that doesn't exist, a job with no zip code, an unknown zip code and a service that's down each get a plain message; board data in an unknown shape raises the yellow bar.
+- 🔀 Move Jobs can be handed a job and a tech by another tool (used by ➡️ Assign…).
+- Shared: the technician list now includes each tech's home (map point and address) from their profile.
+- Tests: new `tests/test_closest_techs.py` on `tests/board_near.html` (a fake board with tech homes, job zip codes and statuses, a fake Census map service, and a fake Mapbox with a river that's slow to cross).
+
 ## 1.7.2
 
 - **📱 Customer Texts: ＋ A department…** next to ＋ Everyone on the board. It lists each team on the board (Level 1 Service, Installers… in the board's order) with how many jobs it has on the day the board shows, plus the **Unassigned list**. Picking one adds that team's jobs (canceled appointments left out); pick another to add it too, and take anyone off with ✕. A job with two techs on different teams is in both. Jobs only in the board's data (scrolled out of view) are found too.

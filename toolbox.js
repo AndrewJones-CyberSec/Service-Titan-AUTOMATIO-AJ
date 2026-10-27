@@ -1,7 +1,7 @@
 /*
   ServiceTitan Toolbox
   ====================
-  One panel with six tools for the ServiceTitan Dispatch board:
+  One panel with seven tools for the ServiceTitan Dispatch board:
     - Notes: adds a ready-made note (sorted into folders) to a job's customer in one click.
     - Job Notifications: shows whether job notifications are on or off for the jobs you pick (one at a time,
       a tech's day, or the whole board), and turns them off or on.
@@ -9,6 +9,7 @@
     - Business Unit: switches the jobs you pick to a branch (Mendenhall Branch by default).
     - Customer Texts: texts customers a saved message (holds, tech updates, reschedules, ...).
     - Move Jobs: moves jobs to a tech, adds or unassigns techs, or swaps jobs or whole days, without dragging.
+    - Closest Techs: the techs closest to a zip code or a job by drive time, from where they are now or from home.
 
   HOW TO RELEASE AN UPDATE
     1. Edit this file on GitHub.
@@ -20,8 +21,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '1.7.2';
+  const VERSION = '1.8';
   const WHATS_NEW = {
+    '1.8': 'New: 🧭 Closest Techs. Type a zip code or job number, or click a job on the board, to see the 3 techs closest by drive time (with traffic), or up to 10 with Show more. Measure from where they are now (the job they\'re working, on the way to, or last finished today) or from home, and pick a department. Each tech has 🗺️ Directions, and for a job ➡️ Assign… opens 🔀 Move Jobs with the job and tech filled in (nothing changes until you review and press Move). Drive times need a Mapbox key, added once under 🔑 Drive-time key. Only towns are shown, never addresses.',
     '1.7.2': 'New in 📱 Customer Texts: ＋ A department… next to ＋ Everyone on the board adds just one team\'s customers for the day (Level 1 Service, Installers…) or just the Unassigned list. Pick another to add it too. 📥 Check replies then looks only at those customers.',
     '1.7.1': '📥 Check replies counts earlier confirm texts: a C to Saturday\'s text for Monday still counts after a newer reminder, if all they said after it was "already confirmed", "already did" or "thanks". A coworker\'s text that only says the weekday ("your appointment Monday") counts for that day, and one naming another day ("Saturday") no longer counts for Monday.',
     '1.7': 'Smarter 🔕 Job Notifications: one list instead of two modes. Add jobs by clicking them, clicking a tech\'s name on the board (their whole day), ＋ Whole board, or a tech from the list. Each job shows 🔔 on or 🔕 off as soon as it\'s added (off jobs get a gray dashed outline on the board), and the buttons say how many jobs they\'d change, like 🔕 Turn off (11). Results come back as cards, with problems first.',
@@ -127,6 +129,8 @@
   const same = (a, b) => norm(a).toLowerCase() === norm(b).toLowerCase();
   const plural = (n, word, many) => n + ' ' + (n === 1 ? word : (many || word + 's'));
   const last10 = s => String(s == null ? '' : s).replace(/\D/g, '').slice(-10);
+  // A 5-digit zip code from what ServiceTitan has ("39114", "39114-1234"), or ''.
+  const zip5 = z => { const m = /^\s*(\d{5})(?:-\d{4})?\s*$/.exec(String(z == null ? '' : z)); return m ? m[1] : ''; };
   const errText = e => (e && e.message ? e.message : String(e));
   // Runs read many jobs at the start, then work through them one by one. A job is only left
   // alone ("already done") on a reading this fresh; an older one is read again at its turn,
@@ -318,11 +322,20 @@
       if (!d || !Array.isArray(d.skills)) throw fail('bad', 'the job overview came back in a shape the Toolbox doesn\'t know');
       return d.skills.filter(s => s && s.active !== false).map(s => ({ id: s.id, name: norm(s.name) }));
     };
-    // Every tech: [{ id, name, active, managed, skillIds }].
+    // Every tech: [{ id, name, active, managed, skillIds, home }]. home (🧭 Closest Techs): where the
+    // tech's ServiceTitan profile says they live, { lat, lon, addr } (lat/lon null when ServiceTitan
+    // has no map point for it, addr '' when there's no address). Seen Oct 2026: houseLatitude,
+    // houseLongitude, houseAddress ("street, City, MS 39402 USA").
     const technicians = async () => {
       const d = await getJSON('/app/api/data/technicians', 30000);
       if (!Array.isArray(d)) throw fail('bad', 'the technician list came back in a shape the Toolbox doesn\'t know');
-      return d.filter(t => t && t.id != null).map(t => ({ id: t.id, name: norm(t.name), active: t.active !== false, managed: !!t.isManagedTechnician, skillIds: Array.isArray(t.skillIds) ? t.skillIds : null }));
+      const coord = (v, max) => typeof v === 'number' && isFinite(v) && v !== 0 && Math.abs(v) <= max ? v : null;
+      return d.filter(t => t && t.id != null).map(t => {
+        let lat = coord(t.houseLatitude, 90), lon = coord(t.houseLongitude, 180);
+        if (lat == null || lon == null) lat = lon = null;
+        return { id: t.id, name: norm(t.name), active: t.active !== false, managed: !!t.isManagedTechnician, skillIds: Array.isArray(t.skillIds) ? t.skillIds : null,
+          home: { lat, lon, addr: typeof t.houseAddress === 'string' ? norm(t.houseAddress) : '' } };
+      });
     };
     // Is each tech already booked at that time? The same check the job panel makes. Seen Oct 2026:
     // ServiceTitan only lists the techs who ARE booked (a free tech isn't in the answer at all),
@@ -361,6 +374,39 @@
       });
       return out;
     };
+    // ---- Where techs and jobs are (🧭 Closest Techs). Only read, never changed.
+    // Every tech on a day's board for the given branches, with their appointments that day: the
+    // same data the Dispatch board loads, without its team or people filter. Seen Oct 2026:
+    // { Technicians: [{ Id, Name, Team, Assignments: [{ Id, JobId, Start, End, AppointmentStatus
+    // ("Scheduled", "Dispatched", "Working", "Done"...), City, Zip, Technicians }] }] }.
+    // Returns [{ id, name, team, appts: [{ apptId, jobId, start, end, status, city, zip, techIds }] }].
+    const boardTechs = async (dayIso, buIds) => {
+      const d = await getJSON('/Dispatch/Data', 30000, { date: dayIso, filter: { businessUnitIds: buIds || [], teamIds: [], skillIds: [] } });
+      const bad = () => fail('bad', 'the board\'s techs came back in a shape the Toolbox doesn\'t know');
+      if (!d || !Array.isArray(d.Technicians)) throw bad();
+      return d.Technicians.map(t => {
+        if (!t || t.Id == null || !Array.isArray(t.Assignments)) throw bad();
+        const appts = t.Assignments.filter(a => a && a.Id != null && a.JobId != null).map(a => ({
+          apptId: a.Id, jobId: String(a.JobId), start: a.Start || null, end: a.End || null,
+          status: norm(a.AppointmentStatus || a.Status), city: norm(a.City), zip: zip5(a.Zip),
+          techIds: (Array.isArray(a.Technicians) ? a.Technicians : []).map(x => x && x.Id).filter(x => x != null).map(String)
+        }));
+        return { id: t.Id, name: norm(t.Name), team: norm(t.Team), appts };
+      });
+    };
+    // Where a job is, from its job panel: { zip, city, techIds, apptId }, for its first appointment
+    // that isn't canceled (status 5). Works without permission to open the job record.
+    const jobPlace = async jobId => {
+      const appts = await jobAppointments(jobId);
+      const a = appts.find(x => x.status !== 5) || appts[0];
+      if (!a) throw fail('bad', 'job #' + jobId + ' has no appointments');
+      const d = await getJSON('/dispatch/job-edit-flyout/GetJobEditFlyoutData?appointmentId=' + encodeURIComponent(a.id));
+      const la = d && d.locationAddress;
+      if (!la || typeof la !== 'object') throw fail('bad', 'the job panel came back in a shape the Toolbox doesn\'t know (no address)');
+      const ja = Array.isArray(d.jobAppointments) ? d.jobAppointments.find(x => x && String(x.id) === String(a.id)) : null;
+      const techIds = ja && Array.isArray(ja.technicians) ? ja.technicians.map(t => t && t.id).filter(x => x != null).map(String) : [];
+      return { zip: zip5(la.zip), city: norm(la.city), techIds, apptId: a.id };
+    };
     const assignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/AssignTechnicians', 20000, { appointmentId: apptId, technicianIds: techIds });
     const unassignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/UnassignTechnicians', 20000, { appointmentId: apptId, technicianIds: techIds });
     // ---- Confirming appointments (Customer Texts → 📥 Check replies). The same request the job
@@ -382,7 +428,8 @@
     };
     const setConfirmed = (apptId, on) => getJSON('/dispatch/job-edit-flyout/UpdateJobAppointmentIsConfirmed', 20000, { jobAppointmentId: apptId, isConfirmed: !!on });
     return { getJSON, pool, NOT_RUN, haltNote, SIGNED_OUT, isSignedOut, isNoPermission, job, jobEdit, chatThread, chatMessages, customerPhones, code,
-      appointment, jobSkills, technicians, techsBooked, daySchedule, assignTechs, unassignTechs, apptConfirmed, setConfirmed, jobAppointments };
+      appointment, jobSkills, technicians, techsBooked, daySchedule, assignTechs, unassignTechs, apptConfirmed, setConfirmed, jobAppointments,
+      boardTechs, jobPlace };
   })();
 
   // Customer cards: customers in sections (Needs a look, Confirmed, No reply…), one card each with
@@ -1094,8 +1141,9 @@
   const bizPane = el('div', 'display:none');
   const textsPane = el('div', 'display:none');
   const movesPane = el('div', 'display:none;overflow-y:auto');
-  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane, texts: textsPane, moves: movesPane };
-  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts', moves: '🔀 Move Jobs' };
+  const nearPane = el('div', 'display:none;overflow-y:auto');
+  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane, texts: textsPane, moves: movesPane, near: nearPane };
+  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts', moves: '🔀 Move Jobs', near: '🧭 Closest Techs' };
   const showView = name => {
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
     titleText.textContent = TITLES[name];
@@ -1111,6 +1159,8 @@
     if (name === 'texts' && typeof texts !== 'undefined') texts.refresh();
     if (name !== 'moves' && typeof moves !== 'undefined') moves.leave();
     if (name === 'moves' && typeof moves !== 'undefined') moves.refresh();
+    if (name !== 'near' && typeof near !== 'undefined') near.leave();
+    if (name === 'near' && typeof near !== 'undefined') near.refresh();
   };
 
   menuPane.append(
@@ -1120,12 +1170,13 @@
     menuBtn('💬 Tech Messages', () => showView('msgs')),
     menuBtn('🏢 Business Unit', () => showView('biz')),
     menuBtn('📱 Customer Texts', () => showView('texts')),
-    menuBtn('🔀 Move Jobs', () => showView('moves'))
+    menuBtn('🔀 Move Jobs', () => showView('moves')),
+    menuBtn('🧭 Closest Techs', () => showView('near'))
   );
   const checkRow = el('div', 'display:flex;justify-content:flex-end;margin-top:4px');
   checkRow.append(smallBtn('🩺 Check', () => health.checkBoard(true)));
   menuPane.appendChild(checkRow);
-  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane, movesPane);
+  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane, movesPane, nearPane);
 
   // ===================================================================
   // Tool 1: Notes
@@ -5810,6 +5861,28 @@
       }
     };
 
+    // Another tool (🧭 Closest Techs) hands over jobs and the tech they should go to: ➡️ Move to a
+    // tech, with that tech in To and Anyone in From, and only these jobs picked (anything picked
+    // before is taken off). Nothing changes until Review and the button. Returns how many jobs are
+    // picked, or -1 if Move Jobs is busy.
+    const take = (ids, toId, toName) => {
+      if (busy) return -1;
+      if (toName && !seenNames.has(S(toId))) seenNames.set(S(toId), toName);
+      mode = 'move'; set('stMoveMode', 'move');
+      modeRadios.forEach(r => { r.checked = r.value === 'move'; });
+      picker.setPicking(false);
+      clearReview();
+      picker.removeMany(picker.ids());
+      // Saved first: if the tech list is still loading, filling it in afterwards picks this tech.
+      set('stMoveTo', S(toId)); set('stMoveFrom', '');
+      toPick.find.value = ''; fromPick.find.value = '';
+      toPick.sel.value = ''; fromPick.sel.value = '';
+      toPick.fill(); fromPick.fill();
+      const n = picker.addMany(ids);
+      layout();
+      say('From 🧭 Closest Techs: ' + plural(n, 'job') + ' to ' + techName(toId) + '. Press Review to see it first; nothing changes until you press Move.');
+      return n;
+    };
     // Hands the jobs the last run changed to Job Notifications.
     const handOff = () => {
       if (busy || !movedJobs.length) return;
@@ -5836,10 +5909,438 @@
     layout();
     return {
       refresh,
+      take,
       leave: () => picker.setPicking(false),
       isRunning: () => running,
       stop: requestStop,
       cleanup: () => { picker.cleanup(); window.removeEventListener('resize', onResize); }
+    };
+  })();
+
+  // ===================================================================
+  // Tool 7: Closest Techs
+  // Type a zip code or a job number, or click a job on the board, and it lists the techs closest to
+  // it by drive time, closest first (3, and up to 10 with Show more). Only techs on the board for
+  // your board's branches; a department can be picked. It only reads: Assign hands the job and the
+  // tech to 🔀 Move Jobs, where nothing changes until you review it and press Move.
+  //   Where each tech is measured from:
+  //     - Where they are now (the board shows today): the job they're working, else the one they're
+  //       on the way to (Dispatched), else the last job they finished today, else home. ServiceTitan's
+  //       truck GPS isn't used (it isn't reliable enough).
+  //     - Their home: the address on their tech profile in ServiceTitan.
+  //   Where a job or zip code is: the middle of its zip code (the US Census's point for it, saved in
+  //   this browser after the first look). Customer addresses are never sent anywhere.
+  //   Drive times: Mapbox, with traffic, for the 10 techs closest in a straight line. Tech homes are
+  //   rounded to about half a mile before they're sent. Street addresses are never shown, only towns.
+  //   The Mapbox key (a public key, pk.…, set in Mapbox to only work from go.servicetitan.com) is
+  //   added under 🔑 Drive-time key and saved in this browser, never in this file. Without one, or
+  //   if drive times can't be had, it ranks by straight-line miles and says so.
+  // ===================================================================
+  const near = (() => {
+    const TOOL = 'Closest Techs';
+    const KEY = 'stNearKey';   // the Mapbox key, saved in this browser
+    const driveKey = () => norm(get(KEY) || '');
+    const DRIVE = 'https://api.mapbox.com/directions/v5/mapbox/driving-traffic/';
+    const ZCTA = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/PUMA_TAD_TAZ_UGA_ZCTA/MapServer/1/query';
+    const ZIP_KEY = 'stZipPoints';
+    const SHOW = 3, MAX = 10;
+    const u = v => { try { return window.ko && typeof window.ko.unwrap === 'function' ? window.ko.unwrap(v) : (typeof v === 'function' ? v() : v); } catch (e) { return v; } };
+    const S = x => String(x);
+
+    // ---------- Map points ----------
+    const okPt = p => Array.isArray(p) && p.length === 2 && p.every(n => typeof n === 'number' && isFinite(n)) && Math.abs(p[0]) <= 90 && Math.abs(p[1]) <= 180 && !(p[0] === 0 && p[1] === 0);
+    const miles = (a, b) => {
+      const R = 3958.8, r = x => x * Math.PI / 180;
+      const h = Math.sin(r(b.lat - a.lat) / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(r(b.lon - a.lon) / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(h));
+    };
+    // About half a mile: what's sent for a tech's home, so their address can't be read from it.
+    const r2 = n => Math.round(n * 100) / 100;
+    // A request to a service outside ServiceTitan: no cookies, a time limit, the answer as JSON.
+    const outside = async (url, ms) => {
+      const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = ctl ? setTimeout(() => ctl.abort(), ms) : null;
+      try {
+        const r = await fetch(url, { credentials: 'omit', signal: ctl ? ctl.signal : undefined });
+        if (!r.ok) throw new Error('answered ' + r.status);
+        return await r.json();
+      } catch (e) { throw e && e.name === 'AbortError' ? new Error('took too long to answer') : e; }
+      finally { if (timer) clearTimeout(timer); }
+    };
+    // Zip codes' middle points: the US Census's own point for each (only the zip codes are sent).
+    // Saved in this browser, so a zip is only looked up once. Returns { points: Map(zip -> { lat, lon }),
+    // error } (error: why some couldn't be looked up just now).
+    const savedZips = () => { try { const m = JSON.parse(get(ZIP_KEY) || '{}'); return m && typeof m === 'object' && !Array.isArray(m) ? m : {}; } catch (e) { return {}; } };
+    const zipPoints = async zips => {
+      const want = Array.from(new Set(zips.filter(z => /^\d{5}$/.test(z))));
+      const saved = savedZips(), found = {};
+      const missing = want.filter(z => !okPt(saved[z]));
+      let error = '';
+      for (let i = 0; i < missing.length; i += 50) {
+        const part = missing.slice(i, i + 50);
+        const q = new URLSearchParams({ where: 'ZCTA5 IN (\'' + part.join('\',\'') + '\')', outFields: 'ZCTA5,INTPTLAT,INTPTLON', returnGeometry: 'false', f: 'json' });
+        try {
+          const j = await outside(ZCTA + '?' + q, 12000);
+          if (!j || !Array.isArray(j.features)) throw new Error('answered in a shape the Toolbox doesn\'t know');
+          j.features.forEach(f => {
+            const a = f && f.attributes;
+            if (!a || part.indexOf(String(a.ZCTA5)) < 0) return;
+            const p = [Number(a.INTPTLAT), Number(a.INTPTLON)];
+            if (okPt(p)) found[a.ZCTA5] = [Math.round(p[0] * 1e4) / 1e4, Math.round(p[1] * 1e4) / 1e4];
+          });
+        } catch (e) { error = 'the US Census map service ' + errText(e); }
+      }
+      if (Object.keys(found).length) set(ZIP_KEY, JSON.stringify(Object.assign(savedZips(), found)));   // re-read: another tab may have saved some
+      const all = Object.assign({}, saved, found), points = new Map();
+      want.forEach(z => { if (okPt(all[z])) points.set(z, { lat: all[z][0], lon: all[z][1] }); });
+      return { points, error };
+    };
+    // Drive time and road miles from one point to another (Mapbox, with traffic), or null.
+    const driveTime = async (from, to, key) => {
+      if (!key) return null;
+      const url = DRIVE + r2(from.lon) + ',' + r2(from.lat) + ';' + r2(to.lon) + ',' + r2(to.lat) + '?overview=false&alternatives=false&access_token=' + encodeURIComponent(key);
+      const j = await outside(url, 10000);
+      const r = j && j.code === 'Ok' && Array.isArray(j.routes) ? j.routes[0] : null;
+      if (!r || typeof r.duration !== 'number' || typeof r.distance !== 'number' || !isFinite(r.duration)) return null;
+      return { min: Math.max(1, Math.round(r.duration / 60)), mi: r.distance / 1609.34 };
+    };
+    // A guess from straight-line miles, for when Mapbox can't be reached: roads run about 25% longer,
+    // at about 45 mph.
+    const guessMin = mi => Math.max(1, Math.round(mi * 1.25 / 45 * 60));
+    const timeText = m => m < 60 ? m + ' min' : Math.floor(m / 60) + ' hr' + (m % 60 ? ' ' + (m % 60) + ' min' : '');
+    const miText = n => (n < 10 ? n.toFixed(1) : String(Math.round(n))) + ' mi';
+
+    // ---------- The board ----------
+    const boardVM = () => { try { const jl = document.querySelector('.job-list'); return jl && window.ko ? window.ko.dataFor(jl) || null : null; } catch (e) { return null; } };
+    const boardBUs = () => { try { const f = boardVM().BusinessUnitFilter; const ids = f && typeof f.getIds === 'function' ? f.getIds() : []; return (ids || []).map(Number).filter(Boolean); } catch (e) { return []; } };
+    const pad = n => String(n).padStart(2, '0');
+    const dayISO = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T00:00:00';
+    const sameDay = (a, b) => !!(a && b) && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const dayText = d => d ? d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'the day shown';
+    const toDate = v => { if (v == null || v === '') return null; const d = v instanceof Date ? v : new Date(v); return isNaN(d) ? null : d; };
+    // A job as the board's own data has it (timeline or the list at the bottom): { zip, city, customer }.
+    const boardJob = jobId => {
+      const v = boardVM(), out = { zip: '', city: '', customer: '' };
+      if (!v) return out;
+      const rows = [].concat(u(v.Assignments) || [], (v.JobList && u(v.JobList.AllVisibleJobs)) || []);
+      rows.forEach(x => {
+        try {
+          if (S(u(x.JobId)) !== S(jobId)) return;
+          if (!out.zip) out.zip = zip5(u(x.Zip));
+          if (!out.city) out.city = norm(u(x.City));
+          if (!out.customer) out.customer = norm(u(x.Customer));
+        } catch (e) {}
+      });
+      return out;
+    };
+    // A town from a profile address ("street, City, MS 39402 USA" → City), and its zip code.
+    const townOf = addr => { const p = String(addr || '').split(',').map(norm).filter(Boolean); return p.length >= 3 ? p[p.length - 2] : ''; };
+    const zipOf = addr => { const m = String(addr || '').match(/\b\d{5}(?:-\d{4})?\b/g); return m ? m[m.length - 1].slice(0, 5) : ''; };
+    const inTown = (city, zip) => city ? ' in ' + city : zip ? ' in ' + zip : '';
+
+    // ---------- Pane ----------
+    const wrap = el('div', 'padding:8px 10px 10px;display:grid;gap:8px');
+    const msg = el('div', 'font-size:12px;color:#444;min-height:16px');
+    const say = s => { msg.textContent = s; };
+    const whereRow = el('div', 'display:flex;gap:6px');
+    const kind = el('select', 'padding:4px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
+    kind.id = 'st-near-kind';
+    [['zip', 'Zip code'], ['job', 'Job #']].forEach(([v, t]) => { const o = el('option', '', t); o.value = v; kind.appendChild(o); });
+    const typed = el('input', 'flex:1;min-width:0;padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
+    typed.type = 'text'; typed.id = 'st-near-input';
+    const findBtn = smallBtn('Find', () => findTyped(), PRIMARY);
+    whereRow.append(kind, typed, findBtn);
+    const placeholder = () => { typed.placeholder = kind.value === 'job' ? 'Job number' : '5-digit zip code'; };
+    kind.onchange = () => { set('stNearKind', kind.value); placeholder(); };
+    if (get('stNearKind') === 'job') kind.value = 'job';
+    placeholder();
+    typed.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); findTyped(); } };
+    const pickBtn = smallBtn('🖱️ Pick a job on the board', () => setPicking(!picking));
+    pickBtn.title = 'Then click a job on the timeline, or in the Unassigned / Hold list at the bottom';
+    const fromBox = el('div', 'display:grid;gap:1px;font-size:12px');
+    fromBox.appendChild(el('div', 'font-weight:600', 'Measure from:'));
+    let from = get('stNearFrom') === 'home' ? 'home' : 'now';
+    [['now', 'Where they are now (their job today)'], ['home', 'Their home']].map(([val, text]) => {
+      const l = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer');
+      const r = el('input'); r.type = 'radio'; r.name = 'st-near-from'; r.value = val; r.checked = from === val;
+      r.onchange = () => { from = val; set('stNearFrom', val); if (last) find(last); };
+      l.append(r, document.createTextNode(text));
+      fromBox.appendChild(l);
+    });
+    const teamRow = el('div', 'display:flex;gap:6px;align-items:center;font-size:12px');
+    const teamSel = el('select', 'flex:1;min-width:0;padding:4px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
+    teamSel.id = 'st-near-team';
+    teamRow.append(el('span', 'font-weight:600', 'Department:'), teamSel);
+    const fillTeams = names => {
+      const keep = teamSel.value || get('stNearTeam') || '';
+      teamSel.textContent = '';
+      const any = el('option', '', 'Any department'); any.value = ''; teamSel.appendChild(any);
+      names.forEach(n => { const o = el('option', '', n); o.value = n; teamSel.appendChild(o); });
+      teamSel.value = Array.from(teamSel.options).some(o => o.value === keep) ? keep : '';
+    };
+    teamSel.onchange = () => { set('stNearTeam', teamSel.value); if (last) find(last); };
+    fillTeams([]);
+    const results = el('div', 'display:none;gap:6px');
+    // 🔑 Drive-time key: a Mapbox public key, saved in this browser.
+    const keyBtn = smallBtn('', () => { keyBox.style.display = keyBox.style.display === 'none' ? 'grid' : 'none'; keyInput.value = driveKey(); keyMsg.textContent = ''; fit(); });
+    const keyBox = el('div', 'display:none;gap:5px;padding:7px;border:1px solid #ddd;border-radius:6px;background:#fafafa;font-size:12px');
+    const keyInput = el('input', FULL + 'padding:5px 6px;border:1px solid #aaa;border-radius:6px;font:inherit;font-size:12px;color:#111;background:#fff');
+    keyInput.type = 'text'; keyInput.id = 'st-near-key'; keyInput.placeholder = 'pk.…'; keyInput.autocomplete = 'off'; keyInput.spellcheck = false;
+    const keyMsg = el('div', 'color:#444;min-height:14px');
+    const keyBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    keyBtns.append(smallBtn('Save', () => saveKey(), PRIMARY), smallBtn('Remove', () => { try { localStorage.removeItem(KEY); } catch (e) {} keyInput.value = ''; keyMsg.textContent = 'Removed. Techs are ranked by straight-line miles.'; keyLabel(); }));
+    keyBox.append(el('div', '', 'A Mapbox public key (it starts with pk.), set in Mapbox to only work from go.servicetitan.com. It\'s saved in this browser only.'), keyInput, keyBtns, keyMsg);
+    const keyLabel = () => { keyBtn.textContent = driveKey() ? '🔑 Drive-time key: added' : '🔑 Drive-time key: not added'; };
+    const saveKey = async () => {
+      const k = norm(keyInput.value);
+      if (/^sk\./.test(k)) { keyMsg.textContent = '⚠️ That\'s a secret key (sk.). Use a public key (pk.) that only works from go.servicetitan.com.'; return; }
+      if (!/^pk\.[\w-]+\.[\w-]+$/.test(k)) { keyMsg.textContent = '⚠️ That doesn\'t look like a Mapbox public key (pk.…).'; return; }
+      keyMsg.textContent = 'Checking it with Mapbox...';
+      let ok = null;
+      try { ok = await driveTime({ lat: 31.96, lon: -89.87 }, { lat: 31.87, lon: -89.73 }, k); } catch (e) { ok = null; }
+      if (!ok) { keyMsg.textContent = '⚠️ Mapbox didn\'t accept it from this page (check the key and its URL restriction). Not saved.'; return; }
+      set(KEY, k);
+      keyMsg.textContent = '✓ Saved. Drive times are on.';
+      keyLabel();
+      if (last) find(last);
+    };
+    keyLabel();
+    const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    navRow.append(smallBtn('← Menu', () => showView('menu')), keyBtn);
+    wrap.append(msg, whereRow, pickBtn, fromBox, teamRow, results, navRow, keyBox);
+    nearPane.appendChild(wrap);
+
+    const fit = () => {
+      if (nearPane.style.display === 'none') return;
+      const pr = panel.getBoundingClientRect(), others = pr.height - nearPane.getBoundingClientRect().height;
+      const top = panel.style.top && panel.style.top !== 'auto' ? Math.max(0, pr.top) : 16;
+      nearPane.style.maxHeight = Math.max(220, innerHeight - top - others - 16) + 'px';
+    };
+    window.addEventListener('resize', fit);
+
+    // ---------- Picking a job on the board ----------
+    let picking = false;
+    const shown = () => nearPane.style.display !== 'none';
+    const style = el('style');
+    (document.head || document.documentElement).appendChild(style);
+    const paint = () => { style.textContent = shown() && last && last.jobId ? pickedCss([last.jobId], '#00796b', 'rgba(0,121,107,.22)') : ''; };
+    const setPicking = on => {
+      picking = !!on;
+      pickBtn.textContent = picking ? '🖱️ Picking: click a job…' : '🖱️ Pick a job on the board';
+      pickBtn.style.background = picking ? '#00796b' : '#fff';
+      pickBtn.style.color = picking ? '#fff' : '#111';
+      if (picking) say(onBoard() ? 'Click a job on the board, or in the Unassigned / Hold list at the bottom.' : 'Open the Dispatch board to pick a job there.');
+    };
+    const onClick = e => {
+      if (!picking || !onBoard() || !shown() || panel.contains(e.target)) return;
+      const j = clickedJob(e.target);
+      if (!j) return;
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      setPicking(false);
+      find({ jobId: j });
+    };
+    window.addEventListener('click', onClick, true);
+    pickers.push({ active: () => picking && shown(), hit: t => !!clickedJob(t) });
+
+    const findTyped = () => {
+      const v = norm(typed.value);
+      if (kind.value === 'zip') {
+        const z = zip5(v);
+        if (!z) return say('Type a 5-digit zip code (or switch to Job #).');
+        find({ zip: z });
+      } else {
+        if (!/^\d{3,}$/.test(v)) return say('Type a job number (or switch to Zip code).');
+        find({ jobId: v });
+      }
+    };
+
+    // ---------- Finding ----------
+    let homes = null;   // tech id -> { name, active, home }, loaded once
+    let last = null;    // what was looked up last (a new pick, department or Measure from looks again)
+    let runId = 0;
+    let showAll = false;
+    const loadHomes = async () => {
+      if (homes) return homes;
+      const list = await st.technicians();
+      homes = new Map(list.map(t => [S(t.id), t]));
+      return homes;
+    };
+    // Where a tech is measured from. Returns { zip or lat/lon, why } or null (can't be placed).
+    const STATUS_RANK = { working: 3, dispatched: 2 };
+    const placeOf = (t, mode, today, day) => {
+      if (mode === 'now' && today) {
+        const appts = t.appts.filter(a => !/^cancell?ed$/i.test(a.status) && (!a.start || sameDay(toDate(a.start), day)));
+        const by = re => appts.filter(a => re.test(a.status)).sort((a, b) => (toDate(b.start) || 0) - (toDate(a.start) || 0))[0];
+        const working = by(/^working$/i), going = by(/^dispatched$/i);
+        const done = appts.filter(a => /^(done|completed)$/i.test(a.status)).sort((a, b) => (toDate(b.end) || 0) - (toDate(a.end) || 0))[0];
+        const pick = [[working, 'working a job'], [going, 'on the way to a job'], [done, 'finished a job']].find(([a]) => a && a.zip);
+        if (pick) return { zip: pick[0].zip, why: pick[1] + inTown(pick[0].city, pick[0].zip), jobId: pick[0].jobId };
+      }
+      const p = homes.get(S(t.id)), h = p && p.home;
+      if (!h) return null;
+      const town = townOf(h.addr);
+      if (h.lat != null) return { lat: h.lat, lon: h.lon, why: 'from home' + (town ? ' (' + town + ')' : '') };
+      const z = zipOf(h.addr);
+      if (z) return { zip: z, why: 'from home' + (town ? ' (' + town + ')' : ' (' + z + ')') };
+      return null;
+    };
+
+    const find = async target => {
+      const run = ++runId;
+      showAll = false;
+      last = target;
+      paint();
+      results.style.display = 'none'; results.textContent = '';
+      if (!onBoard()) return say('Open the Dispatch board first.');
+      const day = boardData.day();
+      if (!day) return say('Open the Dispatch board first (it hasn\'t finished loading).');
+      const today = sameDay(day, new Date());
+      const stale = () => run !== runId;
+      say('Finding the closest techs...');
+      try {
+        // The target: a zip code, or a job's zip code.
+        let place = { zip: target.zip || '', city: '', techIds: [], customer: '' };
+        const board = st.boardTechs(dayISO(day), boardBUs()).catch(e => {
+          if (e && e.kind === 'bad') health.flag(TOOL, 'can\'t read where the techs are', '/Dispatch/Data');
+          throw e;
+        });
+        const [, techs] = await Promise.all([loadHomes(), board]);
+        if (stale()) return;
+        health.clear(TOOL);
+        fillTeams(teamsOf(techs));
+        if (target.jobId) {
+          const b = boardJob(target.jobId);
+          const onIt = new Set();
+          techs.forEach(t => t.appts.forEach(a => { if (a.jobId === S(target.jobId)) { onIt.add(S(t.id)); if (!b.zip) { b.zip = a.zip; b.city = b.city || a.city; } } }));
+          place = { zip: b.zip, city: b.city, techIds: Array.from(onIt), customer: b.customer };
+          if (!place.zip) {
+            let jp;
+            try { jp = await st.jobPlace(target.jobId); }
+            catch (e) { if (st.isSignedOut(e)) throw e; if (!stale()) say('⚠️ Couldn\'t find job #' + target.jobId + ' (' + errText(e) + '). Check the number.'); return; }
+            if (stale()) return;
+            place.zip = jp.zip; place.city = place.city || jp.city;
+            jp.techIds.forEach(id => { if (place.techIds.indexOf(id) < 0) place.techIds.push(id); });
+          }
+          if (!place.zip) return say('⚠️ Job #' + target.jobId + ' has no zip code in ServiceTitan, so there\'s nothing to measure to.');
+        }
+        // Who: everyone on the board (your board's branches), in the department picked.
+        const team = teamSel.value;
+        const pool = techs.filter(t => (!team || t.team === team) && (!homes.get(S(t.id)) || homes.get(S(t.id)).active));
+        const mode = from;
+        const places = pool.map(t => ({ t, at: placeOf(t, mode, today, day) }));
+        const zips = [place.zip].concat(places.filter(x => x.at && x.at.zip).map(x => x.at.zip));
+        const { points, error } = await zipPoints(zips);
+        if (stale()) return;
+        const target_ = points.get(place.zip);
+        if (!target_) return say('⚠️ ' + (error ? 'Couldn\'t look up where ' + place.zip + ' is (' + error + '). Try again in a minute.' : place.zip + ' isn\'t a zip code the US Census knows.'));
+        const placed = [], unplaced = [];
+        places.forEach(x => {
+          const pt = x.at && (x.at.lat != null ? { lat: x.at.lat, lon: x.at.lon } : points.get(x.at.zip));
+          if (pt) placed.push({ t: x.t, pt, why: x.at.why, line: miles(pt, target_), sameZip: !!x.at.zip && x.at.zip === place.zip });
+          else unplaced.push(x.t);
+        });
+        placed.sort((a, b) => a.line - b.line || a.t.name.localeCompare(b.t.name));
+        const top = placed.slice(0, MAX);
+        const key = driveKey();
+        if (top.length && key) say('Getting drive times for ' + plural(top.length, 'tech') + '...');
+        const drives = await Promise.all(top.map(x => driveTime(x.pt, target_, key).catch(() => null)));
+        if (stale()) return;
+        top.forEach((x, i) => {
+          x.drive = drives[i];
+          x.min = x.drive ? x.drive.min : guessMin(x.line);
+          x.onIt = place.techIds.indexOf(S(x.t.id)) > -1;
+          x.jobsToday = new Set(x.t.appts.filter(a => !/^cancell?ed$/i.test(a.status) && (!a.start || sameDay(toDate(a.start), day))).map(a => a.jobId)).size;
+        });
+        top.sort((a, b) => a.min - b.min || a.line - b.line);
+        render({ target, place, top, unplaced, noDrive: top.filter(x => !x.drive).length, noKey: !key, error, day, today, mode, team, total: pool.length });
+      } catch (e) {
+        if (stale()) return;
+        say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t find the closest techs: ' + errText(e)));
+      }
+    };
+    // The departments on the board, in the board's order.
+    const teamsOf = techs => {
+      const names = Array.from(new Set(techs.map(t => t.team).filter(Boolean)));
+      const order = Array.from(document.querySelectorAll('.team-name')).map(t => norm(t.textContent));
+      const rank = n => order.indexOf(n) < 0 ? 1e5 : order.indexOf(n);
+      return names.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+    };
+
+    // ---------- Results ----------
+    const render = r => {
+      results.textContent = '';
+      const what = r.target.jobId
+        ? 'job #' + r.target.jobId + (r.place.customer ? ' ' + r.place.customer : '') + ' (' + (r.place.city ? r.place.city + ' ' : '') + r.place.zip + ')'
+        : r.place.zip;
+      const head = el('div', 'font-size:12px;font-weight:700;color:#111');
+      head.textContent = 'Closest to ' + what + (r.team ? ' · ' + r.team : '');
+      results.appendChild(head);
+      if (r.mode === 'now' && !r.today) results.appendChild(el('div', 'font-size:12px;color:#8a5300;background:#fffaf0;border-radius:6px;padding:4px 7px', 'The board shows ' + dayText(r.day) + ', so everyone is measured from home ("where they are now" is for today).'));
+      if (!r.top.length) {
+        results.appendChild(el('div', 'font-size:12px;color:#555', r.total ? 'No one in this department could be placed (see below).' : 'No techs on the board' + (r.team ? ' in ' + r.team : '') + ' for ' + dayText(r.day) + '.'));
+      }
+      const shownList = showAll ? r.top : r.top.slice(0, SHOW);
+      shownList.forEach((x, i) => results.appendChild(card(x, i + 1, r)));
+      if (r.top.length > SHOW) {
+        const more = smallBtn(showAll ? 'Show fewer' : 'Show more (' + (r.top.length - SHOW) + ')', () => { showAll = !showAll; render(r); });
+        results.appendChild(more);
+      }
+      const notes = [];
+      if (r.noKey && r.top.length) notes.push('No drive-time key added (🔑 below), so these are guesses from straight-line miles (marked ~).');
+      else if (r.noDrive) notes.push(r.noDrive === r.top.length ? '⚠️ Drive times aren\'t available right now, so these are guesses from straight-line miles (marked ~).' : '⚠️ ' + plural(r.noDrive, 'drive time') + ' couldn\'t be had; those are guesses from straight-line miles (marked ~).');
+      if (r.unplaced.length) notes.push('Can\'t place ' + plural(r.unplaced.length, 'tech') + (r.mode === 'home' || !r.today ? ' (no home address on their profile)' : ' (no job with a zip code today and no home address on their profile)') + ': ' + r.unplaced.map(t => t.name).sort().join(', ') + '.');
+      if (r.error) notes.push('⚠️ Some zip codes couldn\'t be looked up: ' + r.error + '.');
+      notes.push((r.noKey ? '' : 'Drive times with traffic by Mapbox (© Mapbox, © OpenStreetMap). ') + 'Jobs and zip codes are measured to the middle of their zip code.');
+      notes.forEach(t => results.appendChild(el('div', 'font-size:11px;color:#666;white-space:pre-wrap', t)));
+      results.style.display = 'grid';
+      say(r.top.length ? 'Closest ' + (r.top.length > 1 ? 'first' : 'tech') + '. Pick a job, zip, department or Measure from to look again.' : 'Nothing to show.');
+      fit();
+    };
+    const card = (x, n, r) => {
+      const c = el('div', 'border:1px solid #9fc9c2;background:#f2faf8;border-radius:8px;padding:7px 8px;font-size:12px;color:#111');
+      c.className = 'st-near-card';
+      const top = el('div', 'display:flex;gap:6px;align-items:baseline');
+      top.append(el('div', 'font-weight:700;color:#00796b;min-width:14px', n + '.'), el('div', 'flex:1;font-weight:700;font-size:13px;user-select:text', x.t.name),
+        el('div', 'font-weight:700;font-size:13px;white-space:nowrap', (x.drive ? '' : '~') + timeText(x.min)));
+      c.appendChild(top);
+      c.appendChild(el('div', 'margin-top:2px;color:#333', (x.sameZip ? 'same zip code' : x.drive ? miText(x.drive.mi) + ' by road' : '~' + miText(x.line) + ' straight line') + ' · ' + x.why));
+      const info = [x.t.team, plural(x.jobsToday, 'job') + ' ' + (r.today ? 'today' : 'that day')].filter(Boolean).join(' · ');
+      c.appendChild(el('div', 'margin-top:1px;color:#666', info));
+      if (x.onIt) c.appendChild(el('div', 'margin-top:3px;color:#1a4f8a;font-weight:600', 'Already on this job.'));
+      const btns = el('div', 'display:flex;gap:5px;flex-wrap:wrap;margin-top:6px');
+      const dir = smallBtn('🗺️ Directions', () => {
+        const u2 = 'https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=' + r2(x.pt.lat) + ',' + r2(x.pt.lon) + '&destination=' + encodeURIComponent(r.place.zip + (r.place.city ? ' ' + r.place.city : ''));
+        try { window.open(u2, '_blank', 'noopener'); } catch (e) {}
+      }, 'padding:3px 7px');
+      dir.title = 'Opens Google Maps in a new tab (from about where they are to the zip code)';
+      btns.appendChild(dir);
+      if (r.target.jobId && !x.onIt) {
+        const as = smallBtn('➡️ Assign…', () => assign(r.target.jobId, x.t), 'padding:3px 7px;' + 'background:#6a1b9a;color:#fff;border-color:#6a1b9a');
+        as.title = 'Opens 🔀 Move Jobs with this job and ' + x.t.name + ' filled in. Nothing changes until you review it and press Move.';
+        btns.appendChild(as);
+      }
+      c.appendChild(btns);
+      return c;
+    };
+    const assign = (jobId, t) => {
+      if (lock) return say('Wait for ' + lock + ' to finish first.');
+      const n = moves.take([jobId], t.id, t.name);
+      if (n < 0) return say('🔀 Move Jobs is busy. Wait for it to finish, then press Assign again.');
+      showView('moves');
+    };
+
+    const refresh = async () => {
+      fit(); paint();
+      // The departments showing on the board, until a look fills in the full list.
+      if (onBoard() && teamSel.options.length < 2) fillTeams(Array.from(new Set(Array.from(document.querySelectorAll('.team-name')).map(t => norm(t.textContent)).filter(Boolean))));
+      if (!onBoard()) say('Open the Dispatch board to find the closest techs.');
+      else if (!last) say('Type a zip code or job number, or pick a job on the board. It reads only; nothing changes.');
+      if (!homes) { try { await loadHomes(); } catch (e) { if (st.isSignedOut(e)) say('⚠️ ' + e.message); } }
+    };
+    return {
+      refresh,
+      leave: () => { setPicking(false); paint(); },
+      cleanup: () => { window.removeEventListener('click', onClick, true); window.removeEventListener('resize', fit); style.remove(); }
     };
   })();
 
@@ -5880,6 +6381,7 @@
     biz.cleanup();
     texts.cleanup();
     moves.cleanup();
+    near.cleanup();
     panel.remove();
     delete window.__stToolbox;
   };
@@ -5915,6 +6417,6 @@
 
   document.body.appendChild(panel);
   const startView = get('stView');
-  showView(['notes', 'jobs', 'msgs', 'biz', 'texts', 'moves'].indexOf(startView) > -1 ? startView : 'menu');
+  showView(['notes', 'jobs', 'msgs', 'biz', 'texts', 'moves', 'near'].indexOf(startView) > -1 ? startView : 'menu');
   health.checkBoard(false);
 })();

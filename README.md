@@ -91,6 +91,19 @@ Pick jobs with **🖱️ Pick on board**, **+ All in the list**, typed job numbe
 
 It sends the same requests the job panel's ⋮ → Assign/Unassign sends. Up to three jobs are worked on at once (each one step by step: checked, new tech added and confirmed, old tech taken off and confirmed), so a run takes a fraction of a second to a couple of seconds per job, where clicking through the panel takes several. Two visits of the same job, and a two-job swap, go one after the other. Up to 300 jobs per run.
 
+**🧭 Closest Techs**
+Find the techs closest to a place by drive time. Type a **zip code** or a **job number** (pick which in the box next to it, since both can be 5 digits), or press **🖱️ Pick a job on the board** and click a job on the timeline or in the Unassigned / Hold list. The 3 closest techs show first, closest first; **Show more** lists up to 10.
+
+- **Measure from:** **Where they are now** (the board shows today): the job each tech is working, else the one they're on the way to (Dispatched), else the last job they finished today, else their home. ServiceTitan's truck GPS isn't used. **Their home**: the address on their tech profile in ServiceTitan.
+- **Department:** any department, or one team on the board (remembered). Only techs on the board for your board's branches are listed.
+- Each tech shows the drive time, road miles and where it's measured from (*working a job in Magee*, *from home (Braxton)*), their department and how many jobs they have that day. Only towns are shown, never street addresses.
+- **🗺️ Directions** opens Google Maps in a new tab. For a job, **➡️ Assign…** opens 🔀 Move Jobs with that job and tech filled in (Move to a tech); nothing changes until you review it and press Move.
+- Techs it can't place (no home address on their profile, and no job with a zip code today) are listed by name at the bottom, so their profile can be filled in.
+
+- **🔑 Drive-time key** (at the bottom): drive times need a Mapbox public key (it starts with `pk.`), set in Mapbox to only work from go.servicetitan.com. Paste it once and press **Save**; it's checked with Mapbox first and saved in your browser only, never in this project. Secret keys (`sk.`) are refused. Without a key, techs are ranked by straight-line miles and the times are marked ~ as guesses.
+
+How it works: a job or a zip code is measured to the middle of its zip code (the US Census's point for each zip, looked up once and saved in your browser; only the zip code is sent). Drive times, with traffic, come from Mapbox for the 10 techs closest in a straight line; tech homes are rounded to about half a mile before they're sent, and no names or addresses are. If Mapbox can't be reached, techs are ranked by straight-line miles and the times are marked ~ as guesses. It only reads; it never changes anything in ServiceTitan.
+
 **🩺 Health check**
 If ServiceTitan changes something a tool relies on, a yellow bar at the top of the Toolbox says which tool is affected and what's missing, instead of the tool failing quietly. Use **Copy report** to pass the details along, or **🩺 Check** in the menu to check any time.
 
