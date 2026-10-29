@@ -1,7 +1,7 @@
 /*
   ServiceTitan Toolbox
   ====================
-  One panel with six tools for the ServiceTitan Dispatch board:
+  One panel with seven tools for the ServiceTitan Dispatch board:
     - Notes: adds a ready-made note (sorted into folders) to a job's customer in one click.
     - Job Notifications: shows whether job notifications are on or off for the jobs you pick (one at a time,
       a tech's day, or the whole board), and turns them off or on.
@@ -9,6 +9,8 @@
     - Business Unit: switches the jobs you pick to a branch (Mendenhall Branch by default).
     - Customer Texts: texts customers a saved message (holds, tech updates, reschedules, ...).
     - Move Jobs: moves jobs to a tech, adds or unassigns techs, or swaps jobs or whole days, without dragging.
+    - Tech Router (Beta, still being built): finds jobs to fill a tech's open time (customers to call and
+      move up), and the techs closest to a job or zip code. It only reads; Move Jobs makes any change.
 
   HOW TO RELEASE AN UPDATE
     1. Edit this file on GitHub.
@@ -20,8 +22,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.0.2';
+  const VERSION = '2.1';
   const WHATS_NEW = {
+    '2.1': 'New: 🧭 Tech Router (Beta). 📞 Fill a spot: pick a tech whose day is already planned, and it finds their open time (first thing, mid-day or the end of the day) and the jobs that would fit there from the Unassigned list (this day and the next 14) and the Hold list, with the customer\'s phone number to call and move them up. It learns which jobs each department does from the last 4 weeks of schedules, so a project coordinator only gets quotes, not electrical or plumbing ones. 🔎 Closest techs is back too. It\'s still being built, so check before you call; it only reads, and changes nothing on its own.',
     '2.0.2': 'Fixed: 💬 Tech Messages skipped every tech with "their name on the board has no menu". When the board scrolls to a tech it shows their name first and their menu about a second later; the Toolbox now waits for the menu, then opens it the way you would (a right-click or a left click on their name).',
     '2.0.1': 'Nothing inside the Toolbox scrolls sideways any more, and you can make it wider or narrower by dragging its left edge or bottom-right corner (it remembers; double-click for the usual width). Plus a few quick animations: it fades in and out, tools slide in, – folds it smoothly, and loading buttons show a spinner.',
     '2.0': 'Built for ServiceTitan\'s new Dispatch board (use its Day view), with a new look. Every tool works on it again. New: tags show on every job, and ＋ Jobs with a tag… adds all the jobs with one tag. Jobs show how their day is going (🚚 Dispatched 10:20 AM, 🔧 Working). ＋ Whole board is quicker (the whole day comes in one request). 💬 Tech Messages adds everyone Working or Dispatched in one click. – folds the Toolbox down to its title bar.',
@@ -297,11 +300,19 @@
       if (!d || !Array.isArray(d.skills)) throw fail('bad', 'the job overview came back in a shape the Toolbox doesn\'t know');
       return d.skills.filter(s => s && s.active !== false).map(s => ({ id: s.id, name: norm(s.name) }));
     };
-    // Every tech: [{ id, name, active, managed, skillIds }].
+    // Every tech: [{ id, name, active, managed, skillIds, home }]. home (🧭 Tech Router): where the
+    // tech's profile says they live, { lat, lon, town }, or null when it has no map point. Seen Oct
+    // 2026: houseLatitude, houseLongitude, houseAddress ("street, City, MS 39402 USA").
     const technicians = async () => {
       const d = await getJSON('/app/api/data/technicians', 30000);
       if (!Array.isArray(d)) throw fail('bad', 'the technician list came back in a shape the Toolbox doesn\'t know');
-      return d.filter(t => t && t.id != null).map(t => ({ id: t.id, name: norm(t.name), active: t.active !== false, managed: !!t.isManagedTechnician, skillIds: Array.isArray(t.skillIds) ? t.skillIds : null }));
+      const coord = (v, max) => typeof v === 'number' && isFinite(v) && v !== 0 && Math.abs(v) <= max ? v : null;
+      const townOf = a => { const p = String(a || '').split(',').map(norm).filter(Boolean); return p.length >= 3 ? p[p.length - 2] : ''; };
+      return d.filter(t => t && t.id != null).map(t => {
+        const lat = coord(t.houseLatitude, 90), lon = coord(t.houseLongitude, 180);
+        return { id: t.id, name: norm(t.name), active: t.active !== false, managed: !!t.isManagedTechnician, skillIds: Array.isArray(t.skillIds) ? t.skillIds : null,
+          home: lat != null && lon != null ? { lat, lon, town: townOf(t.houseAddress) } : null };
+      });
     };
     // Is each tech already booked at that time? The same check the job panel makes. Seen Oct 2026:
     // ServiceTitan only lists the techs who ARE booked (a free tech isn't in the answer at all),
@@ -340,6 +351,36 @@
       });
       return out;
     };
+    // ---- For 🧭 Tech Router (only read, never changed) ----
+    // A whole Jobs Tray list, every page: 'Unassigned' for a day, or 'Hold' (every hold: the day
+    // doesn't change it), for the given branches. Seen Oct 2026: { Jobs: [...], Count }, each job with
+    // Id (appointment), JobId, Customer, CustomerPhone, Type, TypeId, Priority, Duration (seconds),
+    // Start, End, CreatedOn, Zip, City, Latitude, Longitude (the job's map point; JobLatitude and
+    // JobLongitude are there too but empty, Oct 29 2026), Tags, Technicians. The raw rows.
+    const getJobs = async (kind, dayIso, buIds) => {
+      const PAGE = 500;
+      const page = skip => getJSON('/Dispatch/GetJobs', 30000, { JobType: kind, Date: dayIso, QueryFilter: { Skip: skip, Take: PAGE, Start: {}, Created: {}, BusinessUnitIds: buIds || [] } });
+      const first = await page(0);
+      if (!first || !Array.isArray(first.Jobs)) throw fail('bad', 'the ' + (kind === 'Hold' ? 'Hold' : 'Unassigned') + ' list came back in a shape the Toolbox doesn\'t know');
+      const total = Number(first.Count) || first.Jobs.length, skips = [];
+      for (let skip = PAGE; skip < Math.min(total, 5000); skip += PAGE) skips.push(skip);
+      const rest = await Promise.all(skips.map(page));
+      return rest.reduce((all, pg) => all.concat(pg && Array.isArray(pg.Jobs) ? pg.Jobs : []), first.Jobs.slice());
+    };
+    // Where a job is, from its job panel: { zip, city, techIds, apptId, customer }, for its first
+    // appointment that isn't canceled (status 5). Works without permission to open the job record.
+    const jobPlace = async jobId => {
+      const appts = await jobAppointments(jobId);
+      const a = appts.find(x => x.status !== 5) || appts[0];
+      if (!a) throw fail('bad', 'job #' + jobId + ' has no appointments');
+      const d = await getJSON('/dispatch/job-edit-flyout/GetJobEditFlyoutData?appointmentId=' + encodeURIComponent(a.id));
+      const la = d && d.locationAddress;
+      if (!la || typeof la !== 'object') throw fail('bad', 'the job panel came back in a shape the Toolbox doesn\'t know (no address)');
+      const ja = Array.isArray(d.jobAppointments) ? d.jobAppointments.find(x => x && String(x.id) === String(a.id)) : null;
+      const techIds = ja && Array.isArray(ja.technicians) ? ja.technicians.map(t => t && t.id).filter(x => x != null).map(String) : [];
+      const z = /\b(\d{5})/.exec(String(la.zip == null ? '' : la.zip));
+      return { zip: z ? z[1] : '', city: norm(la.city), techIds, apptId: a.id, customer: d.customer && typeof d.customer === 'object' ? norm(d.customer.name) : '' };
+    };
     const assignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/AssignTechnicians', 20000, { appointmentId: idNum(apptId), technicianIds: techIds.map(idNum) });
     const unassignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/UnassignTechnicians', 20000, { appointmentId: idNum(apptId), technicianIds: techIds.map(idNum) });
     // ---- Confirming appointments (Customer Texts → 📥 Check replies). The same request the job
@@ -361,7 +402,7 @@
     };
     const setConfirmed = (apptId, on) => getJSON('/dispatch/job-edit-flyout/UpdateJobAppointmentIsConfirmed', 20000, { jobAppointmentId: idNum(apptId), isConfirmed: !!on });
     return { getJSON, pool, NOT_RUN, haltNote, SIGNED_OUT, isSignedOut, isNoPermission, job, jobEdit, chatThread, chatMessages, customerPhones, code,
-      appointment, jobSkills, technicians, techsBooked, daySchedule, assignTechs, unassignTechs, apptConfirmed, setConfirmed, jobAppointments };
+      appointment, jobSkills, technicians, techsBooked, daySchedule, assignTechs, unassignTechs, apptConfirmed, setConfirmed, jobAppointments, getJobs, jobPlace };
   })();
 
   // ===================================================================
@@ -470,9 +511,11 @@
     // ---- Loading the board's day ----
     // A snapshot: { key, day, at, techs: [{ id, name, team, teamId }] in the board's order,
     //   techById, teams (names, board order), appts: Map(apptId -> appt), byJob: Map(jobId -> [appt]),
-    //   byTech: Map(techId -> [appt]), history: Map(apptId -> [{ status, at, techId }]) }
+    //   byTech: Map(techId -> [appt]), history: Map(apptId -> [{ status, at, techId }]),
+    //   shifts: Map(techId -> [{ start, end, off }]) (off: time off), events: Map(techId -> [{ start, end }])
+    //   (meetings and other non-job events; their names aren't kept) }
     // An appt: { apptId, jobId, number, customer, customerId, start, end, windowStart, windowEnd,
-    //   status, jobStatus, confirmed, bu, buName, jobType, city, zip, tags, techs: [tech ids], techStatus }
+    //   status, jobStatus, confirmed, bu, buName, jobType, jobTypeId, city, zip, tags, techs: [tech ids], techStatus }
     // Statuses are ServiceTitan's words (Scheduled, Dispatched, Working, Hold, Done...).
     const bad = what => Object.assign(new Error('the board\'s ' + what + ' came back in a shape the Toolbox doesn\'t know'), { kind: 'bad' });
     const toDate = v => { if (!v) return null; const d = new Date(v); return isNaN(d) ? null : d; };
@@ -503,11 +546,23 @@
             .catch(e => { if (st.isSignedOut(e)) throw e; return null; }) : null
         ]);
         if (!sch || !Array.isArray(sch.items)) throw bad('day');
-        const appts = new Map(), byJob = new Map(), byTech = new Map(), techById = new Map();
-        techs.forEach(t => { techById.set(t.id, t); byTech.set(t.id, []); });
+        const appts = new Map(), byJob = new Map(), byTech = new Map(), techById = new Map(), shifts = new Map(), events = new Map();
+        techs.forEach(t => { techById.set(t.id, t); byTech.set(t.id, []); shifts.set(t.id, []); events.set(t.id, []); });
+        // Seen Oct 2026: shifts [{ type ('Normal', 'TimeOff'), startDate, endDate }], nonJobEvents
+        // [{ appointmentStart, appointmentEnd }] for each day.
+        const timed = (list, from, to, more) => (Array.isArray(list) ? list : []).map(x => {
+          const a = toDate(x && x[from]), b = toDate(x && x[to]);
+          return a && b && b > a ? Object.assign({ start: a, end: b }, more ? more(x) : {}) : null;
+        }).filter(Boolean);
         sch.items.forEach(it => {
           if (!it || it.technicianId == null || !Array.isArray(it.technicianSchedule)) throw bad('day');
           const tid = String(it.technicianId);
+          if (!shifts.has(tid)) { shifts.set(tid, []); events.set(tid, []); }
+          it.technicianSchedule.forEach(dd => {
+            if (!dd) return;
+            timed(dd.shifts, 'startDate', 'endDate', x => ({ off: /^time\s*off$/i.test(norm(x.type)) })).forEach(x => shifts.get(tid).push(x));
+            timed(dd.nonJobEvents, 'appointmentStart', 'appointmentEnd').forEach(x => events.get(tid).push(x));
+          });
           it.technicianSchedule.forEach(dd => (dd && Array.isArray(dd.assignments) ? dd.assignments : []).forEach(a => {
             if (!a || a.appointmentId == null || a.jobId == null) return;
             const k = String(a.appointmentId);
@@ -517,7 +572,7 @@
               x = { apptId: k, jobId: String(a.jobId), number: num.indexOf('-') > -1 ? num.split('-').pop() : num, customer: norm(a.customerName), customerId: a.customerId || null,
                 start: toDate(a.appointmentStart), end: toDate(a.appointmentEnd), windowStart: toDate(a.arrivalWindowStart), windowEnd: toDate(a.arrivalWindowEnd),
                 status: norm(a.appointmentStatus), jobStatus: norm(a.jobStatus), confirmed: a.isConfirmed === true, bu: a.businessUnitId, buName: norm(a.businessUnitName),
-                jobType: norm(a.jobTypeName), city: norm(a.city), zip: norm(a.zip), tags: (Array.isArray(a.tags) ? a.tags : []).map(tagOf).filter(Boolean), techs: [], techStatus: {} };
+                jobType: norm(a.jobTypeName), jobTypeId: a.jobTypeId != null ? String(a.jobTypeId) : '', city: norm(a.city), zip: norm(a.zip), tags: (Array.isArray(a.tags) ? a.tags : []).map(tagOf).filter(Boolean), techs: [], techStatus: {} };
               appts.set(k, x);
               if (!byJob.has(x.jobId)) byJob.set(x.jobId, []);
               byJob.get(x.jobId).push(x);
@@ -541,7 +596,7 @@
         history.forEach(list => list.sort((a, b) => a.at - b.at));
         const teams = [];
         techs.forEach(t => { if (t.team && teams.indexOf(t.team) < 0) teams.push(t.team); });
-        return { key, day: d, at: Date.now(), filtersKnown: !!f, techs, techById, teams, appts, byJob, byTech, history, hasHistory: !!hist };
+        return { key, day: d, at: Date.now(), filtersKnown: !!f, techs, techById, teams, appts, byJob, byTech, history, hasHistory: !!hist, shifts, events };
       })();
       loading = { key, p, started: Date.now() };
       try {
@@ -1566,11 +1621,12 @@
   const bizPane = el('div', 'display:none');
   const textsPane = el('div', 'display:none');
   const movesPane = el('div', 'display:none;overflow-y:auto');
-  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane, texts: textsPane, moves: movesPane };
+  const routerPane = el('div', 'display:none;overflow-y:auto');
+  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane, texts: textsPane, moves: movesPane, router: routerPane };
   Object.keys(views).forEach(k => { views[k].classList.add('st-view'); if (k === 'menu') views[k].classList.add('st-view-menu'); });
   news.classList.add('st-bar');
   health.bar.classList.add('st-bar');
-  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts', moves: '🔀 Move Jobs' };
+  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts', moves: '🔀 Move Jobs', router: '🧭 Tech Router (Beta)' };
   const showView = name => {
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
     titleText.textContent = TITLES[name];
@@ -1587,6 +1643,8 @@
     if (name === 'texts' && typeof texts !== 'undefined') texts.refresh();
     if (name !== 'moves' && typeof moves !== 'undefined') moves.leave();
     if (name === 'moves' && typeof moves !== 'undefined') moves.refresh();
+    if (name !== 'router' && typeof router !== 'undefined') router.leave();
+    if (name === 'router' && typeof router !== 'undefined') router.refresh();
   };
 
   // The menu: one tile per tool.
@@ -1596,15 +1654,19 @@
     ['msgs', '💬', 'Tech Messages', 'Message the techs you pick', '#efe7fb'],
     ['biz', '🏢', 'Business Unit', 'Switch jobs to a branch', '#e3effd'],
     ['texts', '📱', 'Customer Texts', 'Text customers, confirm appointments', '#e3f5e9'],
-    ['moves', '🔀', 'Move Jobs', 'Move, add, unassign or swap techs', '#f3e9fb']
+    ['moves', '🔀', 'Move Jobs', 'Move, add, unassign or swap techs', '#f3e9fb'],
+    ['router', '🧭', 'Tech Router', 'Fill a tech\'s open time, closest techs', '#ddf3f0', 'Beta']
   ];
   const tiles = el('div', 'display:grid;gap:6px');
-  TOOLS.forEach(([key, icon, name, desc, tint]) => {
+  TOOLS.forEach(([key, icon, name, desc, tint, badge]) => {
     const b = el('button', 'display:flex;gap:10px;align-items:center;width:100%;text-align:left;padding:8px 10px;border:1px solid var(--st-line);border-radius:10px;background:var(--st-bg);cursor:pointer;color:var(--st-ink);font:inherit');
     b.type = 'button'; b.className = 'st-tile';
     const ic = el('span', 'flex:none;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;font-size:17px;background:' + tint, icon);
     const tx = el('span', 'display:grid;gap:1px;min-width:0');
-    tx.append(el('span', 'font-weight:800;font-size:13px', name), el('span', 'font-size:11.5px;color:var(--st-ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis', desc));
+    const nameLine = el('span', 'font-weight:800;font-size:13px;display:flex;gap:6px;align-items:center', name);
+    // A tool that's still being built says so in its name: Tech Router (Beta).
+    if (badge) nameLine.appendChild(el('span', 'flex:none;font-size:10px;font-weight:800;letter-spacing:.03em;padding:0 6px;border-radius:9px;line-height:16px;background:var(--st-amber-s);color:var(--st-amber);border:1px solid var(--st-amber-l)', badge.toUpperCase()));
+    tx.append(nameLine, el('span', 'font-size:11.5px;color:var(--st-ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis', desc));
     b.append(ic, tx, el('span', 'margin-left:auto;color:var(--st-ink-3);font-size:16px', '›'));
     b.addEventListener('mousedown', e => e.preventDefault());
     b.onclick = () => showView(key);
@@ -1624,7 +1686,7 @@
     if (names.length) menuMsg.append(pill(names.length > 2 ? names.length + ' branches' : names.join(', '), 'var(--st-soft-2)', 'var(--st-ink-2)'));
   };
   board.onChange(() => { if (menuPane.style.display !== 'none') renderMenuMsg(); });
-  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane, movesPane);
+  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane, movesPane, routerPane);
 
   // ===================================================================
   // Tool 1: Notes
@@ -6334,6 +6396,29 @@
       }
     };
 
+    // Another tool (🧭 Tech Router) hands over jobs and the tech they should go to: ➡️ Move to a
+    // tech, with that tech in To and Anyone in From, and only these jobs picked (anything picked
+    // before is taken off). Nothing changes until Review and the button. Returns how many jobs are
+    // picked, or -1 if Move Jobs is busy.
+    const take = (ids, toId, toName) => {
+      if (busy) return -1;
+      if (toName && !seenNames.has(S(toId))) seenNames.set(S(toId), toName);
+      mode = 'move'; set('stMoveMode', 'move');
+      modeRadios.forEach(r => { r.checked = r.value === 'move'; });
+      picker.setPicking(false);
+      clearReview();
+      picker.removeMany(picker.ids());
+      // Saved first: if the tech list is still loading, filling it in afterwards picks this tech.
+      set('stMoveTo', S(toId)); set('stMoveFrom', '');
+      toPick.find.value = ''; fromPick.find.value = '';
+      toPick.sel.value = ''; fromPick.sel.value = '';
+      toPick.fill(); fromPick.fill();
+      const n = picker.addMany(ids);
+      layout();
+      updateButtons();
+      say('From 🧭 Tech Router: ' + plural(n, 'job') + ' to ' + techName(toId) + '. Press Review to see it first; nothing changes until you press Move.');
+      return n;
+    };
     // Hands the jobs the last run changed to Job Notifications.
     const handOff = () => {
       if (busy || !movedJobs.length) return;
@@ -6360,10 +6445,1126 @@
     layout();
     return {
       refresh,
+      take,
       leave: () => picker.setPicking(false),
       isRunning: () => running,
       stop: requestStop,
       cleanup: () => { picker.cleanup(); window.removeEventListener('resize', onResize); }
+    };
+  })();
+
+  // ===================================================================
+  // Tool 7: Tech Router (Beta)
+  // Still being built: it says so each time it's opened. It only reads. Anything that changes a
+  // job goes through 🔀 Move Jobs, where nothing changes until it's reviewed and the button pressed.
+  //   📞 Fill a spot: a tech's day is already planned and they need one more job, first thing, in
+  //     the middle of the day or at the end. Pick the tech (from the list, or their name on the
+  //     board) and it finds their open time on the day the board shows (their shift, less their
+  //     jobs and other events; 8 AM–5 PM when the board has no shift for them; from now on, today),
+  //     then looks through the Unassigned list for that day and the next 14 days, and the Hold list,
+  //     for jobs to fill it. For each open time it lists the best few, with the customer's phone
+  //     number, to call and offer the earlier time:
+  //       - The right kind of job, learned from the last LEARN_DAYS days of schedules: the job types
+  //         the tech did (2 or more) or their department did (3 or more). So a project coordinator
+  //         gets quotes, not electrical or plumbing ones (the Electrical and Plumbing departments do
+  //         those). A job type too rare to go by is matched by the start of its name ("Quote - Lead
+  //         Turn Over - …"); one with nothing to go by is shown with ⚠️ and ranks lower.
+  //       - It fits: the job's length plus the driving (from their job before, and on to their job
+  //         after) fits the open time, give or take SLACK minutes.
+  //       - Least extra driving: from where they'll be before it (their job before, or home first
+  //         thing) to it and on to where they go next (their next job, or home at the end of the
+  //         day), compared with going straight there. More than MAX_DETOUR minutes extra is left out.
+  //       - Then: Urgent and High priority first, an Unassigned job that's already on that day
+  //         (and better, one whose time already fits), and jobs waiting longest a little sooner.
+  //       - Sales rule (Sales/ Service and Project Coordinators): tries to keep a day of driving
+  //         under SALES_MAX minutes; a job that would go over is marked ⚠️ and ranks lower.
+  //     ➡️ hands a job already on that day's Unassigned list to Move Jobs. The others need a call
+  //     first: the phone number, 📋 to copy it and 🔎 to open the job.
+  //   🔎 Closest techs: type a zip code or a job number, or click a job on the board with 🖱️: the
+  //     techs closest by drive time (from where they are now, today, or from home). For a job with a
+  //     tech: 📍 Next job, the Unassigned jobs nearby that tech could take after it.
+  //   Where things are: Unassigned and Hold jobs by their map point in ServiceTitan; jobs on the
+  //   timeline by the middle of their zip code (the US Census's point, saved in this browser); techs'
+  //   homes from their tech profile. Every point is rounded to about half a mile before it's sent
+  //   for drive times, and nothing else about a job (no address, no name) is sent anywhere.
+  //   Drive times: Mapbox, with a public key built in (it only works from go.servicetitan.com), or
+  //   your own (⚙️). If they can't be had, straight-line miles are used and marked ~.
+  // ===================================================================
+  const router = (() => {
+    const TOOL = 'Tech Router';
+    const S = x => String(x);
+    const pad = n => String(n).padStart(2, '0');
+    const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+    const toDate = v => { if (v == null || v === '') return null; const d = v instanceof Date ? v : new Date(v); return isNaN(d) ? null : d; };
+    const dayText = d => d ? d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'the day shown';
+    const clock = d => { const h = d.getHours(), m = d.getMinutes(); return (h % 12 || 12) + (m ? ':' + pad(m) : '') + (h < 12 ? ' AM' : ' PM'); };
+    const span = (s, e) => { s = toDate(s); e = toDate(e); if (!s) return ''; if (!e) return clock(s); const a = clock(s), b = clock(e); return a.slice(-2) === b.slice(-2) ? a.slice(0, -3) + '–' + b : a + '–' + b; };
+    const mins = m => { m = Math.max(0, Math.round(m)); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' hr' + (m % 60 ? ' ' + (m % 60) + ' min' : ''); };
+    const miText = n => (n < 10 ? n.toFixed(1) : String(Math.round(n))) + ' mi';
+    const zip5 = z => { const m = /\b(\d{5})(?:-\d{4})?\b/.exec(String(z == null ? '' : z)); return m ? m[1] : ''; };
+    // Town names typed in capitals ("MENDENHALL") shown as Mendenhall.
+    const tidy = t => { t = norm(t); return /[a-z]/.test(t) ? t : t.toLowerCase().replace(/(^|[\s'-])([a-z])/g, (m, a, b) => a + b.toUpperCase()); };
+    const overlap = (a, b) => !!(a.start && a.end && b.start && b.end) && a.start < b.end && b.start < a.end;
+    const hours = a => a.start && a.end ? (a.end - a.start) / 3600000 : 0;
+
+    const LEARN_DAYS = 28, UA_DAYS = 15, MIN_GAP = 30, SLACK = 15, MAX_DETOUR = 90, ROUTED = 24, SKILL_MISS = 45;
+    const SHOW = 5, MAX = 12, NEAR_SHOW = 3, NEAR_MAX = 10, STACK = 60, LONG_JOB = 4;
+    const SALES = [/^sales\s*\/\s*service\b/i, /^project coordinator/i], SALES_MAX = 330, OVER_WEIGHT = 2;
+    const isSales = team => SALES.some(re => re.test(norm(team)));
+    const PRIORITY = { urgent: -30, high: -15, normal: 0, low: 10 };
+    const PHONE_ONLY = /\bphone call\b/i;
+
+    // ---------- Map points and drive times ----------
+    // A public Mapbox key (not a secret): in Mapbox it only works from go.servicetitan.com.
+    const BUILT_IN_KEY = 'pk.eyJ1IjoiYWpvbmVzNTY2IiwiYSI6ImNtdnFuajN1bzAxNDkyenB2YzNmY3FoNGsifQ.DMF49WglFplflrSntyyoMQ';
+    const KEY = 'stNearKey';   // your own Mapbox key, saved in this browser (⚙️ Drive times)
+    const ownKey = () => norm(get(KEY) || '');
+    const driveKey = () => ownKey() || BUILT_IN_KEY;
+    const MB = 'https://api.mapbox.com/';
+    const ZCTA = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/PUMA_TAD_TAZ_UGA_ZCTA/MapServer/1/query';
+    const ZIP_KEY = 'stZipPoints';
+    const okPt = p => Array.isArray(p) && p.length === 2 && p.every(n => typeof n === 'number' && isFinite(n)) && Math.abs(p[0]) <= 90 && Math.abs(p[1]) <= 180 && !(p[0] === 0 && p[1] === 0);
+    const miles = (a, b) => {
+      const R = 3958.8, r = x => x * Math.PI / 180;
+      const h = Math.sin(r(b.lat - a.lat) / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(r(b.lon - a.lon) / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(h));
+    };
+    // A guess from straight-line miles, for when Mapbox can't be reached: roads run about 25% longer,
+    // at about 45 mph.
+    const guessMin = mi => Math.max(1, Math.round(mi * 1.25 / 45 * 60));
+    const guess = (a, b) => miles(a, b) < 0.1 ? 0 : guessMin(miles(a, b));
+    // About half a mile: every point is rounded to this before it's sent, so no address can be read from it.
+    const r2 = n => Math.round(n * 100) / 100;
+    const ptText = p => r2(p.lon) + ',' + r2(p.lat);
+    // A request to a service outside ServiceTitan: no cookies, a time limit, the answer as JSON.
+    const outside = async (url, ms) => {
+      const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = ctl ? setTimeout(() => ctl.abort(), ms) : null;
+      try {
+        const r = await fetch(url, { credentials: 'omit', signal: ctl ? ctl.signal : undefined });
+        if (!r.ok) throw new Error('answered ' + r.status);
+        return await r.json();
+      } catch (e) { throw e && e.name === 'AbortError' ? new Error('took too long to answer') : e; }
+      finally { if (timer) clearTimeout(timer); }
+    };
+    // Zip codes' middle points: the US Census's own point for each (only the zip codes are sent).
+    // Saved in this browser, so a zip is only looked up once. { points: Map(zip -> { lat, lon }), error }.
+    const savedZips = () => { const m = readSaved(ZIP_KEY, {}, {}); return m && typeof m === 'object' && !Array.isArray(m) ? m : {}; };
+    const zipPoints = async zips => {
+      const want = Array.from(new Set(zips.filter(z => /^\d{5}$/.test(z))));
+      const saved = savedZips(), found = {};
+      const missing = want.filter(z => !okPt(saved[z]));
+      let error = '';
+      for (let i = 0; i < missing.length; i += 50) {
+        const part = missing.slice(i, i + 50);
+        const q = new URLSearchParams({ where: 'ZCTA5 IN (\'' + part.join('\',\'') + '\')', outFields: 'ZCTA5,INTPTLAT,INTPTLON', returnGeometry: 'false', f: 'json' });
+        try {
+          const j = await outside(ZCTA + '?' + q, 12000);
+          if (!j || !Array.isArray(j.features)) throw new Error('answered in a shape the Toolbox doesn\'t know');
+          j.features.forEach(f => {
+            const a = f && f.attributes;
+            if (!a || part.indexOf(String(a.ZCTA5)) < 0) return;
+            const p = [Number(a.INTPTLAT), Number(a.INTPTLON)];
+            if (okPt(p)) found[a.ZCTA5] = [Math.round(p[0] * 1e4) / 1e4, Math.round(p[1] * 1e4) / 1e4];
+          });
+        } catch (e) { error = 'the US Census map service ' + errText(e); }
+      }
+      if (Object.keys(found).length) set(ZIP_KEY, JSON.stringify(Object.assign(savedZips(), found)));   // read again: another tab may have saved some
+      const all = Object.assign({}, saved, found), points = new Map();
+      want.forEach(z => { if (okPt(all[z])) points.set(z, { lat: all[z][0], lon: all[z][1] }); });
+      return { points, error };
+    };
+    // Drive times from each place in `from` to each in `to`: Mapbox's Matrix, at most 25 places a
+    // request (10 with traffic), so long lists go in parts. { out: out[i][j] = { min, mi } or null,
+    // ok }. If Mapbox fails it isn't asked again for a minute (the guesses are used meanwhile).
+    let mapboxDown = 0;
+    const matrix = async (from, to, traffic) => {
+      const out = from.map(() => to.map(() => null));
+      const key = driveKey();
+      if (!key || !from.length || !to.length || Date.now() - mapboxDown < 60000) return { out, ok: false };
+      const L = traffic ? 10 : 25, fc = Math.min(from.length, L - 1), tc = L - fc;
+      try {
+        for (let i = 0; i < from.length; i += fc) for (let j = 0; j < to.length; j += tc) {
+          const F = from.slice(i, i + fc), T = to.slice(j, j + tc);
+          const q = 'sources=' + F.map((x, k) => k).join(';') + '&destinations=' + T.map((x, k) => F.length + k).join(';') + '&annotations=duration,distance&access_token=' + encodeURIComponent(key);
+          const r = await outside(MB + 'directions-matrix/v1/mapbox/' + (traffic ? 'driving-traffic' : 'driving') + '/' + F.concat(T).map(ptText).join(';') + '?' + q, 12000);
+          if (!r || r.code !== 'Ok' || !Array.isArray(r.durations)) throw new Error('no drive times');
+          F.forEach((x, a) => T.forEach((y, b) => {
+            const d = r.durations[a] && r.durations[a][b], m = r.distances && r.distances[a] && r.distances[a][b];
+            if (typeof d === 'number' && isFinite(d)) out[i + a][j + b] = { min: Math.round(d / 60), mi: typeof m === 'number' ? m / 1609.34 : null };
+          }));
+        }
+        return { out, ok: true };
+      } catch (e) { mapboxDown = Date.now(); return { out, ok: false }; }
+    };
+
+    // ---------- Techs' homes (their ServiceTitan profile), read once ----------
+    let homes = null;
+    const loadHomes = async () => {
+      if (homes) return homes;
+      try { homes = new Map((await st.technicians()).map(t => [S(t.id), t])); }
+      catch (e) { if (st.isSignedOut(e)) throw e; if (e && e.kind === 'bad') health.flag(TOOL, 'can\'t read the technician list (for where techs live)', '/app/api/data/technicians'); return new Map(); }
+      return homes;
+    };
+    const homeOf = id => { const h = homes && homes.get(S(id)); return h && h.home ? h.home : null; };
+    const homeWords = h => 'home' + (h && h.town ? ' (' + tidy(h.town) + ')' : '');
+
+    // ---------- Who does which jobs: the last LEARN_DAYS days of schedules ----------
+    // Every appointment of the techs in the board's branches (every team, even if the board is
+    // filtered to some), read in four week-long parts, then counted:
+    // { key, at, jobs, names: { typeId: name }, all: { typeId: n }, team: { team: { typeId: n } },
+    //   tech: { techId: { typeId: n } } }. A two-tech job counts once for each tech. Kept for the
+    //   day in this browser (a few kilobytes of counts, no customers).
+    const LEARN_KEY = 'stRouterLearned';
+    let learned = null, learning = null;
+    const learnKey = () => ymd(new Date()) + '|' + board.bus().join(',');
+    const learn = async s => {
+      const key = learnKey();
+      if (learned && learned.key === key) return learned;
+      const saved = readSaved(LEARN_KEY, null, null);
+      if (saved && saved.v === 1 && saved.key === key && saved.all && saved.team && saved.tech && saved.names) return (learned = saved);
+      if (learning && learning.key === key) return learning.p;
+      const p = (async () => {
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        // Every tech and their team in the board's branches (the board's own list, without its team filter).
+        const res = await st.getJSON('/dispatch-center/technicians/resources', 30000, { page: 1, pageSize: 100000, businessUnitIds: board.bus(), skillIds: [], teamIds: [], workstreamIds: [], shiftTypes: [],
+          technicianIds: [], orderBy: ['Team', 'Technician'], includeSkills: false, applyTeamsManagement: true, includeLicenseTypes: false, startDate: ymd(today), endDate: ymd(addDays(today, 1)) }).catch(e => { if (st.isSignedOut(e)) throw e; return null; });
+        const techs = res && Array.isArray(res.items) && res.items.length ? res.items.filter(t => t && t.id != null).map(t => ({ id: S(t.id), team: norm(t.teamName) })) : s.techs;
+        const ids = techs.map(t => Number(t.id)).filter(n => isFinite(n));
+        const teamOf = new Map(techs.map(t => [S(t.id), t.team || '']));
+        const parts = [0, 1, 2, 3].map(i => [addDays(today, -7 * (i + 1)), addDays(today, -7 * i)]);
+        const got = ids.length ? await Promise.all(parts.map(([a, b]) => st.getJSON('/dispatch-center/daily-assignments', 45000, { technicianIds: ids, startDate: ymd(a), endDate: ymd(b), page: 1, pageSize: ids.length, fields: '', showOnHoldJobs: false }))) : [];
+        const L = { v: 1, key, at: Date.now(), jobs: 0, names: {}, all: {}, team: {}, tech: {} };
+        const seen = new Set(), start = addDays(today, -LEARN_DAYS);
+        got.forEach(sch => {
+          if (!sch || !Array.isArray(sch.items)) { health.flag(TOOL, 'can\'t read the last 4 weeks of schedules', '/dispatch-center/daily-assignments'); throw Object.assign(new Error('the last 4 weeks of schedules came back in a shape the Toolbox doesn\'t know'), { kind: 'bad' }); }
+          sch.items.forEach(it => (it && Array.isArray(it.technicianSchedule) ? it.technicianSchedule : []).forEach(d => (d && Array.isArray(d.assignments) ? d.assignments : []).forEach(a => {
+            if (!a || a.jobTypeId == null || a.appointmentId == null || board.isCanceled(a.appointmentStatus)) return;
+            const at = toDate(a.appointmentStart);
+            if (at && (at < start || at >= today)) return;
+            const tid = S(it.technicianId), k = a.appointmentId + '|' + tid;
+            if (seen.has(k)) return;
+            seen.add(k);
+            const ty = S(a.jobTypeId), tm = teamOf.get(tid) || '';
+            if (!L.names[ty]) L.names[ty] = norm(a.jobTypeName);
+            L.all[ty] = (L.all[ty] || 0) + 1;
+            (L.team[tm] = L.team[tm] || {})[ty] = (L.team[tm][ty] || 0) + 1;
+            (L.tech[tid] = L.tech[tid] || {})[ty] = (L.tech[tid][ty] || 0) + 1;
+          })));
+        });
+        L.jobs = seen.size;
+        health.clear(TOOL);
+        set(LEARN_KEY, JSON.stringify(L));
+        return (learned = L);
+      })();
+      learning = { key, p };
+      try { return await p; } finally { if (learning && learning.p === p) learning = null; }
+    };
+    // Does a kind of job suit this tech? { tier, text, by }:
+    //   good:    they did 2 or more of that job type, or their department did 3 or more
+    //   family:  a job type too rare to go by (fewer than RARE of it), but their department does a
+    //            good share of the jobs whose names start the same way ("Quote - Lead Turn Over")
+    //   no:      other departments do these (by: the one that does the most)
+    //   unknown: nothing to go by (shown with ⚠️)
+    const RARE = 5;
+    const SPLIT = /\s*-\s+|\s+-\s*/;
+    const segs = name => norm(name).split(SPLIT).map(norm).filter(Boolean);
+    const topTeam = (L, types) => {
+      let best = '', n = 0;
+      Object.keys(L.team).forEach(tm => { const c = types.reduce((t, ty) => t + ((L.team[tm] || {})[ty] || 0), 0); if (c > n) { n = c; best = tm; } });
+      return best;
+    };
+    const fitOf = (L, tech, typeId, typeName) => {
+      const ty = S(typeId), team = tech.team || '';
+      const mine = (L.tech[S(tech.id)] || {})[ty] || 0, tm = (L.team[team] || {})[ty] || 0, all = L.all[ty] || 0;
+      const first = board.firstName(tech.name) || tech.name;
+      if (mine >= 2) return { tier: 'good', text: first + ' did ' + mine + ' of these in the last 4 weeks' };
+      if (tm >= 3) return { tier: 'good', text: (team || 'Their department') + ' did ' + tm + ' of these in the last 4 weeks' };
+      if (all >= RARE) return { tier: 'no', by: topTeam(L, [ty]) };
+      // A rare job type: the jobs whose names start the same way, longest start first (at least two
+      // parts: "Quote - Generator", never just "Quote").
+      const name = typeName || L.names[ty] || '', mineSegs = segs(name).map(x => x.toLowerCase());
+      const family = n => Object.keys(L.all).filter(t => { const g = segs(L.names[t]).map(x => x.toLowerCase()); return g.length >= n && g.slice(0, n).join(' - ') === mineSegs.slice(0, n).join(' - '); });
+      for (let n = mineSegs.length - 1; n >= 2; n--) {
+        const types = family(n), fa = types.reduce((t, x) => t + L.all[x], 0), ft = types.reduce((t, x) => t + ((L.team[team] || {})[x] || 0), 0);
+        if (fa < RARE) continue;
+        const words = segs(name).slice(0, n).join(' - ');
+        return ft >= 3 && ft / fa >= 0.2 ? { tier: 'family', text: (team || 'Their department') + ' did ' + ft + ' "' + words + '" jobs in the last 4 weeks (this exact type is rare)' } : { tier: 'no', by: topTeam(L, types) };
+      }
+      // Nothing that close: the department word ("Plumbing", "Install"…) can still say it's another department's.
+      if (mineSegs.length) {
+        const types = family(1), fa = types.reduce((t, x) => t + L.all[x], 0), ft = types.reduce((t, x) => t + ((L.team[team] || {})[x] || 0), 0);
+        if (fa >= 20 && ft / fa < 0.05) return { tier: 'no', by: topTeam(L, types) };
+      }
+      return { tier: 'unknown', text: 'No recent jobs like it to go by. Check it\'s one for them.' };
+    };
+
+    // ---------- The jobs to fill a spot with: the Unassigned list (the day and the next 14) and the Hold list ----------
+    // A job from either list: { apptId, jobId, customer, customerId, phone, typeId, type, priority,
+    // start, end, dur (minutes), created, pt ({ lat, lon } or null), zip, city, tags, source ('ua' or
+    // 'hold'), day (the Unassigned list's day) }, or null (canceled, or Unassigned with a tech on it).
+    const candOf = (x, source, day) => {
+      if (!x || x.Id == null || x.JobId == null) return null;
+      const jobId = S(x.JobId);
+      if (!/^\d+$/.test(jobId)) return null;
+      if (x.AppointmentStatus === 5 || board.isCanceled(x.AppointmentStatus) || board.isCanceled(x.Status) || board.isCanceled(x.JobStatus)) return null;
+      if (source === 'ua' && Array.isArray(x.Technicians) && x.Technicians.length) return null;
+      const s0 = toDate(x.Start), e0 = toDate(x.End);
+      if (source === 'ua' && s0 && day && !board.sameDay(s0, day)) return null;
+      const secs = Number(x.Duration);
+      const dur = secs > 0 ? secs / 60 : s0 && e0 && e0 > s0 ? (e0 - s0) / 60000 : 60;
+      // The job's map point (seen Oct 29 2026 in Latitude / Longitude; JobLatitude / JobLongitude empty).
+      const num = v => (typeof v === 'number' && isFinite(v) && v !== 0 ? v : null);
+      const lat = num(x.JobLatitude) != null ? num(x.JobLatitude) : num(x.Latitude), lon = num(x.JobLongitude) != null ? num(x.JobLongitude) : num(x.Longitude);
+      return { apptId: S(x.Id), jobId, customer: norm(x.Customer), customerId: x.CustomerId || null, phone: last10(x.CustomerPhone),
+        typeId: x.TypeId != null ? S(x.TypeId) : '', type: norm(x.Type), priority: norm(x.Priority), start: s0, end: e0,
+        dur: Math.max(15, Math.min(dur, 12 * 60)), created: toDate(x.CreatedOn), pt: lat != null && lon != null && okPt([lat, lon]) ? { lat, lon } : null,
+        zip: zip5(x.Zip), city: tidy(x.City), tags: (Array.isArray(x.Tags) ? x.Tags : []).map(board.tagOf).filter(Boolean), source, day: day || null };
+    };
+    // Read at most once a minute. { rows, notes (what couldn't be read) } or null if stopped.
+    let uaCache = null, holdCache = null;
+    const candidates = async (s, wantUA, wantHold, stale) => {
+      const bus = board.bus(), notes = [];
+      let rows = [];
+      if (wantUA) {
+        const key = ymd(s.day) + '|' + bus.join(',');
+        if (!(uaCache && uaCache.key === key && Date.now() - uaCache.at < 60000)) {
+          const days = Array.from({ length: UA_DAYS }, (x, i) => addDays(s.day, i));
+          const got = await st.pool(days, 4, d => st.getJobs('Unassigned', board.isoT(d), bus), null, { stop: stale });
+          if (got.stopped || stale()) return null;
+          if (got.halted) throw got.haltError;
+          const list = [], missed = [];
+          got.forEach((r, i) => {
+            if (!Array.isArray(r)) {
+              if (r && r.error && r.error.kind === 'bad') health.flag(TOOL, 'can\'t read the Unassigned list', '/Dispatch/GetJobs');
+              missed.push(dayText(days[i]));
+              return;
+            }
+            r.forEach(x => { const c = candOf(x, 'ua', days[i]); if (c) list.push(c); });
+          });
+          uaCache = { key, at: Date.now(), rows: list, missed };
+        }
+        if (uaCache.missed.length) notes.push('⚠️ Couldn\'t read the Unassigned list for ' + uaCache.missed.join(', ') + '.');
+        rows = rows.concat(uaCache.rows);
+      }
+      if (wantHold) {
+        const key = bus.join(',');
+        if (!(holdCache && holdCache.key === key && Date.now() - holdCache.at < 60000)) {
+          let raw = null;
+          try { raw = await st.getJobs('Hold', board.isoT(s.day), bus); }
+          catch (e) {
+            if (st.isSignedOut(e)) throw e;
+            if (e && e.kind === 'bad') health.flag(TOOL, 'can\'t read the Hold list', '/Dispatch/GetJobs');
+            notes.push('⚠️ Couldn\'t read the Hold list (' + errText(e) + ').');
+          }
+          if (stale()) return null;
+          if (raw) holdCache = { key, at: Date.now(), rows: raw.map(x => candOf(x, 'hold', null)).filter(Boolean) };
+        }
+        if (holdCache && holdCache.key === key) rows = rows.concat(holdCache.rows);
+      }
+      // One entry per appointment (one on both lists stays as Unassigned).
+      const seen = new Set();
+      rows = rows.filter(c => !seen.has(c.apptId) && seen.add(c.apptId));
+      return { rows, notes };
+    };
+
+    // ---------- A tech's day and its open time ----------
+    // { start, end (their shift, or 8 AM–5 PM), guessed (no shift on the board), off (time off all
+    // day), offIgnored (time off at the same time as their jobs, not counted), jobs (in time order),
+    // events (how many other events), gaps: [{ start, end, kind, prev,
+    // next }] }. kind: 'first' (before their first job), 'mid' (between jobs), 'last' (after their
+    // last job) or 'open' (no jobs that day). Today, open time starts from now (to the next quarter hour).
+    const KINDS = { first: '🌅 First thing', mid: '🕛 Mid-day', last: '🌇 End of day', open: '📭 Open all day' };
+    const dayOf = (s, techId) => {
+      const at = h => { const d = new Date(s.day); d.setHours(h, 0, 0, 0); return d; };
+      const shifts = s.shifts && s.shifts.get(S(techId)) || [];
+      const work = shifts.filter(x => !x.off);
+      const start = work.length ? new Date(Math.min.apply(null, work.map(x => +x.start))) : at(8);
+      const end = work.length ? new Date(Math.max.apply(null, work.map(x => +x.end))) : at(17);
+      const jobs = (s.byTech.get(S(techId)) || []).filter(a => board.live(a) && a.start && a.end).sort((a, b) => a.start - b.start);
+      const events = s.events && s.events.get(S(techId)) || [];
+      // Time off on the board counts, unless it's at the same time as one of their jobs (seen Oct 29
+      // 2026: time off from 7 AM to 7 PM on days full of jobs). Then it's left out, and the day says so.
+      const offs = shifts.filter(x => x.off && !jobs.some(j => overlap(x, j))), offIgnored = shifts.some(x => x.off && jobs.some(j => overlap(x, j)));
+      const busy = jobs.map(a => ({ start: a.start, end: a.end })).concat(events, offs).sort((a, b) => a.start - b.start);
+      const off = offs.some(x => x.start <= start && x.end >= end);
+      const now = new Date(), cut = board.sameDay(s.day, now) ? new Date(Math.ceil(now / 900000) * 900000) : null;
+      const raw = [];
+      let cursor = start;
+      busy.forEach(b => {
+        if (b.end <= cursor) return;
+        if (b.start > cursor) raw.push([cursor, b.start < end ? b.start : end]);
+        if (b.end > cursor) cursor = b.end;
+      });
+      if (cursor < end) raw.push([cursor, end]);
+      const gaps = [];
+      raw.forEach(([a, b]) => {
+        if (cut && a < cut) a = cut;
+        if (a >= end || (b - a) / 60000 < MIN_GAP) return;
+        const before = jobs.filter(j => j.end <= a), after = jobs.filter(j => j.start >= b);
+        const prev = before.sort((x, y) => y.end - x.end)[0] || null, next = after[0] || null;
+        gaps.push({ start: a, end: b, prev, next, kind: !jobs.length ? 'open' : !before.length ? 'first' : !after.length ? 'last' : 'mid' });
+      });
+      return { start, end, guessed: !work.length, off, offIgnored, jobs, events: events.length, gaps };
+    };
+
+    // ---------- Pane ----------
+    const wrap = el('div', 'padding:8px 10px 10px;display:grid;gap:8px');
+    // The Beta warning, each time the tool is opened.
+    const beta = el('div', 'padding:8px 10px;border:1px solid var(--st-amber-l);background:var(--st-amber-s);color:var(--st-amber);border-radius:8px;font-size:12px;line-height:1.4');
+    beta.className = 'st-router-beta';
+    const betaOk = smallBtn('Got it', () => { beta.style.display = 'none'; fit(); }, 'margin-top:6px;padding:2px 10px;min-height:24px');
+    beta.append(el('div', 'font-weight:800;font-size:12.5px;margin-bottom:2px', '🚧 Beta: this tool isn\'t finished yet'),
+      el('div', '', 'Parts of it are still being built and its suggestions can be off, so check a job before you call the customer or move it. It only reads: nothing changes unless you take a job to 🔀 Move Jobs and press the button there.'), betaOk);
+    const msg = el('div', 'font-size:12px;color:var(--st-ink-2);min-height:16px');
+    msg.id = 'st-router-msg';
+    const say = t => { msg.textContent = t; };
+    let tab = get('stRouterTab') === 'near' ? 'near' : 'fill';
+    const tabs = el('div', 'display:flex;gap:4px');
+    const tabBtn = (val, text) => smallBtn(text, () => { tab = val; set('stRouterTab', val); setPicking(null); showTab(); }, 'flex:1');
+    const fillTab = tabBtn('fill', '📞 Fill a spot'), nearTab = tabBtn('near', '🔎 Closest techs');
+    tabs.append(fillTab, nearTab);
+    const small = (text, extra) => el('div', 'font-size:11px;color:var(--st-ink-3);' + (extra || ''), text);
+    // A line that folds open to show more.
+    const fold = (head, body) => {
+      const box = el('div', 'font-size:11px;color:var(--st-ink-3)');
+      const b = el('button', 'border:none;background:transparent;padding:0;cursor:pointer;font:inherit;color:var(--st-ink-2);text-align:left');
+      b.type = 'button';
+      const inner = el('div', 'display:none;margin-top:2px;white-space:pre-wrap', body);
+      const label = () => { b.textContent = (inner.style.display === 'none' ? '▸ ' : '▾ ') + head; };
+      b.onclick = () => { inner.style.display = inner.style.display === 'none' ? 'block' : 'none'; label(); fit(); };
+      label();
+      box.append(b, inner);
+      return box;
+    };
+    const pill = (label, title, onClick, extra) => { const b = smallBtn(label, onClick, 'padding:2px 7px;min-height:24px;font-size:11.5px;' + (extra || '')); b.title = title; b.addEventListener('mousedown', e => e.preventDefault()); return b; };
+    const copyPill = (label, text, title) => {
+      const b = pill(label, title || text, async () => { const ok = await copy(text); b.textContent = ok ? '✓ Copied' : label; setTimeout(() => { b.textContent = label; }, 1500); });
+      return b;
+    };
+    const openJob = j => { try { window.open(location.href.split('#')[0] + '#/Job/Index/' + j, '_blank'); } catch (e) {} };
+    const setOn = (b, on) => { b.style.background = on ? 'var(--st-blue)' : ''; b.style.color = on ? '#fff' : ''; b.style.borderColor = on ? 'var(--st-blue)' : ''; };
+
+    // ---------- 📞 Fill a spot: the controls ----------
+    const fillBox = el('div', 'display:grid;gap:6px');
+    const techRow = el('div', 'display:flex;gap:6px;align-items:center');
+    const techSel = el('select', 'flex:1;min-width:0;' + FIELD);
+    techSel.id = 'st-router-tech';
+    const techPick = smallBtn('🖱️', () => setPicking(picking === 'tech' ? null : 'tech'));
+    techPick.title = 'Pick the tech by clicking their name on the board';
+    techRow.append(techSel, techPick);
+    const WHERE = [['any', 'Any time'], ['first', '🌅 First'], ['mid', '🕛 Mid-day'], ['last', '🌇 End']];
+    let where = WHERE.some(w => w[0] === get('stRouterWhere')) ? get('stRouterWhere') : 'any';
+    const whereRow = el('div', 'display:flex;gap:4px');
+    const whereBtns = WHERE.map(([v, text]) => {
+      const b = smallBtn(text, () => { where = v; set('stRouterWhere', v); paintWhere(); }, 'flex:1;padding:3px 4px;white-space:nowrap');
+      b.setAttribute('data-where', v);
+      b.title = v === 'any' ? 'Any open time in their day' : v === 'first' ? 'Before their first job' : v === 'mid' ? 'Between two of their jobs' : 'After their last job';
+      whereRow.appendChild(b);
+      return b;
+    });
+    const paintWhere = () => whereBtns.forEach(b => setOn(b, b.getAttribute('data-where') === where));
+    const lookRow = el('div', 'display:flex;gap:12px;flex-wrap:wrap;font-size:12px;align-items:center');
+    lookRow.appendChild(el('span', 'font-weight:600', 'Look in:'));
+    const tick = (id, text, key, title) => {
+      const l = el('label', 'display:flex;gap:5px;align-items:center;cursor:pointer');
+      l.title = title;
+      const c = el('input'); c.type = 'checkbox'; c.id = id; c.checked = get(key) !== '0';
+      c.onchange = () => set(key, c.checked ? '1' : '0');
+      l.append(c, document.createTextNode(text));
+      lookRow.appendChild(l);
+      return c;
+    };
+    const uaBox = tick('st-router-ua', 'Unassigned', 'stRouterUA', 'The Unassigned list for the day the board shows and the next 14 days (your board\'s branches)');
+    const holdBox = tick('st-router-hold', 'Holds', 'stRouterHold', 'Every job on hold (your board\'s branches)');
+    const fillBtn = smallBtn('🔍 Find jobs for their open time', () => fill(), PRIMARY + 'padding:7px 9px;font-size:13px');
+    fillBtn.id = 'st-router-find';
+    const fillOut = el('div', 'display:none;gap:7px');
+    fillOut.id = 'st-router-fill-out';
+    fillBox.append(techRow, whereRow, lookRow, fillBtn, fillOut);
+    // The techs on the board, by team (filled again only when the board's day or filter changes).
+    let techsKey = '';
+    const fillTechs = force => {
+      const s = board.latest();
+      const k = s ? s.key + '|' + s.techs.length : onBoard() ? 'loading' : 'off';
+      if (!force && k === techsKey) return;
+      techsKey = k;
+      const keep = techSel.value || get('stRouterTech') || '';
+      techSel.textContent = '';
+      const top = el('option', '', s ? 'Pick a tech…' : onBoard() ? 'Loading the board…' : 'Open the Dispatch board first');
+      top.value = '';
+      techSel.appendChild(top);
+      if (s) {
+        const groups = new Map();
+        s.techs.forEach(t => { const g = t.team || 'Other'; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(t); });
+        groups.forEach((list, team) => {
+          const g = el('optgroup'); g.label = team;
+          list.forEach(t => { const o = el('option', '', t.name); o.value = t.id; g.appendChild(o); });
+          techSel.appendChild(g);
+        });
+      }
+      if (Array.from(techSel.options).some(o => o.value === keep)) techSel.value = keep;
+    };
+    techSel.onchange = () => { set('stRouterTech', techSel.value); fillOut.style.display = 'none'; paint(); };
+
+    // ---------- 🔎 Closest techs: the controls ----------
+    const nearBox = el('div', 'display:none;gap:6px');
+    const nearRow = el('div', 'display:flex;gap:5px');
+    const typed = el('input', 'flex:1;min-width:0;' + FIELD);
+    typed.type = 'text'; typed.id = 'st-router-input'; typed.placeholder = 'Zip code or job #';
+    typed.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); findTyped(); } };
+    const jobPick = smallBtn('🖱️', () => setPicking(picking === 'job' ? null : 'job'));
+    jobPick.title = 'Pick a job: click this, then a job on the board or a row in the Jobs Tray below it';
+    const nearBtn = smallBtn('Find', () => findTyped(), PRIMARY);
+    nearBtn.id = 'st-router-near-find';
+    nearRow.append(typed, jobPick, nearBtn);
+    const nearOpts = el('div', 'display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:12px');
+    const fromSel = el('select', 'flex:1;min-width:0;' + FIELD + 'padding:3px 6px');
+    fromSel.id = 'st-router-from';
+    [['now', 'From where they are now'], ['home', 'From their home']].forEach(([v, t]) => { const o = el('option', '', t); o.value = v; fromSel.appendChild(o); });
+    fromSel.value = get('stNearFrom') === 'home' ? 'home' : 'now';
+    const teamSel = el('select', FULL + FIELD + 'padding:3px 6px');
+    teamSel.id = 'st-router-team';
+    const fieldLab = el('label', 'flex:none;display:flex;gap:5px;align-items:center;cursor:pointer');
+    const fieldBox = el('input'); fieldBox.type = 'checkbox'; fieldBox.id = 'st-router-field';
+    fieldBox.checked = get('stNearField') !== '0';
+    fieldLab.title = 'Only ServiceTitan\'s managed technicians (field techs), so office staff on the board are left out';
+    fieldLab.append(fieldBox, document.createTextNode('Field techs only'));
+    nearOpts.append(fromSel, fieldLab);
+    const nearOut = el('div', 'display:none;gap:5px');
+    nearOut.id = 'st-router-near-out';
+    nearBox.append(nearRow, nearOpts, teamSel, nearOut);
+    const fillTeams = s => {
+      const keep = teamSel.value || get('stNearTeam') || '';
+      teamSel.textContent = '';
+      const any = el('option', '', 'Any department'); any.value = ''; teamSel.appendChild(any);
+      (s ? s.teams : []).forEach(n => { const o = el('option', '', n); o.value = n; teamSel.appendChild(o); });
+      teamSel.value = Array.from(teamSel.options).some(o => o.value === keep) ? keep : '';
+    };
+    fromSel.onchange = () => { set('stNearFrom', fromSel.value); if (lastNear) near(lastNear); };
+    teamSel.onchange = () => { set('stNearTeam', teamSel.value); if (lastNear) near(lastNear); };
+    fieldBox.onchange = () => { set('stNearField', fieldBox.checked ? '1' : '0'); if (lastNear) near(lastNear); };
+
+    // ---------- ⚙️ Drive times (your own Mapbox key) ----------
+    const keyHead = el('button', FULL + 'padding:3px 6px;border:1px solid var(--st-line);border-radius:6px;background:var(--st-soft);color:var(--st-ink-2);font:inherit;font-size:11.5px;text-align:left;cursor:pointer');
+    keyHead.type = 'button';
+    const keyBox = el('div', 'display:none;gap:5px;padding:7px;border:1px solid var(--st-line);border-radius:6px;background:var(--st-soft);font-size:12px');
+    const keyInput = el('input', FULL + FIELD);
+    keyInput.type = 'text'; keyInput.placeholder = 'pk.…'; keyInput.autocomplete = 'off'; keyInput.spellcheck = false;
+    const keyMsg = el('div', 'min-height:14px;color:var(--st-ink-2)');
+    const keyLabel = () => { keyHead.textContent = '⚙️ Drive times: ' + (ownKey() ? 'your own Mapbox key' : 'built-in Mapbox key') + (keyBox.style.display === 'none' ? '  ▸' : '  ▾'); };
+    keyHead.onclick = () => { keyBox.style.display = keyBox.style.display === 'none' ? 'grid' : 'none'; keyInput.value = ownKey(); keyMsg.textContent = ''; keyLabel(); fit(); };
+    const saveKey = async () => {
+      const k = norm(keyInput.value);
+      if (/^sk\./.test(k)) { keyMsg.textContent = '⚠️ That\'s a secret key (sk.). Use a public key (pk.) that only works from go.servicetitan.com.'; return; }
+      if (!/^pk\.[\w-]+\.[\w-]+$/.test(k)) { keyMsg.textContent = '⚠️ That doesn\'t look like a Mapbox public key (pk.…).'; return; }
+      keyMsg.textContent = 'Checking it with Mapbox…';
+      let ok = false;
+      try { const r = await outside(MB + 'directions-matrix/v1/mapbox/driving/-89.87,31.96;-89.73,31.87?sources=0&destinations=1&access_token=' + encodeURIComponent(k), 10000); ok = !!(r && r.code === 'Ok'); } catch (e) { ok = false; }
+      if (!ok) { keyMsg.textContent = '⚠️ Mapbox didn\'t accept it from this page (check the key and its URL restriction). Not saved.'; return; }
+      set(KEY, k); mapboxDown = 0;
+      keyMsg.textContent = '✓ Saved. Drive times use this key in this browser.';
+      keyLabel();
+    };
+    const keyBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    keyBtns.append(smallBtn('Save', () => saveKey(), PRIMARY), smallBtn('Use the built-in key', () => { try { localStorage.removeItem(KEY); } catch (e) {} keyInput.value = ''; mapboxDown = 0; keyMsg.textContent = 'Using the built-in key.'; keyLabel(); }));
+    keyBox.append(el('div', '', 'Drive times come from Mapbox with the Toolbox\'s built-in key. To use a different one in this browser, paste a Mapbox public key (it starts with pk.), set in Mapbox to only work from go.servicetitan.com.'), keyInput, keyBtns, keyMsg);
+    keyLabel();
+
+    const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    navRow.append(smallBtn('← Menu', () => showView('menu')));
+    wrap.append(beta, tabs, msg, fillBox, nearBox, keyHead, keyBox, navRow);
+    routerPane.appendChild(wrap);
+    const showTab = () => {
+      setOn(fillTab, tab === 'fill'); setOn(nearTab, tab === 'near');
+      fillBox.style.display = tab === 'fill' ? 'grid' : 'none';
+      nearBox.style.display = tab === 'near' ? 'grid' : 'none';
+      if (!onBoard()) say(board.need());
+      else if (tab === 'fill') say(fillOut.style.display === 'none' ? 'Pick a tech, then 🔍 Find. It reads only; nothing changes.' : msg.textContent);
+      else say(nearOut.style.display === 'none' ? 'Type a zip code or job number, or press 🖱️ and click a job. It reads only; nothing changes.' : msg.textContent);
+      paint(); fit();
+    };
+    const fit = () => {
+      if (routerPane.style.display === 'none') return;
+      const pr = panel.getBoundingClientRect(), others = pr.height - routerPane.getBoundingClientRect().height;
+      const top = panel.style.top && panel.style.top !== 'auto' ? Math.max(0, pr.top) : 16;
+      routerPane.style.maxHeight = Math.max(220, innerHeight - top - others - 16) + 'px';
+    };
+    const onResize = () => fit();
+    window.addEventListener('resize', onResize);
+    resized.push(fit);
+    let searching = false;
+    const setBusy = on => {
+      searching = on;
+      [[fillBtn, '🔍 Find jobs for their open time', 'Finding…'], [nearBtn, 'Find', 'Finding…']].forEach(([b, idle, busyText]) => { b.disabled = on; b.textContent = on ? busyText : idle; b.classList.toggle('st-busy', on); });
+    };
+
+    // ---------- Picking a tech or a job on the board ----------
+    let picking = null, alive = true;
+    const shown = () => routerPane.style.display !== 'none';
+    const style = el('style');
+    const paint = () => {
+      let css = '';
+      if (shown() && tab === 'fill' && techSel.value) css = board.techsCss([techSel.value], '#0265dc', 'rgba(2,101,220,.12)');
+      if (shown() && tab === 'near' && lastNear && lastNear.jobId) css = board.jobsCss([lastNear.jobId], '#00796b', 'rgba(0,121,107,.22)');
+      style.textContent = css;
+      if (css) board.mount(style);
+    };
+    const setPicking = what => {
+      picking = what && onBoard() ? what : null;
+      if (what && !onBoard()) say(board.need());
+      setOn(techPick, picking === 'tech'); setOn(jobPick, picking === 'job');
+      if (picking === 'tech') say('Click a tech\'s name on the board.');
+      if (picking === 'job') say('Click a job on the board, or a row in the Jobs Tray below it.');
+    };
+    const onClick = async e => {
+      if (!picking || !onBoard() || !shown() || panel.contains(e.target)) return;
+      if (picking === 'tech') {
+        const id = board.clickedTech(e);
+        if (!id) return;
+        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+        setPicking(null);
+        fillTechs(true);
+        if (!Array.from(techSel.options).some(o => o.value === id)) { say('⚠️ Couldn\'t find that tech in the board\'s list yet. Try again in a moment.'); return; }
+        techSel.value = id; set('stRouterTech', id); paint();
+        fill();
+        return;
+      }
+      const hit = board.clickedJob(e);
+      if (!hit) return;
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      setPicking(null);
+      let j = hit.jobId;
+      if (!j && hit.apptId) { try { await board.load({ fresh: true }); } catch (err) {} j = board.jobOfAppt(hit.apptId); }
+      if (!j) { say('⚠️ Couldn\'t tell which job that is. Click it again in a moment.'); return; }
+      typed.value = j;
+      near({ jobId: j });
+    };
+    window.addEventListener('click', onClick, true);
+    pickers.push({ active: () => !!picking && shown(), hit: e => picking === 'tech' ? !!board.clickedTech(e) : !!board.clickedJob(e) });
+
+    // ---------- 📞 Fill a spot ----------
+    let runId = 0, lastFill = null;
+    const fill = async () => {
+      const run = ++runId;
+      const stale = () => run !== runId || !alive;
+      setPicking(null);
+      fillOut.style.display = 'none'; fillOut.textContent = '';
+      lastFill = null;
+      if (!onBoard()) return say(board.need());
+      const techId = techSel.value;
+      if (!techId) return say('Pick a tech first: from the list, or 🖱️ and their name on the board.');
+      if (!uaBox.checked && !holdBox.checked) return say('Tick Unassigned, Holds or both, for where to look.');
+      setBusy(true);
+      try {
+        say('Reading their day…');
+        const s = await board.load({ fresh: true });   // their day as it is right now
+        if (stale()) return;
+        const t = s.techById.get(S(techId));
+        if (!t) return say('⚠️ That tech isn\'t on the board for ' + dayText(s.day) + ' (its filter may hide them).');
+        await loadHomes();
+        if (stale()) return;
+        if (!learned || learned.key !== learnKey()) say('Learning which jobs each department does, from the last 4 weeks of schedules…');
+        let L;
+        try { L = await learn(s); }
+        catch (e) { if (st.isSignedOut(e) || stale()) throw e; return say('⚠️ Couldn\'t read the last 4 weeks of schedules (' + errText(e) + '), so it can\'t tell which jobs suit them. Try again in a minute.'); }
+        if (stale()) return;
+        const D = dayOf(s, t.id);
+        if (D.off) return renderFill({ s, t, D, gaps: [], L, notes: [], left: null });
+        const want = D.gaps.filter(g => where === 'any' || g.kind === where || g.kind === 'open');
+        if (!want.length) return renderFill({ s, t, D, gaps: [], L, notes: [], left: null, noneWhere: D.gaps.length > 0 });
+        say('Looking through ' + [uaBox.checked ? 'the Unassigned list (' + dayText(s.day) + ' and the next 14 days)' : '', holdBox.checked ? 'the Hold list' : ''].filter(Boolean).join(' and ') + '…');
+        const C = await candidates(s, uaBox.checked, holdBox.checked, stale);
+        if (!C || stale()) return;
+        // The right kind of job, and somewhere to measure to.
+        const onDay = new Set(board.techJobs(t.id)), memo = new Map(), left = { other: 0, otherBy: new Map(), place: 0, phone: 0 };
+        const fitFor = c => { const k = c.typeId + '|' + c.type; if (!memo.has(k)) memo.set(k, fitOf(L, t, c.typeId, c.type)); return memo.get(k); };
+        const pool = [];
+        C.rows.forEach(c => {
+          if (onDay.has(c.jobId)) return;
+          // A phone-call-only job isn't a visit to fit into their day.
+          if (PHONE_ONLY.test(c.type)) { left.phone++; return; }
+          const f = fitFor(c);
+          if (f.tier === 'no') { left.other++; const by = f.by || 'other departments'; left.otherBy.set(by, (left.otherBy.get(by) || 0) + 1); return; }
+          pool.push(Object.assign({}, c, { fit: f }));
+        });
+        say('Measuring the driving for ' + plural(pool.length, 'job') + ' that suit ' + t.name + '…');
+        const { points, error: zipError } = await zipPoints(D.jobs.map(a => zip5(a.zip)).concat(pool.filter(c => !c.pt).map(c => c.zip)));
+        if (stale()) return;
+        pool.forEach(c => { if (!c.pt && c.zip && points.get(c.zip)) c.pt = points.get(c.zip); });
+        const placed = pool.filter(c => c.pt);
+        left.place = pool.length - placed.length;
+        const home = homeOf(t.id), homePt = home ? { lat: home.lat, lon: home.lon } : null;
+        const jobPt = a => (a && points.get(zip5(a.zip))) || null;
+        const jobWords = a => 'their ' + span(a.start, a.end) + ' job' + (a.city ? ' in ' + tidy(a.city) : '');
+        // Sales: about how much they drive that day now (home, their jobs in time order, home).
+        const sales = isSales(t.team);
+        let dayDrive = 0;
+        if (sales) { const route = [homePt].concat(D.jobs.map(jobPt), [homePt]).filter(Boolean); for (let i = 1; i < route.length; i++) dayDrive += guess(route[i - 1], route[i]); }
+        const today = board.sameDay(s.day, new Date());
+        const fitsAsIs = (c, g) => c.source === 'ua' && c.start && c.end && c.start >= g.start && c.end <= g.end;
+        const bonus = (c, g) => {
+          let b = PRIORITY[c.priority.toLowerCase()] || 0;
+          if (c.fit.tier === 'family') b += 8; else if (c.fit.tier === 'unknown') b += 30;
+          if (c.source === 'ua' && c.day && board.sameDay(c.day, s.day)) b -= fitsAsIs(c, g) ? 30 : 20;
+          if (c.created) b -= Math.min(15, Math.max(0, (Date.now() - c.created) / (7 * 86400000)) * 2);
+          return b;
+        };
+        const gaps = [];
+        for (const g0 of want) {
+          const g = Object.assign({}, g0, { list: [], left: { long: 0, far: 0 } });
+          g.len = (g.end - g.start) / 60000;
+          g.prevPt = g.prev ? jobPt(g.prev) : homePt;
+          g.nextPt = g.next ? jobPt(g.next) : homePt;
+          g.prevWords = g.prev ? jobWords(g.prev) : home ? homeWords(home) : '';
+          g.nextWords = g.next ? jobWords(g.next) : home ? homeWords(home) : '';
+          const base0 = g.prevPt && g.nextPt ? guess(g.prevPt, g.nextPt) : 0;
+          // A first pass with straight-line miles; the best few get real drive times.
+          const rough = [];
+          placed.forEach(c => {
+            if (c.dur > g.len + SLACK) { g.left.long++; return; }
+            const a = g.prevPt ? guess(g.prevPt, c.pt) : 0, b = g.nextPt ? guess(c.pt, g.nextPt) : 0, extra = a + b - base0;
+            if (extra > MAX_DETOUR * 1.6) { g.left.far++; return; }
+            rough.push({ c, a, b, extra, score: extra + bonus(c, g) });
+          });
+          rough.sort((x, y) => x.score - y.score);
+          const top = rough.slice(0, ROUTED);
+          const from = [g.prevPt, g.nextPt].filter(Boolean), both = !!(g.prevPt && g.nextPt);
+          const m = await matrix(from, top.map(x => x.c.pt).concat(both ? [g.nextPt] : []), today);
+          if (stale()) return;
+          const iPrev = g.prevPt ? 0 : -1, iNext = g.nextPt ? (g.prevPt ? 1 : 0) : -1;
+          const base = both && m.out[0][top.length] ? m.out[0][top.length].min : base0;
+          top.forEach((x, k) => {
+            const dp = iPrev > -1 ? m.out[iPrev][k] : null, dn = iNext > -1 ? m.out[iNext][k] : null;
+            x.guess = (iPrev > -1 && !dp) || (iNext > -1 && !dn);
+            x.a = iPrev > -1 ? (dp ? dp.min : x.a) : 0;
+            x.b = iNext > -1 ? (dn ? dn.min : x.b) : 0;
+            x.extra = Math.max(0, x.a + x.b - (both ? base : 0));
+            const need = x.c.dur + (g.prev ? x.a : 0) + (g.next ? x.b : 0);
+            x.need = need;
+            if (need > g.len + SLACK) { x.out = 'long'; return; }
+            if (x.extra > MAX_DETOUR) { x.out = 'far'; return; }
+            x.asIs = fitsAsIs(x.c, g);
+            x.salesOver = 0;
+            let penalty = 0;
+            if (sales) {
+              const total = dayDrive + x.extra;
+              if (total > SALES_MAX) { x.salesOver = total; penalty = (total - Math.max(SALES_MAX, dayDrive)) * OVER_WEIGHT; }
+            }
+            x.score = x.extra + bonus(x.c, g) + penalty;
+          });
+          top.forEach(x => { if (x.out === 'long') g.left.long++; else if (x.out === 'far') g.left.far++; });
+          g.list = top.filter(x => !x.out).sort((x, y) => x.score - y.score || x.extra - y.extra).slice(0, MAX);
+          g.noDrive = !m.ok && top.length > 0;
+          gaps.push(g);
+        }
+        // Skills: the jobs it suggests need skills the tech has? (The same check Move Jobs makes.) One
+        // that doesn't is marked ⚠️ and ranks SKILL_MISS minutes lower.
+        const prof = homes && homes.get(S(t.id));
+        const skillsOn = (() => { try { return !(window.App && window.App.Data && window.App.Data.EnableSkillsManagement === false); } catch (e) { return true; } })();
+        if (skillsOn && prof && Array.isArray(prof.skillIds)) {
+          const ids = Array.from(new Set([].concat.apply([], gaps.map(g => g.list.map(x => x.c.jobId)))));
+          if (ids.length) say('Checking the skills ' + plural(ids.length, 'job') + ' need…');
+          const got = await st.pool(ids, 4, j => st.jobSkills(j), null, { stop: stale });
+          if (stale() || got.stopped) return;
+          const have = new Set(prof.skillIds.map(String)), need = new Map();
+          ids.forEach((j, i) => { if (Array.isArray(got[i])) need.set(j, got[i]); });
+          gaps.forEach(g => {
+            g.list.forEach(x => {
+              const miss = (need.get(x.c.jobId) || []).filter(k => !have.has(String(k.id)));
+              x.missing = miss.map(k => k.name || 'skill #' + k.id);
+              if (miss.length) x.score += SKILL_MISS;
+            });
+            g.list.sort((x, y) => x.score - y.score || x.extra - y.extra);
+          });
+        }
+        const notes = C.notes.slice();
+        if (zipError) notes.push('⚠️ Some zip codes couldn\'t be looked up: ' + zipError + '.');
+        renderFill({ s, t, D, gaps, L, notes, left, sales, dayDrive, home, total: C.rows.length, suited: pool.length });
+      } catch (e) {
+        if (stale()) return;
+        say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t look for jobs: ' + errText(e)));
+      } finally { if (run === runId) setBusy(false); }
+    };
+
+    const whenOf = (c, r) => {
+      if (c.source === 'hold') return { text: '⏸️ On hold' + (c.start ? ' (it was for ' + dayText(c.start) + ')' : '') + ': call to book it', tone: 'var(--st-amber)' };
+      const later = c.day ? Math.round((new Date(c.day.getFullYear(), c.day.getMonth(), c.day.getDate()) - new Date(r.s.day.getFullYear(), r.s.day.getMonth(), r.s.day.getDate())) / 86400000) : 0;
+      const t = c.start ? span(c.start, c.end) : '';
+      if (later <= 0) return { text: '🗓️ Unassigned ' + (board.sameDay(r.s.day, new Date()) ? 'today' : dayText(r.s.day)) + (t ? ' · ' + t : ''), tone: 'var(--st-green-d)' };
+      return { text: '📅 Unassigned ' + dayText(c.day) + (t ? ' · ' + t : '') + ' (' + plural(later, 'day') + ' later): call to move it up', tone: 'var(--st-blue-d)' };
+    };
+    const waiting = c => {
+      if (!c.created) return '';
+      const d = Math.floor((Date.now() - c.created) / 86400000);
+      return d < 2 ? '' : 'waiting ' + (d < 14 ? d + ' days' : Math.round(d / 7) + ' weeks');
+    };
+    const driveWords = (x, g) => {
+      const t = n => (x.guess ? '~' : '') + mins(n);
+      const parts = [];
+      if (g.prevPt) parts.push(t(x.a) + ' from ' + g.prevWords);
+      if (g.nextPt) parts.push(t(x.b) + ' on to ' + g.nextWords);
+      return (parts.length ? '🚗 ' + parts.join(', ') : '🚗 Can\'t measure the driving (nowhere to measure from)') + ' · a ' + mins(x.c.dur) + ' job';
+    };
+    const card = (x, n, g, r) => {
+      const c = x.c, w = whenOf(c, r);
+      const box = el('div', 'border:1px solid var(--st-line);border-radius:10px;padding:7px 9px;background:var(--st-bg);font-size:12px;display:grid;gap:2px;color:var(--st-ink)');
+      box.className = 'st-router-card';
+      box.setAttribute('data-job', c.jobId);
+      const top = el('div', 'display:flex;gap:6px;align-items:baseline');
+      const nm = el('span', 'font-weight:800;font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;user-select:text', n + '. ' + (c.customer || 'Job #' + c.jobId));
+      nm.title = c.customer;
+      const ex = el('span', 'font-weight:800;white-space:nowrap;color:' + (x.extra <= 15 ? 'var(--st-green-d)' : 'var(--st-ink)'), (x.guess ? '~' : '') + '+' + mins(x.extra));
+      ex.className = 'st-router-extra';
+      ex.title = 'Extra driving, compared with going straight from ' + (g.prevWords || 'their day') + (g.nextWords ? ' to ' + g.nextWords : '');
+      top.append(nm, ex);
+      box.appendChild(top);
+      box.appendChild(el('div', 'color:var(--st-ink-2);user-select:text;overflow-wrap:anywhere', '#' + c.jobId + ' · ' + (c.type || 'no job type') + (c.city ? ' · ' + c.city : c.zip ? ' · ' + c.zip : '')));
+      box.appendChild(el('div', 'font-weight:700;color:' + w.tone, w.text + (x.asIs ? ' · its time fits ✓' : '')));
+      box.appendChild(el('div', 'color:' + (c.fit.tier === 'unknown' ? 'var(--st-amber)' : 'var(--st-green-d)') + (c.fit.tier === 'unknown' ? ';font-weight:600' : ''), (c.fit.tier === 'unknown' ? '⚠️ ' : '✅ ') + c.fit.text));
+      box.appendChild(el('div', 'color:var(--st-ink-2)', driveWords(x, g)));
+      if (x.missing && x.missing.length) box.appendChild(el('div', 'color:var(--st-amber);font-weight:600', '⚠️ Needs a skill ' + board.firstName(r.t.name) + ' doesn\'t have: ' + x.missing.join(', ')));
+      if (x.salesOver) box.appendChild(el('div', 'color:var(--st-amber);font-weight:600', '⚠️ That makes about ' + mins(x.salesOver) + ' of driving that day (the sales goal is under ' + mins(SALES_MAX) + ')'));
+      const extras = [/^(urgent|high)$/i.test(c.priority) ? '⭐ ' + c.priority + ' priority' : '', waiting(c)].filter(Boolean);
+      if (extras.length || c.tags.length) {
+        const meta = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:1px');
+        if (extras.length) meta.appendChild(el('span', 'font-size:11px;color:var(--st-ink-2)', extras.join(' · ')));
+        if (c.tags.length) meta.appendChild(tagChips(c.tags, 3));
+        box.appendChild(meta);
+      }
+      box.appendChild(el('div', 'font-size:13px;font-weight:700;margin-top:2px;user-select:text;color:' + (c.phone ? 'var(--st-ink)' : 'var(--st-ink-3)'), c.phone ? '📞 ' + fmtPhone(c.phone) : 'No phone number on the job'));
+      const btns = el('div', 'display:flex;gap:4px;flex-wrap:wrap;margin-top:3px');
+      if (c.phone) btns.appendChild(copyPill('📋 Phone', fmtPhone(c.phone)));
+      if (c.customer) btns.appendChild(copyPill('📋 Name', c.customer));
+      btns.appendChild(pill('🔎 Open job', 'Opens job #' + c.jobId + ' in a new tab', () => openJob(c.jobId)));
+      if (c.source === 'ua' && c.day && board.sameDay(c.day, r.s.day)) {
+        const mv = pill('➡️ Move Jobs', 'Opens 🔀 Move Jobs with #' + c.jobId + ' and ' + r.t.name + ' filled in. Nothing changes until you review it and press Move.' + (x.asIs ? '' : ' Its time doesn\'t fit this open time yet: change it first.'), () => assign(c.jobId, r.t.id, r.t.name), 'background:#6a1b9a;border-color:#6a1b9a;color:#fff');
+        mv.className = 'st-router-assign';
+        btns.appendChild(mv);
+      }
+      box.appendChild(btns);
+      return box;
+    };
+    const gapWords = (g, r) => {
+      const a = g.prev ? 'after ' + jobOnly(g.prev) : (r.D.guessed ? 'from 8 AM' : 'from the start of their shift');
+      const b = g.next ? 'before ' + jobOnly(g.next) : (r.D.guessed ? 'until 5 PM' : 'until the end of their shift');
+      return a + ', ' + b;
+    };
+    const jobOnly = a => 'their ' + span(a.start, a.end) + ' job' + (a.city ? ' (' + tidy(a.city) + ')' : '');
+    const renderFill = r => {
+      lastFill = r;
+      fillOut.textContent = '';
+      const D = r.D, t = r.t;
+      const dayBox = el('div', 'padding:7px 9px;border:1px solid var(--st-line);border-radius:8px;background:var(--st-soft);font-size:12px;display:grid;gap:1px');
+      dayBox.className = 'st-router-day';
+      dayBox.append(el('div', 'font-weight:800;font-size:13px', t.name), el('div', 'color:var(--st-ink-2)', (t.team || 'No team') + ' · ' + dayText(r.s.day)));
+      dayBox.appendChild(el('div', '', (D.off ? 'Time off that day' : D.guessed ? 'No shift on the board (8 AM–5 PM used)' : 'Shift ' + span(D.start, D.end)) + ' · ' + plural(D.jobs.length, 'job') +
+        (D.jobs.length ? ': ' + D.jobs.map(a => span(a.start, a.end) + (a.city ? ' ' + tidy(a.city) : '')).join(', ') : '') + (D.events ? ' · ' + plural(D.events, 'other event') : '')));
+      if (D.offIgnored) dayBox.appendChild(el('div', 'color:var(--st-amber)', '⚠️ Time off on the board at the same time as their jobs isn\'t counted.'));
+      if (D.gaps.length) dayBox.appendChild(el('div', 'color:var(--st-ink-2)', 'Open: ' + D.gaps.map(g => KINDS[g.kind].split(' ')[0] + ' ' + span(g.start, g.end)).join(' · ')));
+      if (r.sales) dayBox.appendChild(el('div', 'color:var(--st-ink-2)', 'Sales goal: under ' + mins(SALES_MAX) + ' of driving a day. Their day now: about ' + mins(r.dayDrive) + '.'));
+      fillOut.appendChild(dayBox);
+      if (D.off || !D.gaps.length || !r.gaps.length) {
+        const why = D.off ? t.name + ' has time off on ' + dayText(r.s.day) + '.' :
+          !D.gaps.length ? 'No open time of ' + MIN_GAP + ' minutes or more in ' + t.name + '\'s day' + (board.sameDay(r.s.day, new Date()) ? ' from now on' : '') + '.' :
+          'No open time ' + (where === 'first' ? 'before their first job' : where === 'mid' ? 'between their jobs' : 'after their last job') + '. Try Any time.';
+        fillOut.appendChild(el('div', 'font-size:12px;color:var(--st-ink-2)', why));
+        fillOut.style.display = 'grid';
+        say('Nothing to fill.');
+        fit();
+        return;
+      }
+      r.gaps.forEach(g => {
+        const sec = el('div', 'display:grid;gap:5px');
+        sec.className = 'st-router-gap';
+        sec.setAttribute('data-kind', g.kind);
+        sec.appendChild(el('div', 'font-weight:800;font-size:12.5px;color:var(--st-ink);margin-top:2px', KINDS[g.kind] + ' · ' + span(g.start, g.end) + ' (' + mins(g.len) + ')'));
+        sec.appendChild(small(gapWords(g, r)));
+        if (!g.list.length) sec.appendChild(el('div', 'font-size:12px;color:var(--st-ink-2)', 'No jobs fit here.'));
+        const showN = g.showAll ? g.list.length : Math.min(SHOW, g.list.length);
+        g.list.slice(0, showN).forEach((x, i) => sec.appendChild(card(x, i + 1, g, r)));
+        if (g.list.length > SHOW) sec.appendChild(smallBtn(g.showAll ? 'Show fewer' : 'Show more (' + (g.list.length - SHOW) + ')', () => { g.showAll = !g.showAll; renderFill(r); }, 'justify-self:start;padding:2px 8px;min-height:24px'));
+        const out = [];
+        if (g.left.long) out.push(plural(g.left.long, 'job') + ' too long for this time');
+        if (g.left.far) out.push(plural(g.left.far, 'job') + ' more than ' + mins(MAX_DETOUR) + ' out of the way');
+        if (out.length) sec.appendChild(small('Left out here: ' + out.join(', ') + '.'));
+        if (g.noDrive) sec.appendChild(small('⚠️ Drive times aren\'t available right now, so these are guesses from straight-line miles (marked ~).', 'color:var(--st-amber)'));
+        fillOut.appendChild(sec);
+      });
+      if (r.left && (r.left.other || r.left.place || r.left.phone)) {
+        const head = 'Left out: ' + [r.left.other ? plural(r.left.other, 'job') + ' other departments do' : '', r.left.place ? plural(r.left.place, 'job') + ' with no location' : '',
+          r.left.phone ? plural(r.left.phone, 'phone-call-only job') : ''].filter(Boolean).join(', ');
+        const by = Array.from(r.left.otherBy.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => '• ' + k + ': ' + v).join('\n');
+        fillOut.appendChild(fold(head, 'Only the kinds of jobs ' + t.name + ' or ' + (t.team || 'their department') + ' did in the last 4 weeks are suggested.' + (by ? '\nMostly done by:\n' + by : '')));
+      }
+      r.notes.forEach(n => fillOut.appendChild(small(n, 'color:var(--st-amber)')));
+      const foot = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap');
+      foot.append(copyPill('📋 Copy list', fillText(r), 'Copies these suggestions as text'));
+      fillOut.appendChild(foot);
+      fillOut.appendChild(small('Looked at ' + plural(r.total, 'job') + '; ' + r.suited + ' suit ' + board.firstName(t.name) + '. From ' + plural(r.L.jobs, 'appointment') + ' in the last 4 weeks. Drive times © Mapbox © OpenStreetMap. Jobs on their day are measured to the middle of their zip code.', 'color:var(--st-ink-3)'));
+      fillOut.style.display = 'grid';
+      const n = r.gaps.reduce((a, g) => a + g.list.length, 0);
+      say(n ? 'Best first. Call the customer to offer the time; it changes nothing by itself.' : 'No jobs fit their open time.');
+      fit();
+    };
+    const fillText = r => {
+      const lines = [r.t.name + ' · ' + dayText(r.s.day)];
+      r.gaps.forEach(g => {
+        lines.push('', KINDS[g.kind] + ' ' + span(g.start, g.end) + ' (' + gapWords(g, r) + ')');
+        if (!g.list.length) lines.push('  No jobs fit here.');
+        g.list.slice(0, g.showAll ? MAX : SHOW).forEach((x, i) => lines.push('  ' + (i + 1) + '. ' + (x.c.customer || 'Job') + (x.c.phone ? '  ' + fmtPhone(x.c.phone) : '') + '  #' + x.c.jobId + ' ' + x.c.type + (x.c.city ? ', ' + x.c.city : '') +
+          ' · ' + whenOf(x.c, r).text.replace(/^\S+ /, '') + ' · +' + mins(x.extra) + ' driving'));
+      });
+      return lines.join('\n');
+    };
+    const assign = (jobId, techId, techName) => {
+      if (lock) return say('Wait for ' + lock + ' to finish first.');
+      const n = moves.take([jobId], techId, techName);
+      if (n < 0) return say('🔀 Move Jobs is busy. Wait for it to finish, then try again.');
+      showView('moves');
+    };
+
+    // ---------- 🔎 Closest techs ----------
+    let lastNear = null, nearView = 'techs', nearAll = false;
+    // A zip code or a job number: a job on the board is a job; otherwise five digits that are a zip
+    // code are a zip code (with a "did you mean the job" button); anything else is looked up as a job.
+    const findTyped = async () => {
+      const v = norm(typed.value).replace(/^#/, '');
+      if (!/^\d{3,}$/.test(v)) return say('Type a zip code or a job number.');
+      if (!onBoard()) return say(board.need());
+      const s = board.latest() || await board.load().catch(() => null);
+      if (s && s.byJob.has(v)) return near({ jobId: v });
+      if (/^\d{5}$/.test(v)) {
+        say('Finding the closest techs…');
+        const { points, error } = await zipPoints([v]);
+        if (points.has(v) || error) return near({ zip: v, orJob: true });
+      }
+      near({ jobId: v });
+    };
+    // Where a tech is: today and "where they are now": the job they're working, else the one they're
+    // on the way to, else the last one they finished today; otherwise (or "from home") their home.
+    const placeNow = (s, t, mode, today) => {
+      if (mode === 'now' && today) {
+        const appts = (s.byTech.get(t.id) || []).filter(board.live);
+        const latest = (re, by) => appts.filter(a => re.test(a.techStatus[t.id] || a.status)).sort((a, b) => (b[by] || 0) - (a[by] || 0))[0];
+        const pick = [[latest(/^working$/i, 'start'), 'working a job'], [latest(/^dispatched$/i, 'start'), 'on the way to a job'], [latest(/^(done|completed)$/i, 'end'), 'finished a job']].find(([a]) => a && zip5(a.zip));
+        if (pick) return { zip: zip5(pick[0].zip), why: pick[1] + (pick[0].city ? ' in ' + tidy(pick[0].city) : '') };
+      }
+      const h = homeOf(t.id);
+      return h ? { pt: { lat: h.lat, lon: h.lon }, why: 'from ' + homeWords(h) } : null;
+    };
+    const near = async target => {
+      const run = ++runId;
+      const stale = () => run !== runId || !alive;
+      lastNear = target; nearAll = false;
+      paint();
+      nearOut.style.display = 'none'; nearOut.textContent = '';
+      if (!onBoard()) return say(board.need());
+      setBusy(true);
+      try {
+        say('Finding the closest techs…');
+        const s = await board.load();
+        await loadHomes();
+        if (stale()) return;
+        fillTeams(s);
+        const today = board.sameDay(s.day, new Date());
+        const place = { zip: target.zip || '', city: '', pt: null, techIds: [], customer: '', onDay: false };
+        if (target.jobId) {
+          const list = (s.byJob.get(S(target.jobId)) || []).filter(board.live);
+          if (list.length) {
+            const z = list.find(a => zip5(a.zip)) || list[0];
+            place.zip = zip5(z.zip); place.city = z.city; place.customer = z.customer; place.onDay = true;
+            list.forEach(a => a.techs.forEach(id => { if (place.techIds.indexOf(id) < 0) place.techIds.push(id); }));
+          } else {
+            // Not on the timeline: the Unassigned list (with its map point), then the job's own panel.
+            const un = await board.unassigned(TOOL).catch(e => { if (st.isSignedOut(e)) throw e; return null; });
+            if (stale()) return;
+            const row = un && un.rows.find(x => x.jobId === S(target.jobId));
+            if (row) {
+              const c = candOf(row.raw, 'ua', s.day);
+              place.pt = c && c.pt; place.zip = zip5(row.raw && row.raw.Zip); place.city = tidy(row.raw && row.raw.City); place.customer = row.customer;
+            } else {
+              let jp;
+              try { jp = await st.jobPlace(target.jobId); }
+              catch (e) { if (st.isSignedOut(e)) throw e; if (!stale()) say('⚠️ Couldn\'t find job #' + target.jobId + ' (' + errText(e) + '). Check the number.'); return; }
+              if (stale()) return;
+              place.zip = jp.zip; place.city = jp.city; place.customer = jp.customer; place.techIds = jp.techIds;
+            }
+          }
+          if (!place.zip && !place.pt) return say('⚠️ Job #' + target.jobId + ' has no zip code in ServiceTitan, so there\'s nothing to measure to.');
+        }
+        const team = teamSel.value, fieldOnly = fieldBox.checked, mode = fromSel.value;
+        // Field techs: ServiceTitan's managed technicians (when the tech list can't be read, everyone).
+        const usable = t => { if (!homes) return true; const h = homes.get(S(t.id)); return h ? h.active && (!fieldOnly || h.managed) : !fieldOnly; };
+        const pool = s.techs.filter(t => (!team || t.team === team) && usable(t));
+        const places = pool.map(t => ({ t, at: placeNow(s, t, mode, today) }));
+        const { points, error } = await zipPoints([place.zip].concat(places.map(x => x.at && x.at.zip)).filter(Boolean));
+        if (stale()) return;
+        const to = place.pt || points.get(place.zip);
+        if (!to) return say('⚠️ ' + (error ? 'Couldn\'t look up where ' + place.zip + ' is (' + error + '). Try again in a minute.' : place.zip + ' isn\'t a zip code the US Census knows.'));
+        const placed = [], unplaced = [];
+        places.forEach(x => {
+          const p = x.at ? (x.at.pt || points.get(x.at.zip)) : null;
+          if (p) placed.push({ t: x.t, pt: p, why: x.at.why, line: miles(p, to), sameZip: !!x.at.zip && x.at.zip === place.zip });
+          else unplaced.push(x.t);
+        });
+        placed.sort((a, b) => a.line - b.line || a.t.name.localeCompare(b.t.name));
+        const top = placed.slice(0, NEAR_MAX);
+        if (top.length) say('Getting drive times for ' + plural(top.length, 'tech') + '…');
+        const m = await matrix(top.map(x => x.pt), [to], today);
+        if (stale()) return;
+        top.forEach((x, i) => {
+          x.drive = m.out[i][0];
+          x.min = x.drive ? x.drive.min : guessMin(x.line);
+          x.onIt = place.techIds.indexOf(S(x.t.id)) > -1;
+          x.jobsToday = board.techJobs(x.t.id).length;
+        });
+        top.sort((a, b) => a.min - b.min || a.line - b.line);
+        let next = null;
+        // 📍 Next job: for a job on the board's day with a tech on it.
+        if (target.jobId && place.onDay && place.techIds.length) {
+          try { next = await nextJobs(s, target.jobId, to, place, stale); }
+          catch (e) { if (st.isSignedOut(e)) throw e; next = { error: errText(e) }; }
+          if (stale()) return;
+        }
+        nearView = next && !next.error ? 'next' : 'techs';
+        renderNear({ target, place, top, unplaced, error, s, today, mode, team, fieldOnly, total: pool.length, next, noDrive: top.filter(x => !x.drive).length });
+      } catch (e) {
+        if (stale()) return;
+        say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t find the closest techs: ' + errText(e)));
+      } finally { if (run === runId) setBusy(false); }
+    };
+    // 📍 Next job: the Unassigned jobs closest to a job that the tech on it could take next.
+    //   - Not over before this job ends; never during an all-day job of theirs (LONG_JOB hours or
+    //     more); at the same time as a shorter one is marked ⚠️ and counts STACK minutes farther.
+    //   - The right kind of job for them (the last 4 weeks of schedules, as in 📞 Fill a spot).
+    const nextJobs = async (s, jobId, to, place, stale) => {
+      const tech = s.techById.get(S(place.techIds[0]));
+      if (!tech) return null;
+      const mine = (s.byJob.get(S(jobId)) || []).filter(a => board.live(a) && a.techs.indexOf(tech.id) > -1).sort((a, b) => (b.end || 0) - (a.end || 0))[0];
+      const endAt = mine ? mine.end : null;
+      const others = (s.byTech.get(tech.id) || []).filter(a => board.live(a) && a.jobId !== S(jobId));
+      say('Finding the closest Unassigned jobs for ' + tech.name + '…');
+      const L = await learn(s);
+      const un = await board.unassigned(TOOL);
+      if (stale()) return null;
+      const rows = un.rows.map(r => candOf(r.raw, 'ua', s.day)).filter(c => c && c.jobId !== S(jobId) && !PHONE_ONLY.test(c.type));
+      const { points } = await zipPoints(rows.filter(c => !c.pt).map(c => c.zip));
+      if (stale()) return null;
+      const left = { time: 0, busy: 0, dept: 0, place: 0 }, cands = [];
+      rows.forEach(c => {
+        const p = c.pt || points.get(c.zip);
+        if (!p) { left.place++; return; }
+        if (endAt && c.end && c.end <= endAt) { left.time++; return; }
+        if (others.some(b => overlap(b, c) && hours(b) >= LONG_JOB)) { left.busy++; return; }
+        const f = fitOf(L, tech, c.typeId, c.type);
+        if (f.tier === 'no') { left.dept++; return; }
+        const clash = others.find(b => overlap(b, c)) || null;
+        cands.push({ c, pt: p, f, line: miles(to, p), clash });
+      });
+      cands.sort((a, b) => (a.line + (a.clash ? STACK : 0)) - (b.line + (b.clash ? STACK : 0)));
+      const top = cands.slice(0, NEAR_MAX);
+      const m = await matrix([to], top.map(x => x.pt), board.sameDay(s.day, new Date()));
+      if (stale()) return null;
+      top.forEach((x, i) => { const d = m.out[0][i]; x.min = d ? d.min : guessMin(x.line); x.guess = !d; x.mi = d && d.mi != null ? d.mi : x.line; });
+      top.sort((a, b) => (a.min + (a.clash ? STACK : 0)) - (b.min + (b.clash ? STACK : 0)) || a.line - b.line);
+      return { tech, list: top, left, endAt, multi: place.techIds.length > 1 };
+    };
+    const nearRowEl = (n, name, time, detail, extraLine, btns) => {
+      const c = el('div', 'display:flex;gap:6px;align-items:center;padding:6px 8px;background:var(--st-bg);font-size:12px;color:var(--st-ink)' + (n > 1 ? ';border-top:1px solid var(--st-line)' : ''));
+      c.className = 'st-router-near-row';
+      const left = el('div', 'flex:1;min-width:0');
+      const top = el('div', 'display:flex;gap:5px;align-items:baseline');
+      const nm = el('span', 'font-weight:700;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;user-select:text', name);
+      nm.className = 'st-router-near-name';
+      top.append(el('span', 'color:#00796b;font-weight:800', n + '.'), nm, el('span', 'margin-left:auto;font-weight:800;white-space:nowrap', time));
+      const d2 = el('div', 'color:var(--st-ink-3);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis', detail);
+      d2.title = detail;
+      left.append(top, d2);
+      if (extraLine) left.appendChild(extraLine);
+      const b = el('div', 'display:flex;gap:3px;flex:none');
+      btns.forEach(x => b.appendChild(x));
+      c.append(left, b);
+      return c;
+    };
+    const listBox = () => el('div', 'border:1px solid var(--st-line);border-radius:8px;overflow:hidden');
+    const renderNear = r => {
+      nearOut.textContent = '';
+      const what = r.target.jobId ? 'job #' + r.target.jobId + (r.place.customer ? ' ' + r.place.customer : '') + ' (' + [r.place.city ? tidy(r.place.city) : '', r.place.zip].filter(Boolean).join(' ') + ')' : r.place.zip;
+      const head = el('div', 'font-size:12px;font-weight:800;color:var(--st-ink)');
+      head.className = 'st-router-near-head';
+      head.textContent = 'Closest to ' + what + (r.team ? ' · ' + r.team : '') + (r.fieldOnly ? '' : ' · everyone on the board');
+      nearOut.appendChild(head);
+      if (r.target.orJob) nearOut.appendChild(smallBtn('Job #' + r.target.zip + ' instead?', () => near({ jobId: r.target.zip }), 'padding:1px 6px;min-height:22px;font-size:11px;justify-self:start'));
+      if (r.next && !r.next.error) {
+        const seg = el('div', 'display:flex;gap:4px');
+        const segBtn = (val, text) => { const b = smallBtn(text, () => { nearView = val; nearAll = false; renderNear(r); }, 'flex:1;padding:3px 6px;min-height:24px'); setOn(b, nearView === val); b.className = 'st-router-seg'; return b; };
+        seg.append(segBtn('next', '📍 Next job for ' + board.firstName(r.next.tech.name) + ' (' + r.next.list.length + ')'), segBtn('techs', '🔎 Closest techs'));
+        nearOut.appendChild(seg);
+      } else if (r.next && r.next.error) nearOut.appendChild(small('⚠️ Couldn\'t look for a next job: ' + r.next.error + '.', 'color:var(--st-amber)'));
+      if (nearView === 'next' && r.next && !r.next.error) { renderNext(r); return; }
+      if (r.mode === 'now' && !r.today) nearOut.appendChild(small('The board shows ' + dayText(r.s.day) + ', so everyone is measured from home ("where they are now" is for today).', 'color:var(--st-amber)'));
+      if (!r.top.length) nearOut.appendChild(el('div', 'font-size:12px;color:var(--st-ink-2)', r.total ? 'No one could be placed (see below).' : 'No ' + (r.fieldOnly ? 'field techs' : 'techs') + ' on the board' + (r.team ? ' in ' + r.team : '') + ' for ' + dayText(r.s.day) + '.'));
+      const list = listBox();
+      (nearAll ? r.top : r.top.slice(0, NEAR_SHOW)).forEach((x, i) => {
+        const detail = [x.sameZip ? 'same zip code' : x.drive && x.drive.mi != null ? miText(x.drive.mi) : '~' + miText(x.line), x.why, x.t.team, plural(x.jobsToday, 'job') + (r.today ? ' today' : '')].filter(Boolean).join(' · ');
+        const btns = [pill('🗺️', 'Directions in Google Maps (new tab), from about where they are to the zip code', () => {
+          const url = 'https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=' + r2(x.pt.lat) + ',' + r2(x.pt.lon) + '&destination=' + encodeURIComponent(r.place.zip ? r.place.zip + (r.place.city ? ' ' + tidy(r.place.city) : '') : r2(r.place.pt.lat) + ',' + r2(r.place.pt.lon));
+          try { window.open(url, '_blank', 'noopener'); } catch (e) {}
+        })];
+        if (r.target.jobId && !x.onIt) { const b = pill('➡️', 'Opens 🔀 Move Jobs with this job and ' + x.t.name + ' filled in. Nothing changes until you review it and press Move.', () => assign(r.target.jobId, x.t.id, x.t.name), 'background:#6a1b9a;border-color:#6a1b9a;color:#fff'); b.className = 'st-router-assign'; btns.push(b); }
+        list.appendChild(nearRowEl(i + 1, x.t.name, (x.drive ? '' : '~') + mins(x.min), detail, x.onIt ? el('div', 'color:var(--st-blue-d);font-size:11px;font-weight:600', 'Already on this job') : null, btns));
+      });
+      if (r.top.length) nearOut.appendChild(list);
+      if (r.top.length > NEAR_SHOW) nearOut.appendChild(smallBtn(nearAll ? 'Show fewer' : 'Show more (' + (r.top.length - NEAR_SHOW) + ')', () => { nearAll = !nearAll; renderNear(r); }, 'justify-self:start;padding:2px 8px;min-height:24px'));
+      if (r.noDrive) nearOut.appendChild(small(r.noDrive === r.top.length ? '⚠️ Drive times aren\'t available right now, so these are guesses from straight-line miles (marked ~).' : '⚠️ ' + plural(r.noDrive, 'drive time') + ' couldn\'t be had; those are guesses (marked ~).', 'color:var(--st-amber)'));
+      if (r.unplaced.length) nearOut.appendChild(fold('Can\'t place ' + plural(r.unplaced.length, 'tech'), (r.mode === 'home' || !r.today ? 'No home on their tech profile: ' : 'No job with a zip code today and no home on their tech profile: ') + r.unplaced.map(t => t.name).sort().join(', ') + '.'));
+      if (r.error) nearOut.appendChild(small('⚠️ Some zip codes couldn\'t be looked up: ' + r.error + '.'));
+      nearOut.appendChild(small('Drive times © Mapbox © OpenStreetMap. Jobs on the timeline and zip codes are measured to the middle of the zip code.'));
+      nearOut.style.display = 'grid';
+      say(r.top.length ? 'Closest first.' : 'Nothing to show.');
+      fit();
+    };
+    const renderNext = r => {
+      const n = r.next;
+      if (n.multi) nearOut.appendChild(small('This job has ' + plural(r.place.techIds.length, 'tech') + '; these are for ' + n.tech.name + '.'));
+      if (n.endAt) nearOut.appendChild(small(n.tech.name + ' is done here around ' + clock(n.endAt) + '. Unassigned jobs nearby they could take next:'));
+      if (!n.list.length) nearOut.appendChild(el('div', 'font-size:12px;color:var(--st-ink-2)', 'No Unassigned jobs fit ' + n.tech.name + ' next (see below).'));
+      const list = listBox();
+      (nearAll ? n.list : n.list.slice(0, NEAR_SHOW)).forEach((x, i) => {
+        const detail = [[x.c.city || x.c.zip, span(x.c.start, x.c.end)].filter(Boolean).join(' '), (x.guess ? '~' : '') + miText(x.mi) + ' from this job', x.c.type, x.f.tier === 'unknown' ? '⚠️ nothing like it to go by' : ''].filter(Boolean).join(' · ');
+        const b = pill('➡️', 'Opens 🔀 Move Jobs with #' + x.c.jobId + ' and ' + n.tech.name + ' filled in. Nothing changes until you review it and press Move.', () => assign(x.c.jobId, n.tech.id, n.tech.name), 'background:#6a1b9a;border-color:#6a1b9a;color:#fff');
+        b.className = 'st-router-assign';
+        list.appendChild(nearRowEl(i + 1, '#' + x.c.jobId + (x.c.customer ? ' ' + x.c.customer : ''), (x.guess ? '~' : '') + mins(x.min), detail,
+          x.clash ? el('div', 'font-size:11px;color:var(--st-amber);font-weight:600', '⚠️ on top of their ' + (span(x.clash.start, x.clash.end) || 'other') + ' job') : null, [b]));
+      });
+      if (n.list.length) nearOut.appendChild(list);
+      if (n.list.length > NEAR_SHOW) nearOut.appendChild(smallBtn(nearAll ? 'Show fewer' : 'Show more (' + (n.list.length - NEAR_SHOW) + ')', () => { nearAll = !nearAll; renderNear(r); }, 'justify-self:start;padding:2px 8px;min-height:24px'));
+      const why = [];
+      if (n.left.time) why.push(plural(n.left.time, 'job') + ' over before this one ends');
+      if (n.left.busy) why.push(plural(n.left.busy, 'job') + ' during an all-day job of theirs');
+      if (n.left.dept) why.push(plural(n.left.dept, 'job') + ' other departments do');
+      if (n.left.place) why.push(plural(n.left.place, 'job') + ' with no location');
+      if (why.length) nearOut.appendChild(fold('Left out: ' + why.join(', '), 'Only Unassigned jobs for ' + dayText(r.s.day) + ' on your board\'s branches are looked at. Who does which jobs comes from the last 4 weeks of schedules.'));
+      nearOut.appendChild(small('Drive times © Mapbox © OpenStreetMap. Measured from this job to each one.'));
+      nearOut.style.display = 'grid';
+      say(n.list.length ? 'Closest first. ➡️ hands one to Move Jobs.' : 'Nothing fits next.');
+      fit();
+    };
+
+    board.onChange(() => { if (shown()) { fillTechs(); paint(); } });
+    paintWhere();
+    const refresh = () => {
+      beta.style.display = 'block';   // the Beta warning, every time it's opened
+      fillTechs();
+      showTab();
+      if (onBoard()) board.load().then(() => { if (shown()) { fillTechs(); paint(); } }).catch(() => {});
+    };
+    return {
+      refresh,
+      leave: () => { setPicking(null); style.textContent = ''; },
+      cleanup: () => { alive = false; runId++; window.removeEventListener('click', onClick, true); window.removeEventListener('resize', onResize); board.unmount(style); }
     };
   })();
 
@@ -6466,6 +7667,7 @@
     biz.cleanup();
     texts.cleanup();
     moves.cleanup();
+    router.cleanup();
     board.stop();
     delete window.__stToolbox;
     const gone = () => { panel.remove(); sheet.remove(); };
@@ -6516,6 +7718,6 @@
   document.body.appendChild(panel);
   if (get('stMin') === '1') setMin(true);
   const startView = get('stView');
-  showView(['notes', 'jobs', 'msgs', 'biz', 'texts', 'moves'].indexOf(startView) > -1 ? startView : 'menu');
+  showView(['notes', 'jobs', 'msgs', 'biz', 'texts', 'moves', 'router'].indexOf(startView) > -1 ? startView : 'menu');
   health.checkBoard(false);
 })();

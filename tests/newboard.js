@@ -11,7 +11,10 @@
 //   day: Date (the board's day; default today), bus: [branch ids] (the board's filter),
 //   techs(): [{ id, name, team, teamId, status }]  (status: 'Working', 'Dispatched', 'Idle'…)
 //   appts(): [{ id, job, n, techs: [ids], customer, customerId, start, end, status, jobStatus,
-//               confirmed, bu, buName, jobType, tags: [{ name, color }], windowStart, windowEnd, hidden }]
+//               confirmed, bu, buName, jobType, jobTypeId, city, zip, tags: [{ name, color }], windowStart, windowEnd, hidden }]
+//   shifts(techId), events(techId): a tech's shifts ({ start, end, type }) and other events ({ start, end }) that day
+//   past(): appointments before the board's day ({ id, job, techs, start, end, status, jobType, jobTypeId }),
+//           for any other range asked for (Tech Router's last 4 weeks)
 //   tray(): [{ job, n, customer, customerId, appt, tags }]   (the Jobs Tray rows), trayTab: 'Unassigned'
 //   history(): [{ tech, appt, job, status, at }]
 //   onCard(job, appt, el), onTech(id, el), onTray(job, el)   (what a normal click does)
@@ -83,15 +86,29 @@
       }
       if (u.indexOf('/dispatch-center/technicians') === 0) return json({ items: techs().filter(t => body.technicianIds.indexOf(t.id) > -1).map(t => Object.assign(team(t), { status: t.status || 'Idle' })), page: 1, pageSize: body.pageSize, totalCount: techs().length });
       if (u.indexOf('/dispatch-center/daily-assignments') === 0) {
+        // Another range than the board's day: the past (NB.cfg.past(), for Tech Router's 4 weeks).
+        if (body.startDate !== iso(NB.day())) {
+          NB.pastCalls = (NB.pastCalls || 0) + 1;
+          if (window.PAST_BAD) return json({ nope: true });
+          const from = new Date(body.startDate + 'T00:00:00'), to = new Date(body.endDate + 'T00:00:00');
+          const past = (NB.cfg.past ? NB.cfg.past() : []).filter(a => new Date(a.start) >= from && new Date(a.start) < to);
+          return json({ items: body.technicianIds.map(id => ({ technicianId: id, technicianSchedule: [{ dateTime: body.startDate + 'T00:00:00', shifts: [], nonJobEvents: [],
+            assignments: past.filter(a => (a.techs || []).indexOf(id) > -1).map(a => ({ appointmentId: a.id, appointmentStart: new Date(a.start).toISOString(), appointmentEnd: new Date(a.end || a.start).toISOString(),
+              appointmentStatus: a.status || 'Done', jobId: a.job, jobTypeId: a.jobTypeId, jobTypeName: a.jobType })) }] })), page: 1, pageSize: body.pageSize, totalCount: body.technicianIds.length });
+        }
         NB.lastDaily = body;
         const list = appts().filter(live);
-        return json({ items: body.technicianIds.map(id => ({ technicianId: id, technicianSchedule: [{ dateTime: iso(NB.day()) + 'T00:00:00', shifts: [], nonJobEvents: [],
+        const timed = (x, a, b) => ({ [a]: new Date(x.start).toISOString(), [b]: new Date(x.end).toISOString() });
+        return json({ items: body.technicianIds.map(id => ({ technicianId: id, technicianSchedule: [{ dateTime: iso(NB.day()) + 'T00:00:00',
+          // NB.cfg.shifts(id): [{ start, end, type ('Normal' or 'TimeOff') }]; NB.cfg.events(id): [{ start, end }].
+          shifts: (NB.cfg.shifts ? NB.cfg.shifts(id) : []).map((x, i) => Object.assign({ id: i + 1, type: x.type || 'Normal', name: 'Day Shift', maxShiftOvertimeMinutes: 0 }, timed(x, 'startDate', 'endDate'))),
+          nonJobEvents: (NB.cfg.events ? NB.cfg.events(id) : []).map((x, i) => Object.assign({ id: i + 1, name: 'Meeting' }, timed(x, 'appointmentStart', 'appointmentEnd'))),
           assignments: list.filter(a => (a.techs || []).indexOf(id) > -1).map(a => ({
             assignmentId: a.id * 10 + id, assignmentStatus: a.status || 'Scheduled', appointmentId: a.id, appointmentNumber: a.job + '-' + (a.n || 1),
             appointmentStart: a.start ? new Date(a.start).toISOString() : null, appointmentEnd: a.end ? new Date(a.end).toISOString() : null,
             arrivalWindowStart: a.windowStart ? new Date(a.windowStart).toISOString() : null, arrivalWindowEnd: a.windowEnd ? new Date(a.windowEnd).toISOString() : null,
-            appointmentStatus: a.status || 'Scheduled', isConfirmed: !!a.confirmed, jobId: a.job, jobStatus: a.jobStatus || 'Scheduled', jobTypeName: a.jobType || 'Service',
-            businessUnitId: a.bu || 621842244, businessUnitName: a.buName || 'Mendenhall Branch', customerId: a.customerId, customerName: a.customer, city: 'Magee', zip: '39111',
+            appointmentStatus: a.status || 'Scheduled', isConfirmed: !!a.confirmed, jobId: a.job, jobStatus: a.jobStatus || 'Scheduled', jobTypeName: a.jobType || 'Service', jobTypeId: a.jobTypeId || null,
+            businessUnitId: a.bu || 621842244, businessUnitName: a.buName || 'Mendenhall Branch', customerId: a.customerId, customerName: a.customer, city: a.city || 'Magee', zip: a.zip || '39111',
             tags: (a.tags || []).map((t, i) => ({ tagTypeId: i + 1, name: t.name, color: t.color || '#cccccc', importance: 0 })), tagCount: (a.tags || []).length
           })) }] })), page: 1, pageSize: body.pageSize, totalCount: body.technicianIds.length });
       }

@@ -62,7 +62,7 @@ with sync_playwright() as p:
     page.wait_for_function("(t) => Array.from(document.querySelectorAll('#st-toolbox select option')).some(o => o.textContent.indexOf(t) > -1)", arg=LONG[:30], timeout=10000)
     check(wide(page) == [], 'Move Jobs with a very long tag name in a list: nothing to scroll sideways: %s' % wide(page))
     check(widest_list(page) <= 340, 'lists fit inside the window (%d px)' % widest_list(page))
-    for name in ['Job Notifications', 'Customer Texts', 'Tech Messages', 'Business Unit', 'Notes']:
+    for name in ['Job Notifications', 'Customer Texts', 'Tech Messages', 'Business Unit', 'Notes', 'Tech Router']:
         open_tool(page, name)
         check(wide(page) == [], '%s: nothing to scroll sideways: %s' % (name, wide(page)))
     open_tool(page, 'Move Jobs')

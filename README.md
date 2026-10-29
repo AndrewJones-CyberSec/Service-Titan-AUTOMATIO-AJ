@@ -104,6 +104,17 @@ Pick jobs with **🖱️ Pick on board**, **+ Tray page**, **＋ Jobs with a tag
 
 It sends the same requests the job panel's ⋮ → Assign/Unassign sends. Up to three jobs are worked on at once (each one step by step: checked, new tech added and confirmed, old tech taken off and confirmed), so a run takes a fraction of a second to a couple of seconds per job, where clicking through the panel takes several. Two visits of the same job, and a two-job swap, go one after the other. Up to 300 jobs per run.
 
+**🧭 Tech Router (Beta)**
+Still being built: it says so each time it's opened, so check its suggestions before you call a customer or move a job. It only reads; nothing changes unless you take a job to 🔀 Move Jobs and press the button there.
+
+- **📞 Fill a spot**: for a tech whose day is already planned. Pick the tech (the list, or 🖱️ and their name on the board) and when: any time, 🌅 first thing, 🕛 mid-day or 🌇 the end of the day. It finds their open time on the day the board shows (their shift less their jobs, meetings and time off; 8 AM–5 PM if the board has no shift for them) and lists the best jobs to fill it from the **Unassigned list** (that day and the next 14) and the **Hold list**, with the customer's phone number to call and move them up.
+  - Only the kinds of jobs the tech or their department did in the **last 4 weeks of schedules**, so a project coordinator gets quotes, not electrical or plumbing ones.
+  - The job and the driving must fit the open time; least extra driving first (from their job before, or home, to it and on to their next job, or home). Then Urgent and High priority, jobs already on that day, and jobs waiting longest. Over 90 minutes out of the way is left out.
+  - Jobs that need a skill the tech doesn't have, and (for Sales/ Service and Project Coordinators) jobs that would take a day of driving past 5 hr 30 min, are marked ⚠️ and rank lower.
+  - 📋 Phone, 📋 Name, 🔎 Open job on each, ➡️ Move Jobs for a job already on that day's Unassigned list, 📋 Copy list for all of them.
+- **🔎 Closest techs**: a zip code or job number (or 🖱️ and a job on the board): the techs closest by drive time, from where they are now (today) or from home. For a job with a tech, **📍 Next job** lists the Unassigned jobs nearby that tech could take after it.
+- Drive times come from Mapbox (a public key is built in; ⚙️ Drive times can use your own). Every point sent is rounded to about half a mile, and nothing else about a job is sent. If drive times can't be had, straight-line miles are used and marked ~.
+
 **🩺 Health check**
 If ServiceTitan changes something a tool relies on, a yellow bar at the top of the Toolbox says which tool is affected and what's missing, instead of the tool failing quietly. Use **Copy report** to pass the details along, or **🩺 Check** in the menu to check any time.
 
