@@ -19,6 +19,9 @@
 //                 as on the real board since Oct 29 2026; menuOn: 'left' or 'right' for only one;
 //                 popoverMark: tech names marked data-hover-popover-trigger, as on Oct 27;
 //                 menuWords: the menu's items have no data-cy labels; a tech with noMenu has none)
+//   hydrateMs: n  (like the real board on Oct 29 2026: rows it has just drawn, at the start or
+//                 after a scroll, show a plain name with no menu button and no menu for n ms,
+//                 then the real name with its menu button)
 //   filler: n    (n extra rows in the Jobs Tray, and a tall board above it)
 // NB.render() draws the board when the page is on it. '#/DispatchBoard' goes to the new address,
 // like ServiceTitan does. NB.setDay(d) changes the day. window.SENT lists [tech name, text] sent.
@@ -101,13 +104,15 @@
   // ---- Drawing the board ----
   const CSS = ':host{display:block}.hdr{display:flex;gap:8px;padding:6px;border-bottom:1px solid #ccc}' +
     '.scroller{overflow:auto;border-bottom:2px solid #999}.techrow{display:flex;gap:6px;align-items:center;height:44px;border-bottom:1px solid #eee}' +
-    '.technician{width:150px;padding:6px;cursor:pointer}.cards{display:flex;gap:4px}' +
+    '.technician{width:150px;padding:6px;cursor:pointer}.technician .tbtn{all:unset;cursor:pointer}.cards{display:flex;gap:4px}' +
     'a.appointment{display:inline-block;padding:6px 10px;background:#cfe;border:1px solid #9c9;cursor:pointer;color:#000;text-decoration:none;border-radius:6px}' +
     '.team-name{font-weight:bold;background:#ddd;padding:2px 6px}[role=menu]{position:fixed;background:#fff;border:1px solid #999;padding:4px;z-index:5}' +
     '[role=menuitem]{padding:4px 8px;cursor:pointer}.job-list table{border-collapse:collapse}.job-list td{padding:8px;border-bottom:1px solid #ddd}' +
     'servicetitan-activity-center-test01{position:fixed;right:0;top:0;width:380px;height:100vh;background:#eef;display:none}';
-  const techRow = (t, list) => '<div class="techrow"><div class="technician" id="team-technician-' + t.id + '" data-cy="ddb-technician-header-' + t.id + '" data-technician-id="' + t.id + '"' +
-    (NB.cfg.popoverMark && !t.noMenu ? ' data-hover-popover-trigger=""' : '') + '><span class="name">' + esc(t.name) + '</span></div>' +
+  const ready = () => !NB.cfg.hydrateMs || Date.now() >= (NB.readyAt || 0);
+  const techRow = (t, list) => '<div class="techrow"><div class="technician' + (ready() ? '' : ' lite') + '" id="team-technician-' + t.id + '" data-cy="ddb-technician-header-' + t.id + '" data-technician-id="' + t.id + '"' +
+    (NB.cfg.popoverMark && !t.noMenu && ready() ? ' data-hover-popover-trigger=""' : '') + '>' +
+    (ready() ? '<button type="button" class="tbtn" aria-haspopup="true" aria-expanded="false"><span class="name">' + esc(t.name) + '</span></button>' : '<span class="name">' + esc(t.name) + '</span>') + '</div>' +
     '<div class="cards" id="team-timeline-row-' + t.id + '">' + list.map(a => '<a class="appointment" data-cy="wdb-job-appt-card" data-job-appointment-id="' + a.id +
       '" data-technician-id="' + t.id + '" data-job-id="' + a.job + '" data-id="' + a.id + '">' + esc(a.label || a.customer) + '</a>').join('') + '</div></div>';
   NB.render = () => {
@@ -177,7 +182,7 @@
     }));
     sr.querySelectorAll('.technician').forEach(t => {
       const id = t.getAttribute('data-technician-id');
-      const hasMenu = () => c.menu && !(techs().find(x => String(x.id) === id) || {}).noMenu;
+      const hasMenu = () => c.menu && !t.classList.contains('lite') && !(techs().find(x => String(x.id) === id) || {}).noMenu;
       t.addEventListener('click', e => {
         window.techOpened = (window.techOpened || 0) + 1; window.opened = window.opened || []; window.opened.push('tech' + id); if (c.onTech) c.onTech(id, t);
         if (hasMenu() && c.menuOn !== 'right') { window.menuBy = 'left'; openMenu(t, e); }
@@ -185,7 +190,20 @@
       t.addEventListener('contextmenu', e => { e.preventDefault(); if (hasMenu() && c.menuOn !== 'left') { window.menuBy = 'right'; openMenu(t, e); } });
     });
     const sc = sr.querySelector('.scroller');
-    if (sc) { sc.scrollTop = top; if (c.virtual) sc.addEventListener('scroll', () => { clearTimeout(NB.vt); NB.vt = setTimeout(NB.render, 30); }); }
+    if (sc) {
+      sc.scrollTop = top;
+      NB.lastTop = sc.scrollTop;
+      if (c.virtual || c.hydrateMs) sc.addEventListener('scroll', () => {
+        // Only a real move counts (drawing the list again puts its scroll back, which isn't one).
+        if (sc.scrollTop === NB.lastTop) return;
+        NB.lastTop = sc.scrollTop;
+        clearTimeout(NB.vt);
+        NB.vt = setTimeout(() => {
+          if (c.hydrateMs) { NB.readyAt = Date.now() + c.hydrateMs; clearTimeout(NB.ht); NB.ht = setTimeout(NB.render, c.hydrateMs + 10); }
+          NB.render();
+        }, 30);
+      });
+    }
     const rb = sr.querySelector('[data-cy="nb-refresh"]');
     if (rb) rb.addEventListener('click', () => { window.refreshes = (window.refreshes || 0) + 1; setTimeout(NB.render, 150); });
   };

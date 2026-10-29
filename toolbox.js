@@ -22,7 +22,7 @@
 (() => {
   const VERSION = '2.0.2';
   const WHATS_NEW = {
-    '2.0.2': 'Fixed: 💬 Tech Messages skipped every tech with "their name on the board has no menu" after a ServiceTitan change on Oct 29. It now opens each tech\'s menu the way you would (a right-click or a left click on their name).',
+    '2.0.2': 'Fixed: 💬 Tech Messages skipped every tech with "their name on the board has no menu". When the board scrolls to a tech it shows their name first and their menu about a second later; the Toolbox now waits for the menu, then opens it the way you would (a right-click or a left click on their name).',
     '2.0.1': 'Nothing inside the Toolbox scrolls sideways any more, and you can make it wider or narrower by dragging its left edge or bottom-right corner (it remembers; double-click for the usual width). Plus a few quick animations: it fades in and out, tools slide in, – folds it smoothly, and loading buttons show a spinner.',
     '2.0': 'Built for ServiceTitan\'s new Dispatch board (use its Day view), with a new look. Every tool works on it again. New: tags show on every job, and ＋ Jobs with a tag… adds all the jobs with one tag. Jobs show how their day is going (🚚 Dispatched 10:20 AM, 🔧 Working). ＋ Whole board is quicker (the whole day comes in one request). 💬 Tech Messages adds everyone Working or Dispatched in one click. – folds the Toolbox down to its title bar.',
     '1.7.2': 'New in 📱 Customer Texts: ＋ A department… next to ＋ Everyone on the board adds just one team\'s customers for the day (Level 1 Service, Installers…) or just the Unassigned list. Pick another to add it too. 📥 Check replies then looks only at those customers.',
@@ -2844,9 +2844,13 @@
     };
     // A missing ServiceTitan piece (not a one-off glitch): flag it and stop the whole run.
     const changed = (what, detail) => { health.flag('Tech Messages', what, detail); return { changed: true, what }; };
-    // "Send Message" in the tech menu: by its label, or else by its words (in the board or on the
-    // page, never in the Toolbox), in case ServiceTitan renames the label.
-    const menuItem = () => {
+    // "Send Message" in the tech menu: in that tech's own menu first (the board draws it inside
+    // their name, so a menu left open for someone else is never used), then by its label anywhere
+    // on the board, or else by its words (in the board or on the page, never in the Toolbox), in
+    // case ServiceTitan renames the label.
+    const menuItem = scope => {
+      const own = scope && scope.isConnected ? Array.from(scope.querySelectorAll('[data-cy="tmi-send-message"]')).find(visible) : null;
+      if (own) return own;
       const byLabel = board.qa('[data-cy="tmi-send-message"]').find(visible);
       if (byLabel) return byLabel;
       const SEL = '[role="menuitem"], [role="menu"] *, li, button';
@@ -2860,14 +2864,21 @@
     const openChatFor = async t => {
       if (!board.root()) return changed('can\'t find the Dispatch board on the page', 'SERVICETITAN-DISPATCH-CENTER-*');
       // The board only draws the rows on screen: bring the tech's row into view first.
-      const h = await board.showTech(t.id);
+      let h = await board.showTech(t.id);
       if (!h) return 'not showing on the board right now (a board filter may hide them)';
+      // A row the board has just drawn starts as a plain name with no menu, and gets its menu
+      // about 1.5 seconds later (seen Oct 29 2026). Wait for it: the name gets a menu button
+      // (or, on the Oct 27 board, a data-hover-popover-trigger mark). The row can be drawn again
+      // meanwhile, so it's looked up each time.
+      const hasMenuButton = x => !!x && (!!x.querySelector('button[aria-haspopup]') || x.hasAttribute('data-hover-popover-trigger'));
+      if (!hasMenuButton(h)) h = (await until(() => { const x = board.headerOf(t.id); return hasMenuButton(x) ? x : null; }, 6000, 100)) || board.headerOf(t.id) || h;
       // The tech menu opens from their name: a right-click (Oct 27 2026) or a left click (it does
       // both since Oct 29). Whichever worked last is tried first. The press goes to the innermost
       // part of the name at that spot, so it reaches the menu whichever part listens for it.
       const press = how => {
-        const r = h.getBoundingClientRect(), x = r.left + Math.min(40, r.width / 2), y = r.top + r.height / 2;
-        let el = h;
+        const btn = h.querySelector('button[aria-haspopup]');
+        const r = (btn || h).getBoundingClientRect(), x = r.left + Math.min(40, r.width / 2), y = r.top + r.height / 2;
+        let el = btn || h;
         for (let c; (c = Array.from(el.children).find(k => { const q = k.getBoundingClientRect(); return q.width && x >= q.left && x <= q.right && y >= q.top && y <= q.bottom; })); ) el = c;
         const o = { bubbles: true, composed: true, cancelable: true, view: window, clientX: x, clientY: y };
         if (how === 'right') { el.dispatchEvent(new MouseEvent('contextmenu', Object.assign({ button: 2, buttons: 2 }, o))); return; }
@@ -2881,7 +2892,7 @@
       const openMenu = async how => {
         if (menuItem()) { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true })); await wait(200); }
         press(how);
-        const found = await until(menuItem, 1500);
+        const found = await until(() => menuItem(h), 1500);
         if (found) menuHow = how;
         return found;
       };

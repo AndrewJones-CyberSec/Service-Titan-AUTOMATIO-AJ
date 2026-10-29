@@ -1,11 +1,12 @@
 """💬 Tech Messages opening each tech's menu (2.0.2).
 
-On Oct 29 2026 every send came back "their name on the board has no menu": ServiceTitan had taken
-away the mark (data-hover-popover-trigger) the Toolbox looked for on tech names, though the menu
-still opened, now with a left click as well as a right-click. The Toolbox now opens the menu to find
-out instead of looking for a mark: a right-click, then a left click, whichever worked last first.
-If the menu never opens, the run stops at the first tech with the yellow bar (not one skip per tech);
-if it opened for others, one tech without it is skipped.
+On Oct 29 2026 every send came back "their name on the board has no menu". The cause was timing:
+when the board scrolls a tech's row into view it first draws a plain name with no menu (and without
+the data-hover-popover-trigger mark the Toolbox looked for), and the real one about 1.5 seconds
+later. The Toolbox looked a quarter second after scrolling. It now waits for the name's menu button,
+then opens the menu the way a person would: a right-click, then a left click (both work), whichever
+worked last first. If the menu never opens, the run stops at the first tech with the yellow bar
+(not one skip per tech); if it opened for others, one tech without it is skipped.
 
 Runs on tests/board_send.html (the fake new board with a fake message panel)."""
 import sys, time, pathlib, json
@@ -95,6 +96,15 @@ with sync_playwright() as p:
     lg = log_text(page)
     check(done and sent(page) == ['Tech One'], 'one tech without a menu: the other is still messaged (%s)' % sent(page))
     check("Tech Two: skipped: their menu didn't open" in lg, 'that tech is skipped, with why')
+    page.close()
+
+    # ---- Like the real board on Oct 29: after a scroll, names show without their menu for 1.5 s ----
+    many = "() => { window.TEAMS = [['Install HVAC', [[1, 'Tech One'], [2, 'Tech Two'], [4, 'Tech Four'], [5, 'Tech Five'], [6, 'Tech Six'], [7, 'Tech Seven'], [8, 'Tech Eight']]], ['Leadership Team', [[3, 'Boss Man']]]]; NB.cfg.virtual = 3; NB.cfg.hydrateMs = 1500; NB.readyAt = 0; }"
+    page, errors, done = send_run(b, many, techs=('1', '8', '5'))
+    lg = log_text(page)
+    check(done and sent(page) == ['Tech One', 'Tech Eight', 'Tech Five'], 'menus that load a moment after scrolling: everyone messaged, far down the list too (%s)' % sent(page))
+    check("didn't open" not in lg and 'no menu' not in lg, 'nobody skipped while their menu was still loading')
+    check(errors == [], 'menus loading after a scroll: no page errors: %s' % errors)
     page.close()
 
     # ---- The menu never opens: stop at the first tech with the yellow bar, not a skip per tech ----

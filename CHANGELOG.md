@@ -2,7 +2,7 @@
 
 ## 2.0.2
 
-- **Fixed: 💬 Tech Messages skipped every tech** with *their name on the board has no menu*. On Oct 29 2026 ServiceTitan took away the mark the Toolbox looked for on tech names (`data-hover-popover-trigger`), though the menu still opened (now with a left click as well as a right-click). Nothing was sent. The Toolbox now opens the menu to find out: a right-click, then a left click, whichever worked last first, on the innermost part of the name.
+- **Fixed: 💬 Tech Messages skipped every tech** with *their name on the board has no menu* (Oct 29 2026; nothing was sent). When the board scrolls a tech's row into view it first draws a plain name with no menu, and the real one (with its menu button and the `data-hover-popover-trigger` mark the Toolbox looked for) about 1.5 seconds later. The Toolbox looked a quarter second after scrolling, so it saw the plain name. It now waits for the menu button (up to 6 seconds), then opens the menu the way you would: a right-click, then a left click, whichever worked last first.
 - If the menu never opens, the run stops at the first tech with the yellow bar instead of skipping everyone one by one. If it opened for others, a tech without one is skipped, with why.
 - Send Message in the menu is found by its words if its label ever changes.
 - Tests: new `tests/test_tech_menu.py`; the fake board's tech menu opens like today's real one.
