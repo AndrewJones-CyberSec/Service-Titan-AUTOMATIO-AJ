@@ -1,5 +1,6 @@
 import sys, time, pathlib, json
 from playwright.sync_api import sync_playwright
+import fastclock
 
 # Fixes from the Oct 21 2026 code review (1.6.3):
 #   - 🛡️ / 🚫 safety lists changed in another tab count in this one (Tech Messages and Customer
@@ -31,12 +32,15 @@ def log_text(page):
 def running(page):
     return page.evaluate("() => !!Array.from(document.querySelectorAll('#st-toolbox button')).find(b => b.offsetParent && /^Stop/.test(b.textContent))")
 
-def wait_done(page, timeout=120):
+def wait_done(page, timeout=120, fast=True):
+    """Waits for a run to end, skipping ahead through its deliberate waits (fastclock). None of the
+    runs waited for here has a check on how long it takes; pass fast=False for one that does."""
     end = time.time() + timeout
     time.sleep(0.4)
     while time.time() < end:
         if not running(page): return True
-        time.sleep(0.3)
+        if fast: fastclock.skip(page)
+        else: time.sleep(0.3)
     return False
 
 def other_tab(page, key, value):
@@ -48,6 +52,7 @@ def panel_style(page):
 with sync_playwright() as p:
     b = p.chromium.launch()
     page = b.new_page(viewport={'width': 1400, 'height': 900})
+    fastclock.install(page)
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
 

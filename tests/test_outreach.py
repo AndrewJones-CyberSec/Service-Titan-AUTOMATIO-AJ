@@ -1,5 +1,6 @@
 import sys, time, pathlib, json
 from playwright.sync_api import sync_playwright
+import fastclock
 
 # 📣 OutReach folder (new in 1.6.1) and the faster run (the next customer's fresh look starts
 # while the current text is being sent).
@@ -23,12 +24,15 @@ def log_text(page):
 def running(page):
     return page.evaluate("() => !!Array.from(document.querySelectorAll('#st-toolbox button')).find(b => b.offsetParent && /^Stop/.test(b.textContent))")
 
-def wait_done(page, timeout=120):
+def wait_done(page, timeout=120, fast=True):
+    """Waits for a run to end, skipping ahead through its deliberate waits (fastclock). None of the
+    runs waited for here has a check on how long it takes; pass fast=False for one that does."""
     end = time.time() + timeout
     time.sleep(0.4)
     while time.time() < end:
         if not running(page): return True
-        time.sleep(0.3)
+        if fast: fastclock.skip(page)
+        else: time.sleep(0.3)
     return False
 
 def review(page, label):
@@ -65,6 +69,7 @@ OLD = json.dumps([
 with sync_playwright() as p:
     b = p.chromium.launch()
     page = b.new_page(viewport={'width': 1400, 'height': 1000})
+    fastclock.install(page)
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
 
@@ -126,7 +131,7 @@ with sync_playwright() as p:
     n_before = thread_calls(page, '6015550022')
     B(page, 'Start').click()
     page.wait_for_function("() => /Typed to Kim Wu/.test(document.getElementById('st-toolbox').innerText)", timeout=15000)
-    time.sleep(16)   # the person takes a while before pressing Send
+    fastclock.skip(page, 16000)   # the person takes a while (16 s on the page's clock) before pressing Send
     page.click('.chat button[type=submit]')
     page.wait_for_function("() => /Typed to Mo Day/.test(document.getElementById('st-toolbox').innerText)", timeout=20000)
     check(thread_calls(page, '6015550022') - n_before == 2, 'stale look-ahead taken again (looked ahead once, then again at its turn)')

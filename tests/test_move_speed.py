@@ -3,6 +3,7 @@ same careful way. Runs on the fake board (tests/board_moves.html) with slow answ
 really overlap. Nothing here touches ServiceTitan."""
 import sys, time, pathlib, json
 from playwright.sync_api import sync_playwright
+import fastclock
 
 HERE = pathlib.Path(__file__).parent
 TOOLBOX = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else HERE.parent / 'toolbox.js').read_text()
@@ -22,11 +23,13 @@ def log(page):
     return ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox pre')).filter(p => p.offsetParent).map(p => p.textContent).join('\\n')")
 def busy(page):
     return ev(page, "() => !!Array.from(document.querySelectorAll('#st-toolbox button')).find(b => b.offsetParent && /^Stop/.test(b.textContent))")
-def wait_done(page, t=90):
+def wait_done(page, t=90, fast=False):
+    """fast: skip ahead through the run's deliberate waits (fastclock), for runs with no time check."""
     time.sleep(0.4); end = time.time() + t
     while time.time() < end:
         if not busy(page): return True
-        time.sleep(0.2)
+        if fast: fastclock.skip(page)
+        else: time.sleep(0.2)
     return False
 def techs(page, appt):
     return ev(page, "(a) => APPTS[a].techs.slice()", appt)
@@ -46,14 +49,14 @@ def review(page):
     page.wait_for_function("() => { const b = document.getElementById('st-move-go'); return b && b.offsetParent; }", timeout=60000)
     time.sleep(0.2)
     return T(page)
-def go(page):
+def go(page, fast=False):
     page.click('#st-move-go')
-    return wait_done(page)
-def put_back(page):
+    return wait_done(page, fast=fast)
+def put_back(page, fast=False):
     B(page, 'Put back (').click()
     page.wait_for_function("() => { const b = document.getElementById('st-move-go'); return b && b.offsetParent; }", timeout=60000)
     time.sleep(0.2)
-    return go(page)
+    return go(page, fast)
 
 # Extra jobs for these tests: appointment id -> (job, visit, hour, techs). Jack is 101, Blake 102, Dana 104.
 def add_jobs(page, jobs):
@@ -87,6 +90,7 @@ def events(page):
 with sync_playwright() as p:
     b = p.chromium.launch()
     page = b.new_page(viewport={'width': 1400, 'height': 1000})
+    fastclock.install(page)
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(URL + '#/DispatchBoard')
@@ -129,7 +133,7 @@ with sync_playwright() as p:
     print('9 jobs Jack -> Dana: %.1fs' % secs)
     # Put back, also three at a time, exactly.
     ev(page, WATCH)
-    check(put_back(page), 'put back finishes')
+    check(put_back(page, fast=True), 'put back finishes')
     check(all(techs(page, int(k)) == [101] for k in jobs), 'put back exactly: all nine on Jack again')
     check(ev(page, "() => window.maxInflight") <= 3, 'put back: never more than three at once')
     drop_jobs(page, jobs)
@@ -153,7 +157,7 @@ with sync_playwright() as p:
     check('Ready: 4 jobs' in t, 'both visits of the two-visit job are in the review')
     ev(page, "() => { window.API_DELAY = 200; }")
     ev(page, WATCH)
-    check(go(page), 'two-visit run finishes')
+    check(go(page, fast=True), 'two-visit run finishes')
     e = events(page)
     span = lambda a: (min(x['at'] for x in e if x['appt'] == a), max(x['at'] for x in e if x['appt'] == a))
     s1, s2 = span(9701), span(9702)
@@ -169,7 +173,7 @@ with sync_playwright() as p:
     review(page)
     ev(page, "() => { Object.keys(APPTS).forEach(k => { if (k >= 9800 && k < 9810) ASSIGN_FAIL[k] = 'always'; }); window.API_DELAY = 100; }")
     ev(page, WATCH)
-    check(go(page, ), 'failing run finishes')
+    check(go(page, fast=True), 'failing run finishes')
     e = events(page)
     starts = [x for x in e if x['kind'] == 'assign' and x['edge'] == 'start']
     print([x['inflight'] for x in starts])
@@ -185,7 +189,7 @@ with sync_playwright() as p:
     review(page)
     ev(page, "() => { window.API_DELAY = 150; SIGNOUT_AFTER_ASSIGN = true; }")
     ev(page, WATCH)
-    check(go(page), 'signed-out run ends')
+    check(go(page, fast=True), 'signed-out run ends')
     n = len(ev(page, "() => window.calls.slice()")); time.sleep(1)
     lg = log(page); print(lg)
     check('signed you out' in lg, 'says you were signed out')
@@ -213,7 +217,7 @@ with sync_playwright() as p:
     check('Swap 15 jobs' in T(page), 'all 15 open jobs will trade places')
     ev(page, "() => { window.API_DELAY = 150; }")
     ev(page, WATCH)
-    check(go(page), 'swap day finishes')
+    check(go(page, fast=True), 'swap day finishes')
     check(all(techs(page, 9950 + i) == [102] and techs(page, 9960 + i) == [101] for i in range(5)), "Jack's and Blake's extra jobs traded places")
     check('booked' not in log(page), 'the jobs each tech is leaving never count as booked, in any order')
     check(ev(page, "() => window.maxInflight") == 3, 'swap day: three at once')
@@ -223,7 +227,7 @@ with sync_playwright() as p:
     pb = T(page)
     check('Already booked' not in pb, 'swap day put back: undoing the swap doesn\'t count the swapped jobs as booked')
     if 'Already booked' in pb: print(pb)
-    check(go(page), 'swap day put back finishes')
+    check(go(page, fast=True), 'swap day put back finishes')
     now = {k: sorted(techs(page, int(k))) for k in start}
     check(now == start, 'swap day put back exactly: %s' % {k: (start[k], now[k]) for k in start if start[k] != now[k]})
     drop_jobs(page, jobs)

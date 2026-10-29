@@ -4,6 +4,7 @@ the job panel's status is a number (0 = Scheduled, 4 = Done), the already-booked
 booked techs, and it leaves out one appointment by its appointment id."""
 import sys, time, pathlib, json
 from playwright.sync_api import sync_playwright
+import fastclock
 
 HERE = pathlib.Path(__file__).parent
 TOOLBOX = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else HERE.parent / 'toolbox.js').read_text()
@@ -23,11 +24,13 @@ def log(page):
     return ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox pre')).filter(p => p.offsetParent).map(p => p.textContent).join('\\n')")
 def busy(page):
     return ev(page, "() => !!Array.from(document.querySelectorAll('#st-toolbox button')).find(b => b.offsetParent && /^Stop/.test(b.textContent))")
-def wait_done(page, t=60):
+def wait_done(page, t=60, fast=False):
+    """fast: skip ahead through the run's deliberate waits (fastclock), for runs with no time check."""
     time.sleep(0.4); end = time.time() + t
     while time.time() < end:
         if not busy(page): return True
-        time.sleep(0.2)
+        if fast: fastclock.skip(page)
+        else: time.sleep(0.2)
     return False
 def techs(page, appt):
     return ev(page, "() => APPTS[%d].techs.slice()" % appt)
@@ -42,18 +45,25 @@ def clear_jobs(page):
 def type_jobs(page, nums):
     page.fill('#st-toolbox input:visible[placeholder^="Or type job"]', nums)
     page.locator('#st-toolbox button:visible', has_text='Add').filter(has_not_text='All').filter(has_not_text='note').first.click()
-def review(page, timeout=30000):
+REVIEW_DONE = "() => { const b = document.getElementById('st-move-go'); return (b && b.offsetParent) || /Couldn't check|signed you out|Nothing to do|isn't on the board|exactly two|more than one visit|nothing to swap|Stopped checking/.test(document.getElementById('st-toolbox').innerText); }"
+def review(page, timeout=30000, fast=False):
+    """fast: skip ahead through the review's deliberate waits (fastclock)."""
     B(page, 'Review').click()
-    page.wait_for_function("() => { const b = document.getElementById('st-move-go'); return (b && b.offsetParent) || /Couldn't check|signed you out|Nothing to do|isn't on the board|exactly two|more than one visit|nothing to swap|Stopped checking/.test(document.getElementById('st-toolbox').innerText); }", timeout=timeout)
+    if fast:
+        end = time.time() + timeout / 1000
+        while time.time() < end and not ev(page, REVIEW_DONE): fastclock.skip(page)
+    else:
+        page.wait_for_function(REVIEW_DONE, timeout=timeout)
     time.sleep(0.2)
     return T(page)
 def go_text(page):
     return ev(page, "() => document.getElementById('st-move-go').textContent")
 def go_enabled(page):
     return ev(page, "() => !document.getElementById('st-move-go').disabled")
-def go(page):
+def go(page, fast=True):
+    """Presses Go and waits for the run (skipping ahead through its waits unless fast=False)."""
     page.click('#st-move-go')
-    return wait_done(page)
+    return wait_done(page, fast=fast)
 def tick(page, kind):
     page.check('#st-toolbox input.st-move-tick-' + kind)
 # Puts the fake board back the way it started, and clears every switch.
@@ -85,6 +95,7 @@ def open_moves(page):
 with sync_playwright() as p:
     b = p.chromium.launch()
     page = b.new_page(viewport={'width': 1400, 'height': 1000})
+    fastclock.install(page)
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(URL + '#/DispatchBoard')
@@ -280,9 +291,9 @@ with sync_playwright() as p:
     # ================= 6. The sign-in check can't hang a review =================
     clear_jobs(page); type_jobs(page, '7001')
     ev(page, "() => { APPT_401 = true; PERM_HANG = true; }")
-    t0 = time.time()
-    t = review(page, timeout=30000)
-    took = time.time() - t0
+    t0 = fastclock.page_time(page)   # the page's clock: it includes the waits skipped ahead
+    t = review(page, timeout=30000, fast=True)
+    took = fastclock.page_time(page) - t0
     check(took < 25 and "didn't answer whether you're still signed in" in t and 'signed you out' not in t, '6: a sign-in check that never answers gives up (%.0fs) and isn\'t taken as signed out' % took)
     check(ev(page, "() => !Array.from(document.querySelectorAll('#st-toolbox button')).find(b => /^Review/.test(b.textContent)).disabled"), '6: Review can be pressed again')
     ev(page, "() => { APPT_401 = false; PERM_HANG = false; }")

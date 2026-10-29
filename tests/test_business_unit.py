@@ -1,5 +1,6 @@
 import sys, time, pathlib
 from playwright.sync_api import sync_playwright
+import fastclock
 
 HERE = pathlib.Path(__file__).parent
 TOOLBOX = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else HERE.parent / 'toolbox.js').read_text()
@@ -23,7 +24,8 @@ def log_text(page):
 def btn(page, text):
     return page.locator('#st-toolbox button:visible', has_text=text).first
 
-def run_and_wait(page, label, confirm=None, timeout=90):
+def run_and_wait(page, label, confirm=None, timeout=90, fast=False):
+    """fast: skip ahead through the run's deliberate waits (fastclock), for runs with no time check."""
     page.evaluate("() => { document.querySelectorAll('#st-toolbox pre').forEach(p => p.textContent = ''); }")
     btn(page, label).click()
     if confirm: btn(page, confirm).click()
@@ -32,12 +34,14 @@ def run_and_wait(page, label, confirm=None, timeout=90):
     while time.time() < end:
         busy = page.evaluate("() => { const s = Array.from(document.querySelectorAll('#st-toolbox button')).find(b => b.offsetParent && b.textContent.startsWith('Stop')); return !!s; }")
         if not busy: return True
-        time.sleep(0.3)
+        if fast: fastclock.skip(page)
+        else: time.sleep(0.3)
     return False
 
 with sync_playwright() as p:
     b = p.chromium.launch()
     page = b.new_page(viewport={'width': 1400, 'height': 900})
+    fastclock.install(page)
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(URL + '#/DispatchBoard')
@@ -88,7 +92,7 @@ with sync_playwright() as p:
 
     # Change for real
     page.evaluate("() => { window.editOpened = []; }")
-    check(run_and_wait(page, 'Change to Mendenhall Branch', 'Yes, change them', timeout=150), 'change run finishes')
+    check(run_and_wait(page, 'Change to Mendenhall Branch', 'Yes, change them', timeout=150, fast=True), 'change run finishes')
     lg = log_text(page)
     print(lg)
     opened = page.evaluate("() => window.editOpened")
@@ -108,7 +112,7 @@ with sync_playwright() as p:
     check(page.evaluate("() => location.hash").startswith('#/widget-app/dispatch-center'), 'back on the board after change')
 
     # Put back
-    check(run_and_wait(page, 'Put back', 'Yes, put them back', timeout=120), 'put back finishes')
+    check(run_and_wait(page, 'Put back', 'Yes, put them back', timeout=120, fast=True), 'put back finishes')
     print(log_text(page))
     names = page.evaluate("() => ({a: buName(111111), b: buName(222222), f: buName(888888)})")
     check(names == {'a': 'Gulfport Branch', 'b': 'HVAC - Service', 'f': 'Commercial'}, 'put back restored departments and branches: %s' % names)
@@ -119,7 +123,7 @@ with sync_playwright() as p:
     btn(page, 'Clear').click()
     page.fill('#st-toolbox input:visible[placeholder^="Or type job"]', '111111 333333 666666')
     page.locator('#st-toolbox button:visible', has_text='Add').filter(has_not_text='note').first.click()
-    check(run_and_wait(page, 'Check jobs'), 'check run with job data down finishes')
+    check(run_and_wait(page, 'Check jobs', fast=True), 'check run with job data down finishes')
     lg = log_text(page); print(lg)
     check('#111111: Gulfport Branch → would change to Mendenhall Branch' in lg and '#333333: locked' in lg and '#666666: already Mendenhall Branch' in lg, 'fallback to pages gives the same answers')
     check(len(page.evaluate("() => window.editOpened")) == 3, 'fallback opened each job')
@@ -131,7 +135,7 @@ with sync_playwright() as p:
     btn(page, 'Clear').click()
     page.fill('#st-toolbox input:visible[placeholder^="Or type job"]', '111111')
     page.locator('#st-toolbox button:visible', has_text='Add').filter(has_not_text='note').first.click()
-    check(run_and_wait(page, 'Change to Tupelo Branch', 'Yes, change them'), 'change to other branch finishes')
+    check(run_and_wait(page, 'Change to Tupelo Branch', 'Yes, change them', fast=True), 'change to other branch finishes')
     check(page.evaluate("() => buName(111111)") == 'Tupelo Branch', 'other branch applied')
 
     # Pop-up after Save stops the run and leaves it on screen
@@ -139,7 +143,7 @@ with sync_playwright() as p:
     page.fill('#st-toolbox input:visible[placeholder^="Or type job"]', '555555 222222')
     page.locator('#st-toolbox button:visible', has_text='Add').filter(has_not_text='note').first.click()
     page.select_option('#st-biz-branch', 'Mendenhall Branch')
-    check(run_and_wait(page, 'Change to Mendenhall Branch', 'Yes, change them'), 'popup run ends')
+    check(run_and_wait(page, 'Change to Mendenhall Branch', 'Yes, change them', fast=True), 'popup run ends')
     lg = log_text(page)
     print(lg)
     check('ServiceTitan asked' in lg and 'Run stopped' in lg, 'popup stops the run')
@@ -202,13 +206,14 @@ with sync_playwright() as p:
     # Without Knockout on the page (fallback path)
     b = p.chromium.launch()
     page = b.new_page(viewport={'width': 1400, 'height': 900})
+    fastclock.install(page)
     page.goto(URL + '?noko#/DispatchBoard')
     page.wait_for_selector('a.appointment')
     page.evaluate(TOOLBOX)
     btn(page, 'Business Unit').click()
     page.fill('#st-toolbox input:visible[placeholder^="Or type job"]', '111111 666666')
     page.locator('#st-toolbox button:visible', has_text='Add').filter(has_not_text='note').first.click()
-    check(run_and_wait(page, 'Change to Mendenhall Branch', 'Yes, change them'), 'no-knockout run finishes')
+    check(run_and_wait(page, 'Change to Mendenhall Branch', 'Yes, change them', fast=True), 'no-knockout run finishes')
     lg = log_text(page); print(lg)
     check(page.evaluate("() => buName(111111)") == 'Mendenhall Branch', 'works without knockout')
     b.close()

@@ -1,5 +1,6 @@
 import sys, time, pathlib
 from playwright.sync_api import sync_playwright
+import fastclock
 HERE = pathlib.Path(__file__).parent
 TOOLBOX = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else HERE.parent / 'toolbox.js').read_text()
 URL = (HERE / 'board.html').as_uri()
@@ -11,11 +12,14 @@ def B(page, t): return page.locator('#st-toolbox button:visible', has_text=t).fi
 def T(page): return page.locator('#st-toolbox').inner_text()
 def log(page): return page.evaluate("() => Array.from(document.querySelectorAll('#st-toolbox pre')).map(p => p.textContent).join('\\n')")
 def busy(page): return page.evaluate("() => !!Array.from(document.querySelectorAll('#st-toolbox button')).find(b => b.offsetParent && /^Stop/.test(b.textContent))")
-def wait_done(page, t=120):
+def wait_done(page, t=120, fast=True):
+    """Waits for a run to end, skipping ahead through its deliberate waits (fastclock). None of the
+    runs waited for here has a check on how long it takes; pass fast=False for one that does."""
     time.sleep(0.5); end = time.time() + t
     while time.time() < end:
         if not busy(page): return True
-        time.sleep(0.3)
+        if fast: fastclock.skip(page)
+        else: time.sleep(0.3)
     return False
 def status(page): return page.evaluate("() => { const b = Array.from(document.querySelectorAll('#st-toolbox button')).find(b => b.offsetParent && /Check$/.test(b.textContent)); return b ? b.parentElement.innerText : ''; }")
 def wait_read(page, want, t=15):
@@ -34,7 +38,7 @@ def add_typed(page, nums):
     page.locator('#st-toolbox button:visible', has_text='Add').filter(has_not_text='All').filter(has_not_text='note').first.click()
 
 with sync_playwright() as p:
-    b = p.chromium.launch(); page = b.new_page(viewport={'width': 1400, 'height': 900})
+    b = p.chromium.launch(); page = b.new_page(viewport={'width': 1400, 'height': 900}); fastclock.install(page)
     errors = []; page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(URL + '#/DispatchBoard'); page.wait_for_selector('a.appointment')
     page.evaluate(TOOLBOX)

@@ -1,5 +1,6 @@
 import sys, time, pathlib, json
 from playwright.sync_api import sync_playwright
+import fastclock
 
 HERE = pathlib.Path(__file__).parent
 TOOLBOX = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else HERE.parent / 'toolbox.js').read_text()
@@ -18,12 +19,15 @@ def log_text(page):
 def running(page):
     return page.evaluate("() => !!Array.from(document.querySelectorAll('#st-toolbox button')).find(b => b.offsetParent && /^Stop/.test(b.textContent))")
 
-def wait_done(page, timeout=120):
+def wait_done(page, timeout=120, fast=True):
+    """Waits for a run to end, skipping ahead through its deliberate waits (fastclock). None of the
+    runs waited for here has a check on how long it takes; pass fast=False for one that does."""
     end = time.time() + timeout
     time.sleep(0.4)
     while time.time() < end:
         if not running(page): return True
-        time.sleep(0.3)
+        if fast: fastclock.skip(page)
+        else: time.sleep(0.3)
     return False
 
 def panel_text(page):
@@ -51,6 +55,7 @@ def add_jobs(page, nums):
 with sync_playwright() as p:
     b = p.chromium.launch()
     page = b.new_page(viewport={'width': 1400, 'height': 1000})
+    fastclock.install(page)
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(URL + '#/DispatchBoard')

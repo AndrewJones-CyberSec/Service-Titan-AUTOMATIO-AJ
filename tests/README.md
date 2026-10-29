@@ -7,11 +7,22 @@ touches ServiceTitan.
 ```
 pip install playwright
 playwright install chromium
-python3 tests/run_all.py
+python3 tests/run_all.py              # everything (about 3 minutes)
+python3 tests/run_all.py moves texts  # only the suites with "moves" or "texts" in their name
+python3 tests/run_all.py other.js     # test another copy of the Toolbox
 ```
+
+**Why it's quick:** suites run two or three at a time, each in its own browser on its own fake
+board; the two suites that time how fast the Toolbox is (`test_move_speed.py`,
+`test_concurrency.py`) run afterwards with nothing else going. And runs that are slow on purpose
+(a save that never goes through, ServiceTitan not answering, a job that keeps failing) skip ahead
+on the page's clock instead of waiting it out for real (`fastclock.py`). The Toolbox sees the
+same time go by, just sooner. Checks that time something use the real clock, or the page's own
+clock when the point is "it gave up after 15 seconds".
 
 | File | What it checks |
 |---|---|
+| `fastclock.py` | Not a suite: the helper that skips ahead through deliberate waits (see above) |
 | `test_notes.py` | 📝 Notes: note first or job first, a job panel still loading, a merged customer ("Page Could Not Be Found") |
 | `test_business_unit.py` | 🏢 Business Unit: picking, check, change, put back, locked jobs, errors, pop-ups, Stop |
 | `test_job_notifications.py` | 🔕 Job Notifications: one list (board, job list, typed, a tech from the list, a tech's name on the board, ＋ Whole board with jobs scrolled out of view, Unassigned, canceled and other days), each job's setting read as it's added (🔔 / 🔕 in the list, dashed on the board, no pages opened), buttons that count what they'd change, turning off and on (only the jobs that need it are opened), results as cards, a switch that won't stay on (⚠️ card, Open job, Try again), job data unreadable (❔, ↻ Check opens each job), no job-record access, scrolling, highlights |

@@ -2,6 +2,7 @@
 unassign requests, the already-booked check, skills, managed techs and branches."""
 import sys, time, pathlib, json
 from playwright.sync_api import sync_playwright
+import fastclock
 
 HERE = pathlib.Path(__file__).parent
 TOOLBOX = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else HERE.parent / 'toolbox.js').read_text()
@@ -21,11 +22,13 @@ def log(page):
     return ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox pre')).filter(p => p.offsetParent).map(p => p.textContent).join('\\n')")
 def busy(page):
     return ev(page, "() => !!Array.from(document.querySelectorAll('#st-toolbox button')).find(b => b.offsetParent && /^Stop/.test(b.textContent))")
-def wait_done(page, t=60):
+def wait_done(page, t=60, fast=False):
+    """fast: skip ahead through the run's deliberate waits (fastclock), for runs with no time check."""
     time.sleep(0.4); end = time.time() + t
     while time.time() < end:
         if not busy(page): return True
-        time.sleep(0.2)
+        if fast: fastclock.skip(page)
+        else: time.sleep(0.2)
     return False
 def techs(page, appt):
     return ev(page, "() => APPTS[%d].techs.slice()" % appt)
@@ -51,9 +54,10 @@ def go_text(page):
     return ev(page, "() => document.getElementById('st-move-go').textContent")
 def go_enabled(page):
     return ev(page, "() => !document.getElementById('st-move-go').disabled")
-def go(page):
+def go(page, fast=True):
+    """Presses Go and waits for the run (skipping ahead through its waits unless fast=False)."""
     page.click('#st-move-go')
-    return wait_done(page)
+    return wait_done(page, fast=fast)
 def tick(page, kind):
     page.check('#st-toolbox input.st-move-tick-' + kind)
 def reset(page, appt, ids):
@@ -62,6 +66,7 @@ def reset(page, appt, ids):
 with sync_playwright() as p:
     b = p.chromium.launch()
     page = b.new_page(viewport={'width': 1400, 'height': 1000})
+    fastclock.install(page)
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(URL + '#/DispatchBoard')
@@ -196,7 +201,7 @@ with sync_playwright() as p:
     t = review(page)
     check('Ready: 3 jobs' in t and 'Ivy Kim' in t and t.count('Jack W') >= 3, 'three unassigned jobs ready for Jack')
     t0 = time.time()
-    check(go(page), 'unassigned run finishes')
+    check(go(page, fast=False), 'unassigned run finishes')   # timed below: the real clock
     secs = time.time() - t0
     check(all(techs(page, a) == [101] for a in (9101, 9102, 9103)), 'all three now on Jack W')
     check(all(c[0] == 'assign' for c in calls(page)), 'nothing to take off for unassigned jobs')

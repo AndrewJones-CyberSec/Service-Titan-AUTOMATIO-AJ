@@ -3,6 +3,7 @@ out, or keeps failing, when the board changes while a run is going, and when you
 in the middle of reading."""
 import sys, time, pathlib, re
 from playwright.sync_api import sync_playwright
+import fastclock
 
 HERE = pathlib.Path(__file__).parent
 TOOLBOX = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else HERE.parent / 'toolbox.js').read_text()
@@ -28,14 +29,17 @@ def settled(page, t=30):
         time.sleep(0.1)
     return ''
 def busy(page): return ev(page, "() => !!Array.from(document.querySelectorAll('#st-toolbox button')).find(b => b.offsetParent && /^Stop/.test(b.textContent))")
-def wait_done(page, t=120):
+def wait_done(page, t=120, fast=False):
+    """fast: skip ahead through the run's deliberate waits (fastclock), for runs with no time check."""
     time.sleep(0.4); end = time.time() + t
     while time.time() < end:
         if not busy(page): return True
-        time.sleep(0.2)
+        if fast: fastclock.skip(page)
+        else: time.sleep(0.2)
     return False
 def fresh(b, url):
     page = b.new_page(viewport={'width': 1400, 'height': 1000})
+    fastclock.install(page)
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(url + '#/DispatchBoard')
@@ -83,7 +87,7 @@ with sync_playwright() as p:
     check(took < 1.5, 'Notify: Stop during reading takes effect at once (%.1fs)' % took)
     check('Stopped' in notify_log(page), 'Notify: the log says it stopped')
     check(before <= 4 and calls - before <= 4, 'Notify: the list read a few at a time, then the check did (%d, then %d)' % (before, calls - before))
-    time.sleep(3.5)
+    fastclock.skip(page, 3500)   # 3.5 s on the page's clock: any read still coming would have started
     check(ev(page, "() => window.apiCalls") == calls, 'Notify: no more reads after Stop (%d made)' % calls)
     check(not ev(page, "() => (window.indexOpened || []).length"), 'Notify: no job pages opened after Stop')
     check(errors == [], 'Notify: no page errors: %s' % errors)
@@ -95,7 +99,7 @@ with sync_playwright() as p:
     type_jobs(page, '111111 222222 333333')
     ev(page, "() => { window.API_401 = true; window.apiCalls = 0; }")
     B(page, 'Turn off').click(); B(page, 'Yes, turn them off').click()
-    check(wait_done(page, 60), 'Notify signed out: run ends')
+    check(wait_done(page, 60, fast=True), 'Notify signed out: run ends')
     t = T(page)
     check('signed you out' in t, 'Notify signed out: says ServiceTitan signed you out')
     check(not ev(page, "() => (window.indexOpened || []).length"), 'Notify signed out: no job pages opened')
@@ -113,7 +117,7 @@ with sync_playwright() as p:
     check('❔ 8 not read' in s and ev(page, "() => window.apiCalls") <= 4, 'Notify failing: the list stops asking after a few failures too (%s)' % s)
     ev(page, "() => { window.apiCalls = 0; }")
     B(page, '↻ Check').click()
-    check(wait_done(page, 120), 'Notify failing: run ends')
+    check(wait_done(page, 120, fast=True), 'Notify failing: run ends')
     lg = notify_log(page); print(lg)
     calls = ev(page, "() => window.apiCalls")
     check(calls <= 4, 'Notify failing: stopped asking after a few failures (%d reads)' % calls)
@@ -130,7 +134,7 @@ with sync_playwright() as p:
     time.sleep(1.5)
     # Meanwhile, someone else turns 555555 back on and 444444 off.
     ev(page, "() => { window.NOTIF['555555'] = true; window.NOTIF['444444'] = false; }")
-    check(wait_done(page, 120), 'Notify stale: run ends')
+    check(wait_done(page, 120, fast=True), 'Notify stale: run ends')
     lg = notify_log(page); print(lg)
     check('444444: already off' in lg, 'Notify stale: a job someone turned off meanwhile is left alone')
     check('555555: turned off' in lg and ev(page, "() => window.NOTIF['555555']") is False, 'Notify stale: a job someone turned back on meanwhile is turned off (not reported "already off")')
@@ -148,7 +152,7 @@ with sync_playwright() as p:
     took = stop_quickly(page)
     calls = ev(page, "() => window.apiCalls")
     check(took < 1.5, 'Units: Stop during reading takes effect at once (%.1fs)' % took)
-    time.sleep(3.5)
+    fastclock.skip(page, 3500)   # 3.5 s on the page's clock: any read still coming would have started
     check(ev(page, "() => window.apiCalls") == calls and calls <= 4, 'Units: no more reads after Stop (%d made)' % calls)
     check(not ev(page, "() => (window.editOpened || []).length"), 'Units: no Edit pages opened after Stop')
     check(errors == [], 'Units: no page errors: %s' % errors)
@@ -160,7 +164,7 @@ with sync_playwright() as p:
     type_jobs(page, '901001 901002')
     ev(page, "() => { window.API_401 = true; }")
     B(page, 'Change to Mendenhall Branch').click(); B(page, 'Yes, change them').click()
-    check(wait_done(page, 60), 'Units signed out: run ends')
+    check(wait_done(page, 60, fast=True), 'Units signed out: run ends')
     t = T(page)
     check('signed you out' in t, 'Units signed out: says ServiceTitan signed you out')
     check(not ev(page, "() => (window.editOpened || []).length") and not ev(page, "() => window.saves.length"), 'Units signed out: nothing opened or saved')
@@ -172,10 +176,10 @@ with sync_playwright() as p:
     open_tool(page, 'Business Unit')
     type_jobs(page, '111111 222222 666666 901001 901002')
     ev(page, "() => { window.API_DELAY = 60000; window.apiCalls = 0; }")
-    t0 = time.time()
+    t0 = fastclock.page_time(page)   # the page's clock: it includes the waits skipped ahead
     B(page, 'Check jobs').click()
-    check(wait_done(page, 120), 'Units slow: run ends')
-    took = time.time() - t0
+    check(wait_done(page, 120, fast=True), 'Units slow: run ends')
+    took = fastclock.page_time(page) - t0
     lg = log_text(page); print(lg)
     calls = ev(page, "() => window.apiCalls")
     check(calls <= 4, 'Units slow: stopped asking once reads timed out (%d reads)' % calls)
@@ -191,7 +195,7 @@ with sync_playwright() as p:
     B(page, 'Change to Mendenhall Branch').click(); B(page, 'Yes, change them').click()
     time.sleep(1.5)
     ev(page, "() => { DB[666666].bu = 591422337; }")   # someone moves 666666 to Gulfport meanwhile
-    check(wait_done(page, 120), 'Units stale: run ends')
+    check(wait_done(page, 120, fast=True), 'Units stale: run ends')
     lg = log_text(page); print(lg)
     check('#666666: Gulfport Branch → Mendenhall Branch' in lg and ev(page, "() => buName(666666)") == 'Mendenhall Branch', 'Units stale: a job moved off the branch meanwhile is changed (not reported "already")')
     check(errors == [], 'Units stale: no page errors: %s' % errors)
@@ -217,7 +221,7 @@ with sync_playwright() as p:
     time.sleep(1.0)
     B(page, 'Cancel').click()
     calls = ev(page, "() => window.apiCalls")
-    time.sleep(4)
+    fastclock.skip(page, 4000)   # 4 s on the page's clock: any request still coming would have started
     more = ev(page, "() => window.apiCalls") - calls
     check(more == 0, 'Texts: Cancel stops the checking (%d requests after Cancel)' % more)
     ev(page, "() => { window.API_DELAY = 60; }")
@@ -271,7 +275,7 @@ with sync_playwright() as p:
     ev(page, "() => { JOB_STATUS[5012] = 'Scheduled'; }")   # booked while the confirm screen is up
     page.fill('#st-ct-confirm-count', '4')
     B(page, 'Send 4 texts').click()
-    check(wait_done(page, 120), 'Texts stale: run ends')
+    check(wait_done(page, 120, fast=True), 'Texts stale: run ends')
     lg = log_text(page); print(lg)
     nums = [x[0] for x in ev(page, "() => window.SENT")]
     check('Jon Poe' in lg and lg.count('no longer on hold') >= 2 and '6015550012' not in nums, 'Texts stale: a hold booked after checking is skipped right before its text')
@@ -289,7 +293,7 @@ with sync_playwright() as p:
     page.wait_for_function("() => window.SENT.length >= 1", timeout=60000)
     ev(page, "() => { window.API_401 = true; }")
     opened = ev(page, "() => window.chatOpened.length")
-    check(wait_done(page, 60), 'Texts signed out mid-run: run ends')
+    check(wait_done(page, 60, fast=True), 'Texts signed out mid-run: run ends')
     lg = log_text(page); print(lg)
     check('signed you out' in T(page), 'Texts signed out mid-run: says ServiceTitan signed you out')
     check(ev(page, "() => window.chatOpened.length") == opened and len(ev(page, "() => window.SENT")) == 1, 'Texts signed out mid-run: no more conversations opened or texts sent')
