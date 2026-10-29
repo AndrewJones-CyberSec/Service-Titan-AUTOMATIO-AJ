@@ -11,7 +11,8 @@
     - Move Jobs: moves jobs to a tech, adds or unassigns techs, or swaps jobs or whole days, without dragging.
     - Tech Router (Beta, still being built): finds jobs to fill a tech's open time (customers to call and
       move up), plans a route and a tech for every Unassigned job (by arrival window: 8-12s, then 12-5s,
-      then 5-9s), and finds the techs closest to a job. It only reads; Move Jobs makes any change.
+      then 5-9s), scores a tech's route 0-100% and suggests a better order for it, and finds the techs
+      closest to a job. It only reads; Move Jobs makes any change.
 
   HOW TO RELEASE AN UPDATE
     1. Edit this file on GitHub.
@@ -23,8 +24,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.1';
+  const VERSION = '2.1.1';
   const WHATS_NEW = {
+    '2.1.1': 'New in 🧭 Tech Router: ✨ Optimize. Pick a tech (or 🖱️ and their name) for a 0–100% score of their route\'s order (100% is already the best), the better order and what it saves. 📊 Score every tech lists everyone, lowest first. It only suggests: you move the jobs on the board. And 🗺️ Plan the day can now ＋ Fit in holds, to call and book.',
     '2.1': 'New: 🧭 Tech Router (Beta). 📞 Fill a spot: pick a tech whose day is already planned, and it finds their open time (first thing, mid-day or the end of the day) and the jobs that would fit there from the Unassigned list (this day and the next 14) and the Hold list, with the customer\'s phone number to call and move them up. 🗺️ Plan the day: a tech and a route for every Unassigned job, 8-12s first, then 12-5s, then 5-9s (a little late is OK), sent to Move Jobs to assign. It learns which jobs each department does from the last 4 weeks of schedules, so a project coordinator only gets quotes, not electrical or plumbing ones. 🔎 Closest techs is back too. It\'s still being built, so check before you call; it only reads, and changes nothing on its own.',
     '2.0.2': 'Fixed: 💬 Tech Messages skipped every tech with "their name on the board has no menu". When the board scrolls to a tech it shows their name first and their menu about a second later; the Toolbox now waits for the menu, then opens it the way you would (a right-click or a left click on their name).',
     '2.0.1': 'Nothing inside the Toolbox scrolls sideways any more, and you can make it wider or narrower by dragging its left edge or bottom-right corner (it remembers; double-click for the usual width). Plus a few quick animations: it fades in and out, tools slide in, – folds it smoothly, and loading buttons show a spinner.',
@@ -1065,7 +1067,7 @@
     '#' + ID + ' .st-chips{display:flex;gap:4px;flex-wrap:wrap;align-items:center;min-width:0}',
     '#' + ID + ' .st-tl{display:grid;margin-top:4px;border-top:1px solid var(--st-line);padding-top:4px}' +
       '#' + ID + ' .st-tl-row{display:flex;gap:6px;align-items:baseline;padding:3px 6px;border-left:3px solid var(--st-line);font-size:12px;min-width:0}' +
-      '#' + ID + ' .st-tl-row.new{border-left-color:#6a1b9a;background:var(--st-purple-s)}#' + ID + ' .st-tl-row.edge{color:var(--st-ink-3);border-left-color:transparent}' +
+      '#' + ID + ' .st-tl-row.new{border-left-color:#6a1b9a;background:var(--st-purple-s)}#' + ID + ' .st-tl-row.hold{border-left-color:var(--st-amber);background:var(--st-amber-s)}#' + ID + ' .st-tl-row.edge{color:var(--st-ink-3);border-left-color:transparent}' +
       '#' + ID + ' .st-tl-time{flex:none;width:64px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}#' + ID + ' .st-tl-what{flex:1;min-width:0;overflow-wrap:anywhere}' +
       '#' + ID + ' .st-tl-side{flex:none;color:var(--st-ink-3);font-size:11px;white-space:nowrap}',
     // Animations (2.0.1): short and quiet, and only in the Toolbox (never on the board). Skipped
@@ -1673,7 +1675,7 @@
     ['biz', '🏢', 'Business Unit', 'Switch jobs to a branch', '#e3effd'],
     ['texts', '📱', 'Customer Texts', 'Text customers, confirm appointments', '#e3f5e9'],
     ['moves', '🔀', 'Move Jobs', 'Move, add, unassign or swap techs', '#f3e9fb'],
-    ['router', '🧭', 'Tech Router', 'Fill a tech\'s open time, closest techs', '#ddf3f0', 'Beta']
+    ['router', '🧭', 'Tech Router', 'Fill open time, plan and score routes', '#ddf3f0', 'Beta']
   ];
   const tiles = el('div', 'display:grid;gap:6px');
   TOOLS.forEach(([key, icon, name, desc, tint, badge]) => {
@@ -6873,20 +6875,23 @@
     const msg = el('div', 'font-size:12px;color:var(--st-ink-2);min-height:16px');
     msg.id = 'st-router-msg';
     const say = t => { msg.textContent = t; };
-    let tab = ['near', 'plan'].indexOf(get('stRouterTab')) > -1 ? get('stRouterTab') : 'fill';
+    let tab = ['near', 'plan', 'opt'].indexOf(get('stRouterTab')) > -1 ? get('stRouterTab') : 'fill';
     const tabs = el('div');
     tabs.className = 'st-seg';
     const tabBtn = (val, text, title) => {
       const b = el('button', '', text);
       b.type = 'button'; b.title = title;
+      b.setAttribute('data-tab', val);
       b.addEventListener('mousedown', e => e.preventDefault());
       b.onclick = () => { tab = val; set('stRouterTab', val); setPicking(null); showTab(); };
       tabs.appendChild(b);
       return b;
     };
-    const fillTab = tabBtn('fill', '📞 Fill a spot', 'Jobs to fill a tech\'s open time (customers to call and move up)');
-    const planTab = tabBtn('plan', '🗺️ Plan the day', 'A tech and a route for every Unassigned job');
-    const nearTab = tabBtn('near', '🔎 Closest', 'The techs closest to a job or zip code');
+    // Four tabs, so short names (the full name is in each one's tip).
+    const fillTab = tabBtn('fill', '📞 Fill', '📞 Fill a spot: jobs to fill a tech\'s open time (customers to call and move up)');
+    const planTab = tabBtn('plan', '🗺️ Plan', '🗺️ Plan the day: a tech and a route for every Unassigned job');
+    const optTab = tabBtn('opt', '✨ Optimize', '✨ Optimize: is a tech\'s route in the best order? A score, and what would change');
+    const nearTab = tabBtn('near', '🔎 Closest', '🔎 Closest techs: the techs closest to a job or zip code');
     const small = (text, extra) => el('div', 'font-size:11px;color:var(--st-ink-3);' + (extra || ''), text);
     // A line that folds open to show more.
     const fold = (head, body) => {
@@ -6935,28 +6940,31 @@
     const fillOut = el('div', 'display:none;gap:7px');
     fillOut.id = 'st-router-fill-out';
     fillBox.append(techRow, lookRow, fillOut);
-    // The techs on the board, by team (filled again only when the board's day or filter changes).
+    // The techs on the board, by team, in 📞 Fill a spot's and ✨ Optimize's lists (filled again only
+    // when the board's day or filter changes).
     let techsKey = '';
     const fillTechs = force => {
       const s = board.latest();
       const k = s ? s.key + '|' + s.techs.length : onBoard() ? 'loading' : 'off';
       if (!force && k === techsKey) return;
       techsKey = k;
-      const keep = techSel.value || get('stRouterTech') || '';
-      techSel.textContent = '';
-      const top = el('option', '', s ? 'Pick a tech…' : onBoard() ? 'Loading the board…' : 'Open the Dispatch board first');
-      top.value = '';
-      techSel.appendChild(top);
-      if (s) {
-        const groups = new Map();
-        s.techs.forEach(t => { const g = t.team || 'Other'; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(t); });
-        groups.forEach((list, team) => {
-          const g = el('optgroup'); g.label = shortTeam(team);
-          list.forEach(t => { const o = el('option', '', t.name); o.value = t.id; g.appendChild(o); });
-          techSel.appendChild(g);
-        });
-      }
-      if (Array.from(techSel.options).some(o => o.value === keep)) techSel.value = keep;
+      [[techSel, 'stRouterTech'], [optSel, 'stOptTech']].forEach(([sel, saved]) => {
+        const keep = sel.value || get(saved) || '';
+        sel.textContent = '';
+        const top = el('option', '', s ? 'Pick a tech…' : onBoard() ? 'Loading the board…' : 'Open the Dispatch board first');
+        top.value = '';
+        sel.appendChild(top);
+        if (s) {
+          const groups = new Map();
+          s.techs.forEach(t => { const g = t.team || 'Other'; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(t); });
+          groups.forEach((list, team) => {
+            const g = el('optgroup'); g.label = shortTeam(team);
+            list.forEach(t => { const o = el('option', '', t.name); o.value = t.id; g.appendChild(o); });
+            sel.appendChild(g);
+          });
+        }
+        if (Array.from(sel.options).some(o => o.value === keep)) sel.value = keep;
+      });
     };
     techSel.onchange = () => { set('stRouterTech', techSel.value); fillOut.style.display = 'none'; paint(); };
 
@@ -7024,11 +7032,37 @@
     graceSel.value = ['30', '60', '90', '120'].indexOf(get('stPlanGrace')) > -1 ? get('stPlanGrace') : '60';
     graceSel.onchange = () => set('stPlanGrace', graceSel.value);
     planOpts.append(teamPick, graceSel);
+    // ＋ Fit in holds: jobs from the Hold list in the room left after the Unassigned jobs (off unless ticked).
+    const holdsLab = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer;font-size:12px;color:var(--st-ink-2)');
+    const planHolds = el('input'); planHolds.type = 'checkbox'; planHolds.id = 'st-plan-holds';
+    planHolds.checked = get('stPlanHolds') === '1';
+    planHolds.onchange = () => set('stPlanHolds', planHolds.checked ? '1' : '0');
+    holdsLab.title = 'After the Unassigned jobs, fit jobs from the Hold list into the room left: up to ' + 2 + ' per tech, close by, without making anyone late or work past their shift. They\'re to call and book; they aren\'t sent to Move Jobs.';
+    holdsLab.append(planHolds, document.createTextNode('＋ Fit in holds too (to call and book)'));
     const planBtn = smallBtn('🗺️ Plan the Unassigned list', () => planDay(), PRIMARY + 'padding:7px 9px;font-size:13px');
     planBtn.id = 'st-plan-go';
     const planOut = el('div', 'display:none;gap:7px');
     planOut.id = 'st-plan-out';
-    planBox.append(planOpts, planBtn, planOut);
+    planBox.append(planOpts, holdsLab, planBtn, planOut);
+
+    // ---------- ✨ Optimize: the controls ----------
+    const optBox = el('div', 'display:none;gap:6px');
+    const optRow = el('div', 'display:flex;gap:6px;align-items:center');
+    const optSel = el('select', 'flex:1;min-width:0;' + FIELD);
+    optSel.id = 'st-opt-tech';
+    const optPick = smallBtn('🖱️', () => setPicking(picking === 'opt' ? null : 'opt'));
+    optPick.title = 'Click a tech\'s name on the board to check their route';
+    const optBtn = smallBtn('Check', () => optimize(), PRIMARY);
+    optBtn.id = 'st-opt-go';
+    optBtn.title = 'Score their route and find the best order for its jobs';
+    optRow.append(optSel, optPick, optBtn);
+    optSel.onchange = () => { set('stOptTech', optSel.value); optOut.style.display = 'none'; paint(); if (optSel.value) optimize(); };
+    const allBtn = smallBtn('📊 Score every tech', () => scoreAll(), 'justify-self:start;padding:3px 9px;min-height:26px;font-size:12px');
+    allBtn.id = 'st-opt-all';
+    allBtn.title = 'Every field tech\'s route score for the day the board shows, lowest first';
+    const optOut = el('div', 'display:none;gap:7px');
+    optOut.id = 'st-opt-out';
+    optBox.append(optRow, allBtn, optOut);
 
     // ---------- ⚙️ Drive times (your own Mapbox key) ----------
     const keyHead = el('button', FULL + 'padding:3px 6px;border:1px solid var(--st-line);border-radius:6px;background:var(--st-soft);color:var(--st-ink-2);font:inherit;font-size:11.5px;text-align:left;cursor:pointer');
@@ -7058,18 +7092,20 @@
 
     const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
     navRow.append(smallBtn('← Menu', () => showView('menu')));
-    wrap.append(beta, tabs, msg, fillBox, planBox, nearBox, keyHead, keyBox, navRow);
+    wrap.append(beta, tabs, msg, fillBox, planBox, optBox, nearBox, keyHead, keyBox, navRow);
     routerPane.appendChild(wrap);
     const showTab = () => {
-      [[fillTab, 'fill'], [planTab, 'plan'], [nearTab, 'near']].forEach(([b, v]) => b.classList.toggle('on', tab === v));
+      [[fillTab, 'fill'], [planTab, 'plan'], [optTab, 'opt'], [nearTab, 'near']].forEach(([b, v]) => b.classList.toggle('on', tab === v));
       fillBox.style.display = tab === 'fill' ? 'grid' : 'none';
       planBox.style.display = tab === 'plan' ? 'grid' : 'none';
+      optBox.style.display = tab === 'opt' ? 'grid' : 'none';
       nearBox.style.display = tab === 'near' ? 'grid' : 'none';
       fillPlanTeams();
       if (!searching) planBtn.textContent = planLabel();
       if (!onBoard()) say(board.need());
       else if (tab === 'fill') say(fillOut.style.display === 'none' ? 'Pick a tech whose day is planned, then Find: jobs that fit their open time, with the number to call.' : msg.textContent);
       else if (tab === 'plan') say(planOut.style.display === 'none' ? 'A tech and a route for every Unassigned job: 8-12s first, then 12-5s, then 5-9s. Nothing changes until you send it to Move Jobs and press Assign there.' : msg.textContent);
+      else if (tab === 'opt') say(optOut.style.display === 'none' ? 'Pick a tech, or 🖱️ and click their name: a score for their route\'s order (100% is the best it can be with those jobs) and what would change. It only suggests.' : msg.textContent);
       else say(nearOut.style.display === 'none' ? 'Type a zip code or job number, or press 🖱️ and click a job. It reads only; nothing changes.' : msg.textContent);
       paint(); fit();
     };
@@ -7086,7 +7122,7 @@
     const planLabel = () => '🗺️ Plan ' + (board.day() ? dayText(board.day()) : 'the day');
     const setBusy = on => {
       searching = on;
-      [[fillBtn, 'Find', 'Finding…'], [nearBtn, 'Find', 'Finding…'], [planBtn, planLabel(), 'Planning…']].forEach(([b, idle, busyText]) => { b.disabled = on; b.textContent = on ? busyText : idle; b.classList.toggle('st-busy', on); });
+      [[fillBtn, 'Find', 'Finding…'], [nearBtn, 'Find', 'Finding…'], [planBtn, planLabel(), 'Planning…'], [optBtn, 'Check', 'Checking…'], [allBtn, '📊 Score every tech', 'Scoring…']].forEach(([b, idle, busyText]) => { b.disabled = on; b.textContent = on ? busyText : idle; b.classList.toggle('st-busy', on); });
     };
 
     // ---------- Picking a tech or a job on the board ----------
@@ -7096,6 +7132,7 @@
     const paint = () => {
       let css = '';
       if (shown() && tab === 'fill' && techSel.value) css = board.techsCss([techSel.value], '#0265dc', 'rgba(2,101,220,.12)');
+      if (shown() && tab === 'opt' && optSel.value) css = board.techsCss([optSel.value], '#6a1b9a', 'rgba(106,27,154,.10)');
       if (shown() && tab === 'near' && lastNear && lastNear.jobId) css = board.jobsCss([lastNear.jobId], '#00796b', 'rgba(0,121,107,.22)');
       style.textContent = css;
       if (css) board.mount(style);
@@ -7103,21 +7140,21 @@
     const setPicking = what => {
       picking = what && onBoard() ? what : null;
       if (what && !onBoard()) say(board.need());
-      setOn(techPick, picking === 'tech'); setOn(jobPick, picking === 'job');
-      if (picking === 'tech') say('Click a tech\'s name on the board.');
+      setOn(techPick, picking === 'tech'); setOn(jobPick, picking === 'job'); setOn(optPick, picking === 'opt');
+      if (picking === 'tech' || picking === 'opt') say('Click a tech\'s name on the board.');
       if (picking === 'job') say('Click a job on the board, or a row in the Jobs Tray below it.');
     };
     const onClick = async e => {
       if (!picking || !onBoard() || !shown() || panel.contains(e.target)) return;
-      if (picking === 'tech') {
-        const id = board.clickedTech(e);
+      if (picking === 'tech' || picking === 'opt') {
+        const id = board.clickedTech(e), forOpt = picking === 'opt', sel = forOpt ? optSel : techSel;
         if (!id) return;
         e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
         setPicking(null);
         fillTechs(true);
-        if (!Array.from(techSel.options).some(o => o.value === id)) { say('⚠️ Couldn\'t find that tech in the board\'s list yet. Try again in a moment.'); return; }
-        techSel.value = id; set('stRouterTech', id); paint();
-        fill();
+        if (!Array.from(sel.options).some(o => o.value === id)) { say('⚠️ Couldn\'t find that tech in the board\'s list yet. Try again in a moment.'); return; }
+        sel.value = id; set(forOpt ? 'stOptTech' : 'stRouterTech', id); paint();
+        if (forOpt) optimize(); else fill();
         return;
       }
       const hit = board.clickedJob(e);
@@ -7131,7 +7168,7 @@
       near({ jobId: j });
     };
     window.addEventListener('click', onClick, true);
-    pickers.push({ active: () => !!picking && shown(), hit: e => picking === 'tech' ? !!board.clickedTech(e) : !!board.clickedJob(e) });
+    pickers.push({ active: () => !!picking && shown(), hit: e => picking === 'tech' || picking === 'opt' ? !!board.clickedTech(e) : !!board.clickedJob(e) });
 
     // ---------- 📞 Fill a spot ----------
     let runId = 0, lastFill = null;
@@ -7674,7 +7711,9 @@
     // ---------- 🗺️ Plan the day ----------
     // Plans a tech for every job on the Unassigned list for the day the board shows, and the order
     // each tech's day goes in, then hands the plan to 🔀 Move Jobs (nothing changes until Assign there).
-    //   - Appointments on hold aren't planned, and aren't part of anyone's day.
+    //   - Appointments on hold aren't part of anyone's day. With ＋ Fit in holds ticked, jobs from the
+    //     Hold list are fitted into the room left afterwards (see below), to call and book; they're
+    //     shown on the routes but never sent to Move Jobs.
     //   - Each tech's day is a route: from home (or, today, from now and where they are) through
     //     their jobs to home. Jobs already on the board keep their order; Unassigned jobs go in
     //     between them where they cost least.
@@ -7694,6 +7733,7 @@
     //   Driving is guessed from straight-line miles while planning, then the finished routes get
     //   Mapbox drive times (one request per tech) for their arrival times.
     const PER_JOB = 15, EARLY = 30, MAX_OVER = 90, MAX_ADD = 90, LATE_WEIGHT = 0.5, VERY_LATE = 4, EVENING_WEIGHT = 0.2, TOO_LATE = 120;
+    const HOLD_MAX = 2, HOLD_ADD = 30, HOLD_NEAR = 15;
     const WIN_TAG = /^\s*(\d{1,2})\s*-\s*(\d{1,2})\s+(morning|afternoon|evening)\b/i;
     // A job's arrival window on the plan's day: { start, end, label, evening } or null.
     const windowOf = (tags, ws, we, day) => {
@@ -7735,6 +7775,35 @@
       const over = Math.max(0, (t - R.end) / 60000);
       return { cost: cost + drive + over, drive, over, home: new Date(t), back, out, tooLate };
     };
+    // A tech's day as a route, from the board as it stands: { t, D, start, end, startPt, startWords,
+    // homePt, home, stops, fixedN (stops being worked or driven to now, which stay first), n0, added,
+    // sales, base (simulated with straight-line guesses) }, or null (time off, nowhere to measure
+    // from, or their day is over). Today: from now, without the jobs they've finished.
+    const routeOf = (s, t, points, now, grace) => {
+      const day = s.day, today = board.sameDay(day, now);
+      const D = dayOf(s, t.id);
+      if (D.off) return null;
+      const h = homeOf(t.id), homePt = h ? { lat: h.lat, lon: h.lon } : null;
+      const jobs = D.jobs.filter(a => !(today && /^(done|completed)$/i.test(a.status)));
+      const done = today ? D.jobs.filter(a => /^(done|completed)$/i.test(a.status)).sort((a, b) => b.end - a.end) : [];
+      const lastDone = done.find(a => points.get(zip5(a.zip)));
+      const stops = jobs.map(a => {
+        const busyNow = today && /^(working|dispatched)$/i.test(a.techStatus[t.id] || a.status);
+        return { kind: 'board', a, jobId: a.jobId, customer: a.customer, city: a.city, pt: points.get(zip5(a.zip)) || null, win: windowOf(a.tags, a.windowStart, a.windowEnd, day),
+          dur: Math.max(15, busyNow && a.end > now ? (a.end - now) / 60000 : (a.end - a.start) / 60000), busyNow };
+      }).sort((x, y) => (y.busyNow - x.busyNow) || (x.a.start - y.a.start));
+      const start = today ? new Date(Math.max(+D.start, Math.ceil(now / 900000) * 900000)) : D.start;
+      // Where their day starts: today, the job they're working (it's their first stop), else the
+      // last one they finished, else home.
+      const working = stops.find(x => x.busyNow && /^working$/i.test(x.a.techStatus[t.id] || x.a.status));
+      const startPt = working && working.pt ? working.pt : lastDone ? points.get(zip5(lastDone.zip)) : homePt;
+      const startWords = working && working.pt ? '🔧 Working now' : lastDone ? '✅ From their last job' + (lastDone.city ? ' (' + tidy(lastDone.city) + ')' : '') : '🏠 ' + (today ? 'From ' : 'Leaves ') + homeWords(h);
+      const R = { t, D, start, end: D.end, startPt, startWords, homePt, home: h, stops, fixedN: stops.filter(x => x.busyNow).length, n0: new Set(jobs.map(a => a.jobId)).size, added: [], sales: isSales(t.team) };
+      if (!R.startPt && !stops.some(x => x.pt)) return null;   // nowhere to measure from
+      if (today && start >= D.end) return null;                 // their day is over
+      R.base = simulate(R, stops, guess, grace);
+      return R;
+    };
     let planRun = 0, lastPlan = null;
     const planDay = async () => {
       const run = ++planRun;
@@ -7752,7 +7821,7 @@
         const pickName = !pick ? '' : pick === SALES_PICK ? 'Sales & Project Coordinators' : shortTeam(pick);
         const day = s.day, now = new Date(), today = board.sameDay(day, now);
         const jobs0 = un.rows.map(r => { const c = candOf(r.raw, 'ua', day); if (c) c.win = windowOf(c.tags, r.raw.ArrivalWindowStart, r.raw.ArrivalWindowEnd, day); return c; }).filter(Boolean);
-        if (!jobs0.length) return say('The Unassigned list for ' + dayText(day) + ' is empty. Nothing to plan.');
+        if (!jobs0.length && !planHolds.checked) return say('The Unassigned list for ' + dayText(day) + ' is empty. Nothing to plan.');
         if (!learned || learned.key !== learnKey()) say('Learning which jobs each department does, from the last 4 weeks of schedules…');
         let L;
         try { L = await learn(s); }
@@ -7769,27 +7838,8 @@
         const routes = [];
         s.techs.forEach(t => {
           if (!inPick(pick, t.team) || !usable(t)) return;
-          const D = dayOf(s, t.id);
-          if (D.off) return;
-          const h = homeOf(t.id), homePt = h ? { lat: h.lat, lon: h.lon } : null;
-          const jobs = D.jobs.filter(a => !(today && /^(done|completed)$/i.test(a.status)));
-          const done = today ? D.jobs.filter(a => /^(done|completed)$/i.test(a.status)).sort((a, b) => b.end - a.end) : [];
-          const lastDone = done.find(a => points.get(zip5(a.zip)));
-          const stops = jobs.map(a => {
-            const busyNow = today && /^(working|dispatched)$/i.test(a.techStatus[t.id] || a.status);
-            return { kind: 'board', a, jobId: a.jobId, customer: a.customer, city: a.city, pt: points.get(zip5(a.zip)) || null, win: windowOf(a.tags, a.windowStart, a.windowEnd, day),
-              dur: Math.max(15, busyNow && a.end > now ? (a.end - now) / 60000 : (a.end - a.start) / 60000), busyNow };
-          }).sort((x, y) => (y.busyNow - x.busyNow) || (x.a.start - y.a.start));
-          const start = today ? new Date(Math.max(+D.start, Math.ceil(now / 900000) * 900000)) : D.start;
-          // Where their day starts: today, the job they're working (it's their first stop), else the
-          // last one they finished, else home.
-          const working = stops.find(x => x.busyNow && /^working$/i.test(x.a.techStatus[t.id] || x.a.status));
-          const startPt = working && working.pt ? working.pt : lastDone ? points.get(zip5(lastDone.zip)) : homePt;
-          const startWords = working && working.pt ? '🔧 Working now' : lastDone ? '✅ From their last job' + (lastDone.city ? ' (' + tidy(lastDone.city) + ')' : '') : '🏠 ' + (today ? 'From ' : 'Leaves ') + homeWords(h);
-          const R = { t, D, start, end: D.end, startPt, startWords, homePt, home: h, stops, fixedN: stops.filter(x => x.busyNow).length, n0: new Set(jobs.map(a => a.jobId)).size, added: [], sales: isSales(t.team) };
-          if (!R.startPt && !stops.some(x => x.pt)) return;   // nowhere to measure from
-          if (today && start >= D.end) return;                 // their day is over
-          R.base = simulate(R, stops, guess, grace);
+          const R = routeOf(s, t, points, now, grace);
+          if (!R) return;
           R.before = R.base;
           routes.push(R);
         });
@@ -7836,6 +7886,54 @@
           x.fit = best.f;
           best.R.stops = best.stops; best.R.base = best.sim; best.R.added.push(x);
         });
+        // ＋ Fit in holds: then jobs from the Hold list into the room that's left. Only where one fits
+        // without much more driving (HOLD_ADD minutes), without making a stop late or the day longer
+        // than it already is, and close to the route (HOLD_NEAR miles); at most HOLD_MAX per tech, and only
+        // job types they do (not ones with nothing to go by). Best fit first, across every route.
+        let holdsPlaced = 0;
+        const holdNotes = [];
+        if (planHolds.checked && routes.length) {
+          say('Looking through the Hold list…');
+          const H = await candidates(s, false, true, stale);
+          if (!H || stale()) return;
+          H.notes.forEach(n => holdNotes.push(n));
+          const planned = new Set(jobs0.map(c => c.jobId));
+          const pool = H.rows.filter(c => c.pt && !PHONE_ONLY.test(c.type) && !planned.has(c.jobId)).map(c => Object.assign({}, c, { win: windowOf(c.tags, null, null, day) }));
+          const near = (R, h) => [R.startPt, R.homePt].concat(R.stops.map(x => x.pt)).some(p => p && miles(p, h.pt) <= HOLD_NEAR);
+          const bestFor = (R, h) => {
+            const x = { kind: 'hold', c: h, jobId: h.jobId, customer: h.customer, city: h.city, pt: h.pt, win: h.win, dur: h.dur, prio: norm(h.priority).toLowerCase(), phone: h.phone };
+            const badBase = R.base.out.filter(o => o.bad).length;
+            let best = null;
+            for (let p = R.fixedN; p <= R.stops.length; p++) {
+              const stops = R.stops.slice(0, p).concat([x], R.stops.slice(p));
+              const sim = simulate(R, stops, guess, grace);
+              if (sim.drive - R.base.drive > HOLD_ADD || sim.over > R.base.over + 5 || sim.tooLate > R.base.tooLate || sim.out.filter(o => o.bad).length > badBase) continue;
+              const waited = h.created ? Math.min(10, (Date.now() - h.created) / (7 * 86400000) * 2) : 0;
+              const score = sim.cost - R.base.cost + (PRIORITY[x.prio] || 0) - waited;
+              if (!best || score < best.score) best = { x, stops, sim, score };
+            }
+            return best;
+          };
+          const taken = new Set();
+          const listFor = e => pool.filter(h => !taken.has(h.jobId) && fitFor(e.R, h).tier !== 'no' && fitFor(e.R, h).tier !== 'unknown' && near(e.R, h))
+            .map(h => bestFor(e.R, h)).filter(Boolean).sort((a, b) => a.score - b.score);
+          const lists = routes.map(R => ({ R, n: 0 }));
+          lists.forEach(e => { e.list = listFor(e); });
+          for (;;) {
+            let pickE = null;
+            lists.forEach(e => {
+              if (e.n >= HOLD_MAX) return;
+              while (e.list.length && taken.has(e.list[0].x.jobId)) e.list.shift();
+              if (e.list.length && (!pickE || e.list[0].score < pickE.list[0].score)) pickE = e;
+            });
+            if (!pickE) break;
+            const b = pickE.list.shift();
+            b.x.fit = fitFor(pickE.R, b.x.c);
+            pickE.R.stops = b.stops; pickE.R.base = b.sim; pickE.R.added.push(b.x);
+            taken.add(b.x.jobId); pickE.n++; holdsPlaced++;
+            pickE.list = pickE.n < HOLD_MAX ? listFor(pickE) : [];
+          }
+        }
         // Real drive times for the routes that changed: one Mapbox Directions request each.
         const changed = routes.filter(R => R.added.length);
         say('Getting drive times for ' + plural(changed.length, 'route') + '…');
@@ -7856,8 +7954,9 @@
         }));
         if (stale()) return;
         const rows = [];
-        changed.forEach(R => R.added.forEach(x => rows.push({ jobId: x.jobId, techId: R.t.id, techName: R.t.name, customer: x.customer })));
-        lastPlan = { s, routes: changed, left, rows, grace, today, noDrive, zipError, total: jobs0.length - otherDept, otherDept, pickName };
+        // Only the Unassigned jobs go to Move Jobs: a hold needs a call and a new time first.
+        changed.forEach(R => R.added.forEach(x => { if (x.kind === 'new') rows.push({ jobId: x.jobId, techId: R.t.id, techName: R.t.name, customer: x.customer }); }));
+        lastPlan = { s, routes: changed, left, rows, grace, today, noDrive, zipError: [zipError].concat(holdNotes).filter(Boolean).join(' '), total: jobs0.length - otherDept, otherDept, pickName, holdsPlaced };
         renderPlan(lastPlan);
       } catch (e) {
         if (stale()) return;
@@ -7869,11 +7968,11 @@
     const winTone = w => !w ? '' : w.evening ? 'w-ev' : w.start.getHours() >= 12 ? 'w-pm' : 'w-am';
     const renderPlan = P => {
       planOut.textContent = '';
-      const n = P.rows.length, lateN = P.routes.reduce((a, R) => a + R.final.out.filter(o => o.bad).length, 0);
+      const n = P.rows.length, lateN = P.routes.reduce((a, R) => a + R.final.out.filter(o => o.bad).length, 0), holdsN = P.holdsPlaced || 0;
       const sum = el('div', 'display:grid;gap:1px');
       sum.className = 'st-plan-head';
-      sum.appendChild(el('div', 'font-size:14px;font-weight:800;color:var(--st-ink)', n + ' of ' + plural(P.total, 'job') + ' planned'));
-      sum.appendChild(el('div', 'font-size:12px;color:var(--st-ink-2)', [dayText(P.s.day), P.pickName, plural(P.routes.length, 'tech'), P.left.length ? P.left.length + ' not planned' : '', lateN ? '⚠️ ' + plural(lateN, 'late stop') : ''].filter(Boolean).join(' · ')));
+      sum.appendChild(el('div', 'font-size:14px;font-weight:800;color:var(--st-ink)', P.total ? n + ' of ' + plural(P.total, 'job') + ' planned' : 'No Unassigned jobs to plan'));
+      sum.appendChild(el('div', 'font-size:12px;color:var(--st-ink-2)', [dayText(P.s.day), P.pickName, plural(P.routes.length, 'tech'), holdsN ? '⏸️ ' + plural(holdsN, 'hold') + ' to call' : '', P.left.length ? P.left.length + ' not planned' : '', lateN ? '⚠️ ' + plural(lateN, 'late stop') : ''].filter(Boolean).join(' · ')));
       planOut.appendChild(sum);
       if (n) {
         const send = smallBtn('➡️ Send ' + plural(n, 'job') + ' to Move Jobs', () => {
@@ -7883,9 +7982,10 @@
           showView('moves');
         }, FULL + 'background:#6a1b9a;border-color:#6a1b9a;color:#fff;padding:6px 9px;font-size:12.5px');
         send.id = 'st-plan-send';
-        send.title = 'Opens 🔀 Move Jobs with each job and its tech. Nothing changes until you review it and press Assign.';
+        send.title = 'Opens 🔀 Move Jobs with each job and its tech. Nothing changes until you review it and press Assign.' + (holdsN ? ' Holds aren\'t sent: call to book them first.' : '');
         planOut.appendChild(send);
       }
+      if (holdsN) planOut.appendChild(small('⏸️ Holds are to call and book (their phone number is on their stop); they aren\'t sent to Move Jobs.'));
       const tools = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
       if (P.routes.length) {
         const all = smallBtn('▾ Show every stop', () => {
@@ -7912,7 +8012,7 @@
       if (P.zipError) planOut.appendChild(small('⚠️ Some zip codes couldn\'t be looked up: ' + P.zipError + '.', 'color:var(--st-amber)'));
       planOut.appendChild(small('Late is OK up to ' + mins(P.grace) + ' (Urgent: none, High: half); 5-9s count lightly. Times assume each job takes its booked time. Drive times © Mapbox © OpenStreetMap.'));
       planOut.style.display = 'grid';
-      say(n ? 'Check the routes, then Send to Move Jobs. Nothing changes until you press Assign there.' : 'Nothing could be planned (see why below).');
+      say(n ? 'Check the routes, then Send to Move Jobs. Nothing changes until you press Assign there.' : holdsN ? 'Only holds fit: call to book them.' : 'Nothing could be planned (see why below).');
       fit();
     };
     // Late within the grace is fine ("OK"); later than that is ⚠️ (marked on the route as o.bad).
@@ -7925,8 +8025,11 @@
       const head = el('div', 'display:flex;gap:6px;align-items:baseline;cursor:pointer');
       head.title = R.open ? 'Hide the stops' : 'Show every stop';
       head.onclick = () => { R.open = !R.open; renderPlan(P); };
-      head.append(el('span', 'font-weight:800;font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', (R.open ? '▾ ' : '▸ ') + R.t.name),
-        chip('+' + R.added.length, 'p', plural(R.added.length, 'new job')), chip('🚗 ' + g + mins(f.drive), R.sales && f.drive > SALES_MAX ? 'a' : '', 'Driving that day (was ' + g + mins(R.was.drive) + ')' + (R.sales ? '. Sales goal: under ' + mins(SALES_MAX) : '')));
+      const newN = R.added.filter(x => x.kind === 'new').length, holdN = R.added.length - newN;
+      head.append(el('span', 'font-weight:800;font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', (R.open ? '▾ ' : '▸ ') + R.t.name));
+      if (newN) head.appendChild(chip('+' + newN, 'p', plural(newN, 'new job')));
+      if (holdN) head.appendChild(chip('⏸️ ' + holdN, 'a', plural(holdN, 'hold') + ' to call and book'));
+      head.append(chip('🚗 ' + g + mins(f.drive), R.sales && f.drive > SALES_MAX ? 'a' : '', 'Driving that day (was ' + g + mins(R.was.drive) + ')' + (R.sales ? '. Sales goal: under ' + mins(SALES_MAX) : '')));
       box.appendChild(head);
       const bad = f.out.filter(o => o.bad).length;
       box.appendChild(el('div', 'font-size:11.5px;color:var(--st-ink-3)', [shortTeam(R.t.team) || 'No team', 'home ' + clock(f.home) + (f.over >= 5 ? ' (' + mins(f.over) + ' past their shift)' : ''), bad ? '⚠️ ' + plural(bad, 'late stop') : ''].filter(Boolean).join(' · ')));
@@ -7934,9 +8037,10 @@
       const chips = el('div');
       chips.className = 'st-chips';
       f.out.forEach(o => {
-        if (o.x.kind !== 'new') return;
-        const c = chip(clock(o.arrive).replace(/ (AM|PM)$/, '') + ' ' + (o.x.customer || '#' + o.x.jobId) + (o.x.win ? ' · ' + o.x.win.label : '') + (o.bad ? ' ⚠️' : ''), o.bad ? 'r' : winTone(o.x.win),
-          '#' + o.x.jobId + ' ' + (o.x.customer || '') + ', arrives about ' + clock(o.arrive) + (o.x.win ? ' (' + o.x.win.label + ')' : '') + (o.late >= 5 ? ', ' + lateWords(o, P) : ''));
+        if (o.x.kind === 'board') return;
+        const hold = o.x.kind === 'hold';
+        const c = chip((hold ? '⏸️ ' : '') + clock(o.arrive).replace(/ (AM|PM)$/, '') + ' ' + (o.x.customer || '#' + o.x.jobId) + (o.x.win ? ' · ' + o.x.win.label : '') + (o.bad ? ' ⚠️' : ''), o.bad ? 'r' : hold ? 'a' : winTone(o.x.win),
+          (hold ? 'On hold: call ' + (o.x.phone ? fmtPhone(o.x.phone) + ' ' : '') + 'to book it. ' : '') + '#' + o.x.jobId + ' ' + (o.x.customer || '') + ', arrives about ' + clock(o.arrive) + (o.x.win ? ' (' + o.x.win.label + ')' : '') + (o.late >= 5 ? ', ' + lateWords(o, P) : ''));
         c.classList.add('st-plan-chip');
         chips.appendChild(c);
       });
@@ -7956,12 +8060,14 @@
       };
       row(clock(R.start), R.startPt ? R.startWords : 'Start (nowhere to measure from)', '', 'edge');
       f.out.forEach(o => {
-        const x = o.x, isNew = x.kind === 'new';
+        const x = o.x, isNew = x.kind === 'new', hold = x.kind === 'hold';
         const what = el('span', '');
+        if (hold) what.appendChild(el('span', 'font-weight:800;color:var(--st-amber)', '⏸️ Hold · '));
         if (x.win) { what.appendChild(chip(x.win.label, winTone(x.win))); what.appendChild(document.createTextNode(' ')); }
         what.appendChild(document.createTextNode((x.customer || 'Job') + ' #' + x.jobId + (x.prio === 'urgent' || x.prio === 'high' ? ' ⭐' : '') + (x.city ? ' · ' + tidy(x.city) : '')));
         if (o.late >= 5) what.appendChild(el('span', 'font-weight:700;color:' + (o.bad ? 'var(--st-red)' : 'var(--st-amber)'), ' · ' + (o.bad ? '⚠️ ' : '') + lateWords(o, P)));
-        row(clock(o.arrive), what, o.drive ? '🚗 ' + g + mins(o.drive) : '', (isNew ? 'new st-plan-new' : 'st-plan-stop') + (o.bad ? ' late' : ''));
+        if (hold) what.appendChild(el('span', 'display:block;font-weight:700;user-select:text', x.phone ? '📞 ' + fmtPhone(x.phone) + ' · call to book it' : 'No phone number: call to book it'));
+        row(clock(o.arrive), what, o.drive ? '🚗 ' + g + mins(o.drive) : '', (isNew ? 'new st-plan-new' : hold ? 'hold st-plan-hold' : 'st-plan-stop') + (o.bad ? ' late' : ''));
       });
       row(clock(f.home), '🏠 Home' + (f.over >= 5 ? ' · ' + mins(f.over) + ' past their shift' : ''), f.back ? '🚗 ' + g + mins(f.back) : '', 'edge');
       box.appendChild(tl);
@@ -7971,11 +8077,293 @@
       const lines = ['Plan for ' + dayText(P.s.day) + (P.pickName ? ' (' + P.pickName + ')' : '')];
       P.routes.forEach(R => {
         lines.push('', R.t.name + ' (' + (shortTeam(R.t.team) || 'no team') + '): +' + plural(R.added.length, 'job') + ', driving ' + mins(R.final.drive));
-        R.final.out.forEach(o => lines.push('  ' + clock(o.arrive) + '  ' + (o.x.kind === 'new' ? 'NEW ' : '') + (o.x.customer || 'Job') + ' #' + o.x.jobId + (o.x.win ? ' (' + o.x.win.label + ')' : '') + (o.late >= 5 ? ' ' + lateWords(o, P) : '')));
+        R.final.out.forEach(o => lines.push('  ' + clock(o.arrive) + '  ' + (o.x.kind === 'new' ? 'NEW ' : o.x.kind === 'hold' ? 'HOLD (call ' + (o.x.phone ? fmtPhone(o.x.phone) : 'them') + ' to book) ' : '') + (o.x.customer || 'Job') + ' #' + o.x.jobId + (o.x.win ? ' (' + o.x.win.label + ')' : '') + (o.late >= 5 ? ' ' + lateWords(o, P) : '')));
         lines.push('  ' + clock(R.final.home) + '  home');
       });
       if (P.left.length) { lines.push('', 'Not planned:'); P.left.forEach(l => lines.push('  #' + l.c.jobId + ' ' + (l.c.customer || '') + ': ' + l.why)); }
       return lines.join('\n');
+    };
+
+    // ---------- ✨ Optimize ----------
+    // Is a tech's day in the best order it can be, with the jobs already on it? Their jobs in the
+    // board's order (by appointment time) against the best order of the same jobs: every order when
+    // there are up to BRUTE of them, else moving one job at a time to wherever it's best until nothing
+    // gets better. Jobs they're working or driving to now stay first; appointments on hold aren't part
+    // of their day; today, only the jobs they haven't finished.
+    //   - "Best" is as in 🗺️ Plan the day: least driving, no one later than the grace (Late OK, set
+    //     there; 8-12s first, then 12-5s, then 5-9s), and home on time.
+    //   - A job with no arrival window (no window tag, no window on the appointment) stays near its
+    //     booked time: no earlier than EARLY minutes before it, and late after BOOKED minutes.
+    //   - Drive times between every place on the route come from one Mapbox request (📊 Score every
+    //     tech uses straight-line miles, to be quick).
+    //   - Between orders that are otherwise as good, the one that gets them home sooner (HOME_WEIGHT
+    //     a minute: 30 minutes sooner counts as 3 minutes less driving), then the one that moves the
+    //     fewest jobs (MOVE_WEIGHT each: two jobs at the same place aren't swapped for nothing).
+    //   - The score is 100% when it's already the best order, and lower the more the best order would
+    //     save (driving, lateness, time past their shift and getting home, in minutes):
+    //     100 × (1 − saved / (now + 30)), where now is what the board's order costs.
+    // It only suggests: the jobs are moved on the board, by you (the Toolbox doesn't change times).
+    const BRUTE = 8, BOOKED = 120, HOME_WEIGHT = 0.1, MOVE_WEIGHT = 0.3;
+    // Their route with a window for each job that has none: its booked time.
+    const withBooked = (R, grace) => {
+      R.stops = R.stops.map(x => x.win || !x.a || !x.a.start ? x : Object.assign({}, x, { win: { start: x.a.start, end: new Date(+x.a.start + BOOKED * 60000), label: 'booked ' + clock(x.a.start), evening: x.a.start.getHours() >= 17, booked: true } }));
+      R.base = simulate(R, R.stops, guess, grace);
+      return R;
+    };
+    const bestOrder = (R, leg, grace, cap) => {
+      const fixed = R.stops.slice(0, R.fixedN), mov = R.stops.slice(R.fixedN);
+      const K = (sim, o) => sim.cost + HOME_WEIGHT * (sim.home - R.start) / 60000 + MOVE_WEIGHT * o.reduce((n, x, i) => n + (x !== mov[i]), 0);
+      const cur = simulate(R, R.stops, leg, grace);
+      let best = { stops: R.stops, sim: cur, k: K(cur, mov) };
+      const costOf = o => K(simulate(R, fixed.concat(o), leg, grace), o);
+      const tryOrder = o => { const stops = fixed.concat(o), sim = simulate(R, stops, leg, grace), k = K(sim, o); if (k < best.k) best = { stops, sim, k }; };
+      if (mov.length <= (cap || BRUTE)) {
+        // Every order (Heap's algorithm).
+        const a = mov.slice(), c = a.map(() => 0);
+        let i = 0;
+        while (i < a.length) {
+          if (c[i] < i) { const k = i % 2 ? c[i] : 0, x = a[k]; a[k] = a[i]; a[i] = x; tryOrder(a.slice()); c[i]++; i = 0; }
+          else { c[i] = 0; i++; }
+        }
+      } else {
+        // Too many to try every order: from the board's order or the windows' order (whichever is
+        // better), move one job at a time to its best place while that makes the day better.
+        const byWin = mov.slice().sort((x, y) => (x.win ? +x.win.start : 0) - (y.win ? +y.win.start : 0));
+        let order = costOf(byWin) < costOf(mov) ? byWin : mov.slice(), cost = costOf(order), improved = true, rounds = 0;
+        while (improved && rounds++ < 40) {
+          improved = false;
+          for (let i = 0; i < order.length; i++) for (let j = 0; j < order.length; j++) {
+            if (i === j) continue;
+            const o = order.slice(), x = o.splice(i, 1)[0];
+            o.splice(j, 0, x);
+            const c2 = costOf(o);
+            if (c2 < cost - 0.01) { order = o; cost = c2; improved = true; }
+          }
+        }
+        tryOrder(order);
+      }
+      // saved: what the best order saves; under a minute and it's as good as the board's order.
+      return { cur, best, saved: K(cur, mov) - best.k };
+    };
+    const scoreOf = (cur, saved) => saved < 1 ? 100 : Math.max(0, Math.min(99, Math.round(100 * (1 - saved / (cur.cost + 30)))));
+    const scoreTone = n => n >= 95 ? ['var(--st-green-d)', 'var(--st-green-s)', 'var(--st-green-l)'] : n >= 80 ? ['var(--st-amber)', 'var(--st-amber-s)', 'var(--st-amber-l)'] : ['var(--st-red-d)', 'var(--st-red-s)', 'var(--st-red-l)'];
+    const nth = n => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
+    // What the best order would change, in a few words each, late stops first (what it costs too, if anything).
+    const gains = (cur, best) => {
+      const out = [], dDrive = Math.round(cur.drive - best.drive), badCur = cur.out.filter(o => o.bad).length, badBest = best.out.filter(o => o.bad).length;
+      const lateCur = cur.out.reduce((t, o) => t + o.late, 0), lateBest = best.out.reduce((t, o) => t + o.late, 0), dHome = Math.round((cur.home - best.home) / 60000);
+      if (badCur > badBest) out.push('has ' + plural(badCur - badBest, 'fewer late stop', 'fewer late stops'));
+      else if (lateCur - lateBest >= 5) out.push('cuts lateness by ' + mins(lateCur - lateBest));
+      if (dDrive >= 1) out.push('saves ' + mins(dDrive) + ' of driving');
+      if (dHome >= 5) out.push('gets them home at ' + clock(best.home) + ' instead of ' + clock(cur.home));
+      if (dDrive <= -1) out.push('adds ' + mins(-dDrive) + ' of driving');
+      if (dHome <= -5) out.push('gets them home ' + mins(-dHome) + ' later');
+      return out.length ? out : ['gets them to their jobs a little sooner'];
+    };
+    const sharedWith = (x, t) => x.a && Array.isArray(x.a.techs) ? x.a.techs.filter(id => S(id) !== S(t.id)).length : 0;
+    let optRun = 0, lastOpt = null, optView = 'best';
+    const optimize = async () => {
+      const run = ++optRun;
+      const stale = () => run !== optRun || !alive;
+      setPicking(null);
+      optOut.style.display = 'none'; optOut.textContent = '';
+      lastOpt = null;
+      if (!onBoard()) return say(board.need());
+      const techId = optSel.value;
+      if (!techId) return say('Pick a tech first: from the list, or 🖱️ and their name on the board.');
+      setBusy(true);
+      try {
+        say('Reading their day…');
+        const s = await board.load({ fresh: true });   // their day as it is right now
+        if (stale()) return;
+        const t = s.techById.get(S(techId));
+        if (!t) return say('⚠️ That tech isn\'t on the board for ' + dayText(s.day) + ' (its filter may hide them).');
+        await loadHomes();
+        const { points, error } = await zipPoints((s.byTech.get(S(t.id)) || []).map(a => zip5(a.zip)));
+        if (stale()) return;
+        const grace = Number(graceSel.value) || 60, now = new Date(), today = board.sameDay(s.day, now);
+        const R0 = routeOf(s, t, points, now, grace);
+        if (!R0) {
+          const D = dayOf(s, t.id);
+          return renderOpt({ s, t, none: D.off ? t.name + ' has time off that day.' : today && now >= D.end ? t.name + '\'s day is over (their shift ended at ' + clock(D.end) + ').' : 'There\'s nowhere to measure ' + t.name + '\'s route from: no home on their tech profile and no job with a zip code.' });
+        }
+        const R = withBooked(R0, grace), movable = R.stops.length - R.fixedN;
+        if (movable < 2) return renderOpt({ s, t, R, none: !R.stops.length ? t.name + ' has no jobs ' + (today ? 'left today' : 'that day') + '.' : movable === 1 ? t.name + ' has only one job ' + (today ? 'left ' : '') + 'to put in order.' : 'Every job ' + t.name + ' has left is underway.' });
+        say('Getting drive times between their stops…');
+        const P = [];
+        [R.startPt, R.homePt].concat(R.stops.map(x => x.pt)).forEach(p => { if (p && !P.some(q => ptText(q) === ptText(p))) P.push(p); });
+        const m = await matrix(P, P, false);
+        if (stale()) return;
+        const idx = new Map(P.map((p, i) => [ptText(p), i]));
+        const leg = (a, b) => { const i = idx.get(ptText(a)), j = idx.get(ptText(b)), d = i != null && j != null ? m.out[i][j] : null; return d ? d.min : guess(a, b); };
+        say('Trying every order…');
+        await wait(0);
+        const { cur, best, saved } = bestOrder(R, leg, grace);
+        optView = 'best';
+        renderOpt(lastOpt = { s, t, R, cur, best, score: scoreOf(cur, saved), guess: !m.ok, grace, today, zipError: error, noPt: R.stops.filter(x => !x.pt).length });
+      } catch (e) {
+        if (stale()) return;
+        say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t check the route: ' + errText(e)));
+      } finally { if (run === optRun) setBusy(false); }
+    };
+    // The score, what would change, and the day in the suggested order (or as it is now).
+    const renderOpt = O => {
+      optOut.textContent = '';
+      const head = el('div', 'display:grid;gap:1px;font-size:12px;color:var(--st-ink-2)');
+      head.className = 'st-opt-head';
+      head.append(el('div', 'font-weight:800;font-size:13px;color:var(--st-ink)', O.t.name + ' · ' + dayText(O.s.day)),
+        el('div', '', [shortTeam(O.t.team) || 'No team', O.R && O.R.stops.length ? plural(O.R.stops.length, 'stop') + (O.today ? ' left' : '') : ''].filter(Boolean).join(' · ')));
+      optOut.appendChild(head);
+      if (O.none) {
+        const n = el('div', 'font-size:12px;color:var(--st-ink-2)', O.none);
+        n.className = 'st-opt-none';
+        optOut.appendChild(n);
+        optOut.style.display = 'grid';
+        say('Nothing to put in order.');
+        fit();
+        return;
+      }
+      const same = O.score === 100, [ink, bg, line] = scoreTone(O.score), g = O.guess ? '~' : '';
+      const card = el('div', 'display:flex;gap:10px;align-items:center;padding:8px 10px;border-radius:10px;border:1px solid ' + line + ';background:' + bg);
+      card.className = 'st-opt-score';
+      const big = el('div', 'flex:none;font-size:26px;font-weight:900;line-height:1;color:' + ink, O.score + '%');
+      big.id = 'st-opt-score';
+      big.title = 'Route score: 100% is the best order for these jobs';
+      const words = el('div', 'flex:1;min-width:0;font-size:12px;color:var(--st-ink)');
+      const gs = gains(O.cur, O.best.sim), rest = gs.slice(1).join(', ');
+      words.append(el('div', 'font-weight:800;color:' + ink, same ? '✓ Already the best order' : 'A better order ' + gs[0]),
+        el('div', 'color:var(--st-ink-2)', same ? 'No other order of these jobs saves driving or gets them there sooner.' : (rest ? rest.charAt(0).toUpperCase() + rest.slice(1) + ' · ' : '') + 'Driving ' + g + mins(O.cur.drive) + ' → ' + g + mins(O.best.sim.drive)));
+      card.append(big, words);
+      optOut.appendChild(card);
+      const was = new Map(O.R.stops.map((x, i) => [x, i]));
+      if (!same) {
+        // What moves: each job whose place in the day changes.
+        const box = el('div', 'display:grid;gap:2px;padding:6px 9px;border:1px solid var(--st-purple-l);background:var(--st-purple-s);border-radius:8px;font-size:12px');
+        box.className = 'st-opt-moves';
+        box.appendChild(el('div', 'font-weight:800;color:#5b1784', 'What changes'));
+        O.best.stops.forEach((x, i) => {
+          const j = was.get(x);
+          if (j === i) return;
+          const sh = sharedWith(x, O.t);
+          const r = el('div', 'color:var(--st-ink)', (i < j ? '⬆️ ' : '⬇️ ') + (x.customer || 'Job') + ' #' + x.jobId + (x.win ? ' (' + x.win.label + ')' : '') + ': ' + nth(j + 1) + ' → ' + nth(i + 1) + (sh ? ' · 👥 with ' + plural(sh, 'other tech') : ''));
+          r.className = 'st-opt-move';
+          r.setAttribute('data-job', x.jobId);
+          box.appendChild(r);
+        });
+        optOut.appendChild(box);
+        // The suggested day, or the day as it is now.
+        const seg = el('div');
+        seg.className = 'st-seg';
+        [['best', '✨ Suggested'], ['now', 'As it is now']].forEach(([v, text]) => {
+          const b = el('button', '', text);
+          b.type = 'button'; b.className = 'st-opt-view' + (optView === v ? ' on' : '');
+          b.setAttribute('data-view', v);
+          b.addEventListener('mousedown', e => e.preventDefault());
+          b.onclick = () => { optView = v; renderOpt(O); };
+          seg.appendChild(b);
+        });
+        optOut.appendChild(seg);
+      }
+      const showNow = same || optView === 'now', show = showNow ? O.cur : O.best.sim;
+      const tl = el('div');
+      tl.className = 'st-tl st-opt-route';
+      const row = (time, what, side, cls) => {
+        const r = el('div');
+        r.className = 'st-tl-row ' + (cls || '');
+        const a = el('span', '', time), b = el('span', ''), c = el('span', '', side || '');
+        a.className = 'st-tl-time'; b.className = 'st-tl-what'; c.className = 'st-tl-side';
+        if (what instanceof Node) b.appendChild(what); else b.textContent = what;
+        r.append(a, b, c);
+        tl.appendChild(r);
+        return r;
+      };
+      row(clock(O.R.start), O.R.startPt ? O.R.startWords : 'Start (nowhere to measure from)', '', 'edge');
+      show.out.forEach((o, i) => {
+        const x = o.x, what = el('span', ''), j = was.get(x), moved = !showNow && j !== i;
+        if (x.win) { const w = chip(x.win.label, x.win.booked ? '' : winTone(x.win), x.win.booked ? 'No arrival window: kept near its booked time' : ''); w.style.marginRight = '4px'; what.appendChild(w); }
+        what.appendChild(document.createTextNode((x.customer || 'Job') + ' #' + x.jobId + (x.city ? ' · ' + tidy(x.city) : '') + (x.busyNow ? ' · underway' : '') + (sharedWith(x, O.t) ? ' · 👥' : '')));
+        if (moved) what.appendChild(el('span', 'font-weight:800;color:#5b1784', ' ' + (i < j ? '⬆️' : '⬇️') + ' was ' + nth(j + 1)));
+        if (o.late >= 5) what.appendChild(el('span', 'font-weight:700;color:' + (o.bad ? 'var(--st-red)' : 'var(--st-amber)'), ' · ' + (o.bad ? '⚠️ ' : '') + lateWords(o, O)));
+        const r = row(clock(o.arrive), what, o.drive ? '🚗 ' + g + mins(o.drive) : '', (moved ? 'new ' : '') + 'st-opt-stop' + (o.bad ? ' late' : ''));
+        r.setAttribute('data-job', x.jobId);
+      });
+      row(clock(show.home), '🏠 Home' + (show.over >= 5 ? ' · ' + mins(show.over) + ' past their shift' : ''), show.back ? '🚗 ' + g + mins(show.back) : '', 'edge');
+      optOut.appendChild(tl);
+      if (!same) {
+        const foot = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+        foot.appendChild(copyPill('📋 Copy suggested order', optText(O), 'Copies the suggested order as text'));
+        optOut.appendChild(foot);
+      }
+      if (O.noPt) optOut.appendChild(small('⚠️ ' + plural(O.noPt, 'job has', 'jobs have') + ' no zip code to measure to, so ' + (O.noPt === 1 ? 'its' : 'their') + ' driving isn\'t counted.', 'color:var(--st-amber)'));
+      if (O.zipError) optOut.appendChild(small('⚠️ Some zip codes couldn\'t be looked up: ' + O.zipError + '.', 'color:var(--st-amber)'));
+      optOut.appendChild(small((O.guess ? '⚠️ Drive times aren\'t available right now, so these are guesses from straight-line miles (marked ~). ' : 'Drive times © Mapbox © OpenStreetMap. ') +
+        'Late is OK up to ' + mins(O.grace) + ' (Late OK, in 🗺️ Plan). Times assume each job takes its booked time. It only suggests: to use it, move the jobs on the board.'));
+      optOut.style.display = 'grid';
+      say(same ? 'Already the best order for these jobs.' : 'A better order is below. Nothing changes unless you move the jobs on the board.');
+      fit();
+    };
+    const optText = O => {
+      const lines = [O.t.name + ' · ' + dayText(O.s.day) + ': suggested order (route score ' + O.score + '%)'];
+      O.best.sim.out.forEach(o => lines.push('  ' + clock(o.arrive) + '  ' + (o.x.customer || 'Job') + ' #' + o.x.jobId + (o.x.win ? ' (' + o.x.win.label + ')' : '') + (o.late >= 5 ? ' ' + lateWords(o, O) : '')));
+      lines.push('  ' + clock(O.best.sim.home) + '  home', '', 'The suggested order ' + gains(O.cur, O.best.sim).join(', ') + '.');
+      return lines.join('\n');
+    };
+    // 📊 Score every tech: each field tech's route score for the day the board shows, lowest first
+    // (straight-line miles, to be quick). Clicking one checks theirs with drive times.
+    const scoreAll = async () => {
+      const run = ++optRun;
+      const stale = () => run !== optRun || !alive;
+      setPicking(null);
+      optOut.style.display = 'none'; optOut.textContent = '';
+      lastOpt = null;
+      if (!onBoard()) return say(board.need());
+      setBusy(true);
+      try {
+        say('Reading the board…');
+        const s = await board.load({ fresh: true });
+        await loadHomes();
+        if (stale()) return;
+        const field = s.techs.filter(t => { if (!homes || !homes.size) return true; const h = homes.get(S(t.id)); return !!(h && h.active && h.managed); });
+        const zips = [];
+        field.forEach(t => (s.byTech.get(S(t.id)) || []).forEach(a => zips.push(zip5(a.zip))));
+        const { points } = await zipPoints(zips);
+        if (stale()) return;
+        say('Scoring every route…');
+        await wait(0);
+        const grace = Number(graceSel.value) || 60, now = new Date(), rows = [];
+        field.forEach(t => {
+          const R0 = routeOf(s, t, points, now, grace);
+          if (!R0 || R0.stops.length - R0.fixedN < 2) return;
+          const R = withBooked(R0, grace), { cur, best, saved } = bestOrder(R, guess, grace, 7);
+          rows.push({ t, R, score: scoreOf(cur, saved), gs: gains(cur, best.sim) });
+        });
+        if (stale()) return;
+        rows.sort((a, b) => a.score - b.score || a.t.name.localeCompare(b.t.name));
+        optOut.appendChild(el('div', 'font-size:13px;font-weight:800', 'Route scores · ' + dayText(s.day)));
+        if (!rows.length) optOut.appendChild(el('div', 'font-size:12px;color:var(--st-ink-2)', 'No field tech has two or more jobs to put in order.'));
+        const list = el('div', 'display:grid;gap:4px');
+        list.className = 'st-opt-all';
+        rows.forEach(x => {
+          const [ink, bg, line] = scoreTone(x.score);
+          const b = el('button', 'display:flex;gap:8px;align-items:center;width:100%;text-align:left;padding:5px 8px;border:1px solid ' + line + ';border-radius:8px;background:' + bg + ';cursor:pointer;font:inherit;font-size:12px;color:var(--st-ink)');
+          b.type = 'button';
+          b.className = 'st-opt-tech';
+          b.setAttribute('data-tech', x.t.id);
+          b.append(el('span', 'flex:none;width:42px;font-weight:900;font-size:14px;color:' + ink, x.score + '%'),
+            el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', x.t.name + ' · ' + plural(x.R.stops.length, 'stop') + (x.score < 100 ? ' · ' + x.gs[0] : ' · ✓ best order')));
+          b.title = (x.score === 100 ? 'Already the best order. ' : 'A better order ' + x.gs.join(', ') + '. ') + 'Click to check it with drive times.';
+          b.onclick = () => { fillTechs(true); optSel.value = x.t.id; set('stOptTech', x.t.id); paint(); optimize(); };
+          list.appendChild(b);
+        });
+        if (rows.length) optOut.appendChild(list);
+        optOut.appendChild(small('Lowest first. Scored with straight-line miles to be quick; click a tech to check theirs with drive times.'));
+        optOut.style.display = 'grid';
+        say(rows.length ? 'Route scores for every field tech with two or more jobs. Click one for the details.' : 'Nothing to score.');
+        fit();
+      } catch (e) {
+        if (stale()) return;
+        say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t score the routes: ' + errText(e)));
+      } finally { if (run === optRun) setBusy(false); }
     };
 
     board.onChange(() => { if (shown()) { fillTechs(); fillPlanTeams(); paint(); } });
@@ -7989,7 +8377,7 @@
     return {
       refresh,
       leave: () => { setPicking(null); style.textContent = ''; },
-      cleanup: () => { alive = false; runId++; window.removeEventListener('click', onClick, true); window.removeEventListener('resize', onResize); board.unmount(style); }
+      cleanup: () => { alive = false; runId++; optRun++; window.removeEventListener('click', onClick, true); window.removeEventListener('resize', onResize); board.unmount(style); }
     };
   })();
 
