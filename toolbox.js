@@ -10,7 +10,8 @@
     - Customer Texts: texts customers a saved message (holds, tech updates, reschedules, ...).
     - Move Jobs: moves jobs to a tech, adds or unassigns techs, or swaps jobs or whole days, without dragging.
     - Tech Router (Beta, still being built): finds jobs to fill a tech's open time (customers to call and
-      move up), and the techs closest to a job or zip code. It only reads; Move Jobs makes any change.
+      move up), plans a route and a tech for every Unassigned job (by arrival window: 8-12s, then 12-5s,
+      then 5-9s), and finds the techs closest to a job. It only reads; Move Jobs makes any change.
 
   HOW TO RELEASE AN UPDATE
     1. Edit this file on GitHub.
@@ -24,7 +25,7 @@
 (() => {
   const VERSION = '2.1';
   const WHATS_NEW = {
-    '2.1': 'New: 🧭 Tech Router (Beta). 📞 Fill a spot: pick a tech whose day is already planned, and it finds their open time (first thing, mid-day or the end of the day) and the jobs that would fit there from the Unassigned list (this day and the next 14) and the Hold list, with the customer\'s phone number to call and move them up. It learns which jobs each department does from the last 4 weeks of schedules, so a project coordinator only gets quotes, not electrical or plumbing ones. 🔎 Closest techs is back too. It\'s still being built, so check before you call; it only reads, and changes nothing on its own.',
+    '2.1': 'New: 🧭 Tech Router (Beta). 📞 Fill a spot: pick a tech whose day is already planned, and it finds their open time (first thing, mid-day or the end of the day) and the jobs that would fit there from the Unassigned list (this day and the next 14) and the Hold list, with the customer\'s phone number to call and move them up. 🗺️ Plan the day: a tech and a route for every Unassigned job, 8-12s first, then 12-5s, then 5-9s (a little late is OK), sent to Move Jobs to assign. It learns which jobs each department does from the last 4 weeks of schedules, so a project coordinator only gets quotes, not electrical or plumbing ones. 🔎 Closest techs is back too. It\'s still being built, so check before you call; it only reads, and changes nothing on its own.',
     '2.0.2': 'Fixed: 💬 Tech Messages skipped every tech with "their name on the board has no menu". When the board scrolls to a tech it shows their name first and their menu about a second later; the Toolbox now waits for the menu, then opens it the way you would (a right-click or a left click on their name).',
     '2.0.1': 'Nothing inside the Toolbox scrolls sideways any more, and you can make it wider or narrower by dragging its left edge or bottom-right corner (it remembers; double-click for the usual width). Plus a few quick animations: it fades in and out, tools slide in, – folds it smoothly, and loading buttons show a spinner.',
     '2.0': 'Built for ServiceTitan\'s new Dispatch board (use its Day view), with a new look. Every tool works on it again. New: tags show on every job, and ＋ Jobs with a tag… adds all the jobs with one tag. Jobs show how their day is going (🚚 Dispatched 10:20 AM, 🔧 Working). ＋ Whole board is quicker (the whole day comes in one request). 💬 Tech Messages adds everyone Working or Dispatched in one click. – folds the Toolbox down to its title bar.',
@@ -5565,12 +5566,15 @@
     const msg = el('div', 'font-size:12px;color:var(--st-ink-2);min-height:16px');
     const say = s => { msg.textContent = s; };
     let mode = MODES.some(m => m[0] === get('stMoveMode')) ? get('stMoveMode') : 'move';
+    // A plan from 🧭 Tech Router (🗺️ Plan the day): each job goes to its own tech. Mode 'plan' works
+    // like ➡️ Move to a tech, one job at a time, with that job's tech. job number -> { id, name }.
+    let plan = null;
     const modeBox = el('div', 'display:grid;gap:1px;font-size:12px');
     const modeRadios = MODES.map(([val, text]) => {
       const l = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer');
       const r = el('input'); r.type = 'radio'; r.name = 'st-move-mode'; r.value = val; r.checked = mode === val;
       r.onchange = () => {
-        mode = val; set('stMoveMode', val); clearReview();
+        mode = val; plan = null; set('stMoveMode', val); clearReview();
         if (val === 'swapDays') picker.setPicking(false);
         layout();
         if (val === 'swapJobs' && picker.size() > 2) say('⚠️ Swap uses two jobs, and ' + picker.size() + ' are picked. Take some off (✕) or Clear.');
@@ -5614,7 +5618,8 @@
       add: 'Pick the jobs and the tech to add. Whoever is on them stays.',
       unassign: 'Pick the jobs. Everyone (or the tech in From) comes off.',
       swapJobs: 'Pick two jobs. Each one gets the other\'s tech(s).',
-      swapDays: 'Pick two techs. Every open job of one goes to the other, on the day the board shows.'
+      swapDays: 'Pick two techs. Every open job of one goes to the other, on the day the board shows.',
+      plan: 'A plan from 🧭 Tech Router: each job goes to the tech shown next to it. Take any off with ✕.'
     };
     const hint = el('div', 'font-size:12px;color:var(--st-ink-2);background:var(--st-purple-s);border-radius:6px;padding:4px 7px');
     const toPick = techPicker('To', '', 'stMoveTo');
@@ -5720,6 +5725,7 @@
       show(bPick.box, mode === 'swapDays');
       show(jobsBox, mode !== 'swapDays');
       uaRow.style.display = mode === 'move' || mode === 'add' ? 'flex' : 'none';
+      modeRadios.forEach(r => { r.checked = r.value === mode; });
       hint.textContent = HINTS[mode] || '';
       const allOpt = fromPick.sel.options[0];
       if (allOpt && allOpt.value === '') allOpt.textContent = mode === 'unassign' ? 'Everyone on the job' : 'Anyone on the job (replaces everyone)';
@@ -5736,6 +5742,7 @@
       if (mode === 'move' || mode === 'add') ready = ready && !!toPick.value() && picker.size() > 0;
       if (mode === 'unassign') ready = ready && picker.size() > 0;
       if (mode === 'swapJobs') ready = ready && picker.size() === 2;
+      if (mode === 'plan') ready = ready && !!plan && picker.size() > 0;
       if (mode === 'swapDays') ready = ready && !!aPick.value() && !!bPick.value() && S(aPick.value()) !== S(bPick.value());
       reviewBtn.disabled = !ready; reviewBtn.style.opacity = ready ? '1' : '.5';
       reviewStopBtn.style.display = reviewing ? 'inline-block' : 'none';
@@ -5794,7 +5801,7 @@
       if (!add.length && !remove.length) return { skip: 'already has ' + (want.length ? names(want) : 'no tech'), kind: 'already' };
       return { add, remove };
     };
-    const kindOf = m => m === 'move' || m === 'add' || m === 'unassign' ? m : 'exact';
+    const kindOf = m => m === 'plan' ? 'move' : m === 'move' || m === 'add' || m === 'unassign' ? m : 'exact';
     const after = (cur, d) => cur.filter(x => !hasId(d.remove, x)).concat(d.add.filter(x => !hasId(cur, x)));
     // ServiceTitan's own rule (its job panel greys these techs out): a tech who isn't a managed
     // tech can only be alone on a job whose invoice is $0. It asks for a managed tech first.
@@ -5903,13 +5910,14 @@
       picker.ids().forEach(j => {
         const appts = rows.filter(r => r.jobId === S(j));
         if (!appts.length) { missing.push(j); return; }
-        appts.forEach(r => list.push({ r, p: { to: toPick.value(), from: fromPick.value() } }));
+        const to = m === 'plan' ? (plan && plan.get(S(j)) ? plan.get(S(j)).id : null) : toPick.value();
+        appts.forEach(r => list.push({ r, p: { to, from: m === 'plan' ? null : fromPick.value() } }));
       });
       return { list, missing };
     };
 
-    const TITLE = { move: 'Move to', add: 'Add', unassign: 'Unassign', swapJobs: 'Swap two jobs\' techs', swapDays: 'Swap whole day', putback: 'Put back the last run' };
-    const GO = { move: 'Move', add: 'Add to', unassign: 'Unassign', swapJobs: 'Swap', swapDays: 'Swap', putback: 'Put back' };
+    const TITLE = { move: 'Move to', add: 'Add', unassign: 'Unassign', swapJobs: 'Swap two jobs\' techs', swapDays: 'Swap whole day', putback: 'Put back the last run', plan: 'Planned (each job to its own tech)' };
+    const GO = { move: 'Move', add: 'Add to', unassign: 'Unassign', swapJobs: 'Swap', swapDays: 'Swap', putback: 'Put back', plan: 'Assign' };
 
     // ---------- Review (reads only) ----------
     // A review is only good for a few minutes: after that, Go asks for a new one.
@@ -5983,6 +5991,7 @@
             if (!sameSet(cur, it.p.expect)) return Object.assign(out, { skip: 'changed since the move (now ' + (cur.length ? names(cur) : 'unassigned') + '), left alone', kind: 'skipped' });
           }
           if (stopWhy) return Object.assign(out, { skip: stopWhy, kind: 'skipped' });
+          if (m === 'plan' && !it.p.to) return Object.assign(out, { skip: 'no tech planned for it (🗺️ Plan the day again to include it)', kind: 'skipped' });
           if (m === 'swapDays') {
             const hA = hasId(cur, it.p.a), hB = hasId(cur, it.p.b);
             if (hA === hB) return Object.assign(out, { skip: hA ? 'has both ' + techName(it.p.a) + ' and ' + techName(it.p.b) : 'has neither tech now', kind: 'skipped' });
@@ -6293,7 +6302,7 @@
       const ctx = { given: [], leaving: p.leaving || new Map() };
       todo.forEach(x => { if (x.d && x.d.add.length) give(ctx, x.it.r.apptId, x.d.add, x.start, x.end); });
       const record = (x, rr, retry) => { results.set(S(x.it.r.apptId), { x, rr }); add(label(x.it.r) + ': ' + (retry ? 'retry: ' : '') + rr.text); };
-      const verb = m === 'putback' ? 'Putting back' : m === 'unassign' ? 'Unassigning' : m === 'add' ? 'Adding' : m === 'move' ? 'Moving' : 'Swapping';
+      const verb = m === 'putback' ? 'Putting back' : m === 'unassign' ? 'Unassigning' : m === 'add' ? 'Adding' : m === 'move' ? 'Moving' : m === 'plan' ? 'Assigning' : 'Swapping';
       const needsRetry = rr => rr.kind === 'problem' && !rr.noRetry;
       // What the run changed, worked out from each job's first and latest reading.
       const changes = () => todo.filter(x => x.origin && (x.lastSeen === null || !sameSet(x.origin, x.lastSeen)))
@@ -6403,7 +6412,7 @@
     const take = (ids, toId, toName) => {
       if (busy) return -1;
       if (toName && !seenNames.has(S(toId))) seenNames.set(S(toId), toName);
-      mode = 'move'; set('stMoveMode', 'move');
+      mode = 'move'; plan = null; set('stMoveMode', 'move');
       modeRadios.forEach(r => { r.checked = r.value === 'move'; });
       picker.setPicking(false);
       clearReview();
@@ -6417,6 +6426,27 @@
       layout();
       updateButtons();
       say('From 🧭 Tech Router: ' + plural(n, 'job') + ' to ' + techName(toId) + '. Press Review to see it first; nothing changes until you press Move.');
+      return n;
+    };
+    // A plan from 🧭 Tech Router: [{ jobId, techId, techName, customer }]. Only these jobs are picked
+    // (anything picked before is taken off), each with its own tech. Nothing changes until Review and
+    // Assign. Returns how many jobs are picked, or -1 if Move Jobs is busy.
+    const takePlan = items => {
+      if (busy) return -1;
+      plan = new Map();
+      const labels = {};
+      items.forEach(x => {
+        plan.set(S(x.jobId), { id: x.techId, name: x.techName });
+        if (x.techName && !seenNames.has(S(x.techId))) seenNames.set(S(x.techId), x.techName);
+        labels[S(x.jobId)] = (x.customer ? x.customer + ' ' : '') + '→ ' + (x.techName || techName(x.techId));
+      });
+      mode = 'plan';
+      picker.setPicking(false);
+      clearReview();
+      picker.removeMany(picker.ids());
+      const n = picker.addMany(items.map(x => S(x.jobId)), labels);
+      layout();
+      say('From 🧭 Tech Router: a plan for ' + plural(n, 'job') + '. Press Review to check it; nothing changes until you press Assign.');
       return n;
     };
     // Hands the jobs the last run changed to Job Notifications.
@@ -6446,6 +6476,7 @@
     return {
       refresh,
       take,
+      takePlan,
       leave: () => picker.setPicking(false),
       isRunning: () => running,
       stop: requestStop,
@@ -6480,6 +6511,8 @@
   //         under SALES_MAX minutes; a job that would go over is marked ⚠️ and ranks lower.
   //     ➡️ hands a job already on that day's Unassigned list to Move Jobs. The others need a call
   //     first: the phone number, 📋 to copy it and 🔎 to open the job.
+  //   🗺️ Plan the day: a tech and a route for every job on the Unassigned list for the day the board
+  //     shows (see planDay, below), handed to Move Jobs as a plan (each job to its own tech).
   //   🔎 Closest techs: type a zip code or a job number, or click a job on the board with 🖱️: the
   //     techs closest by drive time (from where they are now, today, or from home). For a job with a
   //     tech: 📍 Next job, the Unassigned jobs nearby that tech could take after it.
@@ -6820,11 +6853,11 @@
     const msg = el('div', 'font-size:12px;color:var(--st-ink-2);min-height:16px');
     msg.id = 'st-router-msg';
     const say = t => { msg.textContent = t; };
-    let tab = get('stRouterTab') === 'near' ? 'near' : 'fill';
+    let tab = ['near', 'plan'].indexOf(get('stRouterTab')) > -1 ? get('stRouterTab') : 'fill';
     const tabs = el('div', 'display:flex;gap:4px');
-    const tabBtn = (val, text) => smallBtn(text, () => { tab = val; set('stRouterTab', val); setPicking(null); showTab(); }, 'flex:1');
-    const fillTab = tabBtn('fill', '📞 Fill a spot'), nearTab = tabBtn('near', '🔎 Closest techs');
-    tabs.append(fillTab, nearTab);
+    const tabBtn = (val, text) => smallBtn(text, () => { tab = val; set('stRouterTab', val); setPicking(null); showTab(); }, 'flex:1;padding:4px 4px;white-space:nowrap');
+    const fillTab = tabBtn('fill', '📞 Fill a spot'), planTab = tabBtn('plan', '🗺️ Plan the day'), nearTab = tabBtn('near', '🔎 Closest');
+    tabs.append(fillTab, planTab, nearTab);
     const small = (text, extra) => el('div', 'font-size:11px;color:var(--st-ink-3);' + (extra || ''), text);
     // A line that folds open to show more.
     const fold = (head, body) => {
@@ -6946,6 +6979,57 @@
     teamSel.onchange = () => { set('stNearTeam', teamSel.value); if (lastNear) near(lastNear); };
     fieldBox.onchange = () => { set('stNearField', fieldBox.checked ? '1' : '0'); if (lastNear) near(lastNear); };
 
+    // ---------- 🗺️ Plan the day: the controls ----------
+    const planBox = el('div', 'display:none;gap:6px');
+    const planOpts = el('div', 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px');
+    const graceSel = el('select', FIELD + 'padding:3px 6px');
+    graceSel.id = 'st-plan-grace';
+    graceSel.title = 'How late an arrival can be and still count as fine (8-12s, 12-5s). Later than this counts heavily against a plan. 5-9s always count lightly.';
+    [[30, '30 min'], [60, '1 hr'], [90, '1 hr 30 min'], [120, '2 hr']].forEach(([v, t]) => { const o = el('option', '', 'Late is OK up to ' + t); o.value = String(v); graceSel.appendChild(o); });
+    graceSel.value = ['30', '60', '90', '120'].indexOf(get('stPlanGrace')) > -1 ? get('stPlanGrace') : '60';
+    graceSel.onchange = () => set('stPlanGrace', graceSel.value);
+    const planFieldLab = el('label', 'display:flex;gap:5px;align-items:center;cursor:pointer');
+    const planField = el('input'); planField.type = 'checkbox'; planField.id = 'st-plan-field';
+    planField.checked = get('stNearField') !== '0';
+    planField.onchange = () => { set('stNearField', planField.checked ? '1' : '0'); fieldBox.checked = planField.checked; };
+    planFieldLab.title = 'Only ServiceTitan\'s managed technicians (field techs), so office staff on the board get no jobs';
+    planFieldLab.append(planField, document.createTextNode('Field techs only'));
+    planOpts.append(graceSel, planFieldLab);
+    // Departments: the teams whose techs can be given jobs. The ones left out are saved in this
+    // browser, so a new department is always in until it's taken out.
+    const SKIP_TEAMS = 'stPlanSkipTeams';
+    const skipTeams = new Set((Array.isArray(readSaved(SKIP_TEAMS, [], [])) ? readSaved(SKIP_TEAMS, [], []) : []).filter(x => typeof x === 'string'));
+    const teamHead = el('button', FULL + 'padding:3px 6px;border:1px solid var(--st-line);border-radius:6px;background:var(--st-bg);color:var(--st-ink-2);font:inherit;font-size:12px;text-align:left;cursor:pointer');
+    teamHead.type = 'button'; teamHead.id = 'st-plan-teams';
+    const teamBody = el('div', 'display:none;padding:5px 7px;border:1px solid var(--st-line);border-radius:6px;background:var(--st-soft);max-height:220px;overflow:auto;font-size:12px');
+    const teamLabel = () => {
+      const s = board.latest(), all = s ? s.teams : [], out = all.filter(t => skipTeams.has(t)).length;
+      teamHead.textContent = 'Departments: ' + (!out ? 'all' : (all.length - out) + ' of ' + all.length) + (teamBody.style.display === 'none' ? '  ▸' : '  ▾');
+    };
+    const renderTeams = () => {
+      teamBody.textContent = '';
+      const s = board.latest();
+      if (!s) { teamBody.appendChild(el('div', 'color:var(--st-ink-3)', 'Loading the board…')); return; }
+      const save = () => { set(SKIP_TEAMS, JSON.stringify(Array.from(skipTeams))); teamLabel(); };
+      const top = el('div', 'display:flex;gap:5px;margin-bottom:3px');
+      top.append(smallBtn('All', () => { s.teams.forEach(t => skipTeams.delete(t)); save(); renderTeams(); }, 'padding:1px 8px;min-height:22px'),
+        smallBtn('None', () => { s.teams.forEach(t => skipTeams.add(t)); save(); renderTeams(); }, 'padding:1px 8px;min-height:22px'));
+      teamBody.appendChild(top);
+      s.teams.forEach(team => {
+        const l = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer');
+        const c = el('input'); c.type = 'checkbox'; c.checked = !skipTeams.has(team); c.setAttribute('data-team', team);
+        c.onchange = () => { if (c.checked) skipTeams.delete(team); else skipTeams.add(team); save(); };
+        l.append(c, document.createTextNode(team + ' (' + plural(s.techs.filter(t => t.team === team).length, 'tech') + ')'));
+        teamBody.appendChild(l);
+      });
+    };
+    teamHead.onclick = () => { teamBody.style.display = teamBody.style.display === 'none' ? 'block' : 'none'; renderTeams(); teamLabel(); fit(); };
+    const planBtn = smallBtn('🗺️ Plan the Unassigned list', () => planDay(), PRIMARY + 'padding:7px 9px;font-size:13px');
+    planBtn.id = 'st-plan-go';
+    const planOut = el('div', 'display:none;gap:7px');
+    planOut.id = 'st-plan-out';
+    planBox.append(planOpts, teamHead, teamBody, planBtn, planOut);
+
     // ---------- ⚙️ Drive times (your own Mapbox key) ----------
     const keyHead = el('button', FULL + 'padding:3px 6px;border:1px solid var(--st-line);border-radius:6px;background:var(--st-soft);color:var(--st-ink-2);font:inherit;font-size:11.5px;text-align:left;cursor:pointer');
     keyHead.type = 'button';
@@ -6974,14 +7058,18 @@
 
     const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
     navRow.append(smallBtn('← Menu', () => showView('menu')));
-    wrap.append(beta, tabs, msg, fillBox, nearBox, keyHead, keyBox, navRow);
+    wrap.append(beta, tabs, msg, fillBox, planBox, nearBox, keyHead, keyBox, navRow);
     routerPane.appendChild(wrap);
     const showTab = () => {
-      setOn(fillTab, tab === 'fill'); setOn(nearTab, tab === 'near');
+      setOn(fillTab, tab === 'fill'); setOn(planTab, tab === 'plan'); setOn(nearTab, tab === 'near');
       fillBox.style.display = tab === 'fill' ? 'grid' : 'none';
+      planBox.style.display = tab === 'plan' ? 'grid' : 'none';
       nearBox.style.display = tab === 'near' ? 'grid' : 'none';
+      teamLabel();
+      planBtn.textContent = searching ? planBtn.textContent : '🗺️ Plan the Unassigned list' + (board.day() ? ' for ' + dayText(board.day()) : '');
       if (!onBoard()) say(board.need());
       else if (tab === 'fill') say(fillOut.style.display === 'none' ? 'Pick a tech, then 🔍 Find. It reads only; nothing changes.' : msg.textContent);
+      else if (tab === 'plan') say(planOut.style.display === 'none' ? 'Plans a tech and a route for every Unassigned job on the day the board shows. Nothing changes until you send it to Move Jobs and press Assign there.' : msg.textContent);
       else say(nearOut.style.display === 'none' ? 'Type a zip code or job number, or press 🖱️ and click a job. It reads only; nothing changes.' : msg.textContent);
       paint(); fit();
     };
@@ -6997,7 +7085,7 @@
     let searching = false;
     const setBusy = on => {
       searching = on;
-      [[fillBtn, '🔍 Find jobs for their open time', 'Finding…'], [nearBtn, 'Find', 'Finding…']].forEach(([b, idle, busyText]) => { b.disabled = on; b.textContent = on ? busyText : idle; b.classList.toggle('st-busy', on); });
+      [[fillBtn, '🔍 Find jobs for their open time', 'Finding…'], [nearBtn, 'Find', 'Finding…'], [planBtn, '🗺️ Plan the Unassigned list' + (board.day() ? ' for ' + dayText(board.day()) : ''), 'Planning…']].forEach(([b, idle, busyText]) => { b.disabled = on; b.textContent = on ? busyText : idle; b.classList.toggle('st-busy', on); });
     };
 
     // ---------- Picking a tech or a job on the board ----------
@@ -7553,7 +7641,274 @@
       fit();
     };
 
-    board.onChange(() => { if (shown()) { fillTechs(); paint(); } });
+    // ---------- 🗺️ Plan the day ----------
+    // Plans a tech for every job on the Unassigned list for the day the board shows, and the order
+    // each tech's day goes in, then hands the plan to 🔀 Move Jobs (nothing changes until Assign there).
+    //   - Each tech's day is a route: from home (or, today, from now and where they are) through
+    //     their jobs to home. Jobs already on the board keep their order; Unassigned jobs go in
+    //     between them where they cost least.
+    //   - Arrival windows, by the job's tag (8-12 MORNING, 12-5 AFTERNOON, 5-9 EVENING), else its
+    //     appointment's window: no earlier than EARLY minutes before the window. Late is OK up to the
+    //     grace you pick (counts lightly); later counts heavily. 5-9s always count lightly. So 8-12s
+    //     come first, then 12-5s, then 5-9s. Urgent jobs get no grace, and High priority half, and
+    //     both count a little for every minute after their window opens, so they go early.
+    //   - The right department (the last 4 weeks of schedules, as 📞 Fill a spot). Field techs only,
+    //     and only the departments ticked.
+    //   - Least extra driving; PER_JOB minutes for each job a tech already has (spreads the work);
+    //     time past the end of their shift counts too, and a day can't end more than MAX_OVER minutes
+    //     late (except for a 5-9). More than MAX_ADD minutes of extra driving is left out.
+    //   - A job isn't put where it, or a job after it, would be more than TOO_LATE minutes past the
+    //     grace (an 8-12 at 3 PM with a 1-hour grace), unless that was already so.
+    //   - Sales rule: a salesperson's day of driving over SALES_MAX counts OVER_WEIGHT times.
+    //   Driving is guessed from straight-line miles while planning, then the finished routes get
+    //   Mapbox drive times (one request per tech) for their arrival times.
+    const PER_JOB = 15, EARLY = 30, MAX_OVER = 90, MAX_ADD = 90, LATE_WEIGHT = 0.5, VERY_LATE = 4, EVENING_WEIGHT = 0.2, TOO_LATE = 120;
+    const WIN_TAG = /^\s*(\d{1,2})\s*-\s*(\d{1,2})\s+(morning|afternoon|evening)\b/i;
+    // A job's arrival window on the plan's day: { start, end, label, evening } or null.
+    const windowOf = (tags, ws, we, day) => {
+      const at = h => { const d = new Date(day); d.setHours(h, 0, 0, 0); return d; };
+      for (const t of tags || []) {
+        const m = WIN_TAG.exec(t && t.name || '');
+        if (!m) continue;
+        let a = Number(m[1]), b = Number(m[2]);
+        if (!/morning/i.test(m[3])) { if (a < 12) a += 12; if (b < 12) b += 12; }
+        if (b > a && b <= 24) return { start: at(a), end: at(b), label: m[1] + '-' + m[2], evening: a >= 17 };
+      }
+      ws = toDate(ws); we = toDate(we);
+      if (ws && we && we > ws) return { start: ws, end: we, label: span(ws, we), evening: ws.getHours() >= 17 };
+      return null;
+    };
+    const prioRank = p => ({ urgent: 0, high: 1, normal: 2, low: 3 })[norm(p).toLowerCase()] != null ? ({ urgent: 0, high: 1, normal: 2, low: 3 })[norm(p).toLowerCase()] : 2;
+    // How late a stop can be and still count lightly: Urgent none, High half the grace.
+    const graceFor = (x, grace) => x.prio === 'urgent' ? 0 : x.prio === 'high' ? grace / 2 : grace;
+    // A route's day: arrival at each stop, lateness, driving and when they're home. leg(a, b): minutes.
+    const simulate = (R, stops, leg, grace) => {
+      let t = +R.start, pos = R.startPt, drive = 0, cost = 0, tooLate = 0;
+      const out = stops.map(x => {
+        const d = pos && x.pt ? leg(pos, x.pt) : 0;
+        t += d * 60000; drive += d;
+        if (x.win && t < +x.win.start - EARLY * 60000) t = +x.win.start - EARLY * 60000;
+        if (x.notBefore && t < +x.notBefore) t = +x.notBefore;
+        const arrive = t, late = x.win ? Math.max(0, (arrive - x.win.end) / 60000) : 0;
+        const gr = graceFor(x, grace);
+        cost += !late ? 0 : x.win.evening ? late * EVENING_WEIGHT : late <= gr ? late * LATE_WEIGHT : gr * LATE_WEIGHT + (late - gr) * VERY_LATE;
+        if (late > gr + TOO_LATE && !x.win.evening) tooLate++;
+        // Urgent and High: the sooner in their window the better.
+        if (x.win && (x.prio === 'urgent' || x.prio === 'high')) cost += Math.max(0, (arrive - x.win.start) / 60000) * (x.prio === 'urgent' ? 0.3 : 0.15);
+        t += x.dur * 60000;
+        if (x.pt) pos = x.pt;
+        return { x, arrive: new Date(arrive), drive: d, late };
+      });
+      const back = pos && R.homePt ? leg(pos, R.homePt) : 0;
+      drive += back; t += back * 60000;
+      const over = Math.max(0, (t - R.end) / 60000);
+      return { cost: cost + drive + over, drive, over, home: new Date(t), back, out, tooLate };
+    };
+    let planRun = 0, lastPlan = null;
+    const planDay = async () => {
+      const run = ++planRun;
+      const stale = () => run !== planRun || !alive;
+      lastPlan = null;
+      planOut.style.display = 'none'; planOut.textContent = '';
+      if (!onBoard()) return say(board.need());
+      setBusy(true);
+      try {
+        say('Reading the board and the Unassigned list…');
+        const s = await board.load({ fresh: true });
+        const [un] = await Promise.all([board.unassigned(TOOL, { fresh: true }), loadHomes()]);
+        if (stale()) return;
+        const grace = Number(graceSel.value) || 60, fieldOnly = planField.checked;
+        const day = s.day, now = new Date(), today = board.sameDay(day, now);
+        const jobs0 = un.rows.map(r => { const c = candOf(r.raw, 'ua', day); if (c) c.win = windowOf(c.tags, r.raw.ArrivalWindowStart, r.raw.ArrivalWindowEnd, day); return c; }).filter(Boolean);
+        if (!jobs0.length) return say('The Unassigned list for ' + dayText(day) + ' is empty. Nothing to plan.');
+        if (!learned || learned.key !== learnKey()) say('Learning which jobs each department does, from the last 4 weeks of schedules…');
+        let L;
+        try { L = await learn(s); }
+        catch (e) { if (st.isSignedOut(e) || stale()) throw e; return say('⚠️ Couldn\'t read the last 4 weeks of schedules (' + errText(e) + '), so it can\'t tell which department does what. Try again in a minute.'); }
+        if (stale()) return;
+        say('Finding where everyone is…');
+        const allZips = jobs0.filter(c => !c.pt).map(c => c.zip);
+        s.techs.forEach(t => (s.byTech.get(t.id) || []).forEach(a => allZips.push(zip5(a.zip))));
+        const { points, error: zipError } = await zipPoints(allZips);
+        if (stale()) return;
+        jobs0.forEach(c => { if (!c.pt && c.zip && points.get(c.zip)) c.pt = points.get(c.zip); });
+        // Each tech's route as it stands.
+        const usable = t => { if (!homes) return true; const h = homes.get(S(t.id)); return h ? h.active && (!fieldOnly || h.managed) : !fieldOnly; };
+        const routes = [];
+        s.techs.forEach(t => {
+          if (skipTeams.has(t.team) || !usable(t)) return;
+          const D = dayOf(s, t.id);
+          if (D.off) return;
+          const h = homeOf(t.id), homePt = h ? { lat: h.lat, lon: h.lon } : null;
+          const jobs = D.jobs.filter(a => !(today && /^(done|completed)$/i.test(a.status)));
+          const done = today ? D.jobs.filter(a => /^(done|completed)$/i.test(a.status)).sort((a, b) => b.end - a.end) : [];
+          const lastDone = done.find(a => points.get(zip5(a.zip)));
+          const stops = jobs.map(a => {
+            const busyNow = today && /^(working|dispatched)$/i.test(a.techStatus[t.id] || a.status);
+            return { kind: 'board', a, jobId: a.jobId, customer: a.customer, city: a.city, pt: points.get(zip5(a.zip)) || null, win: windowOf(a.tags, a.windowStart, a.windowEnd, day),
+              dur: Math.max(15, busyNow && a.end > now ? (a.end - now) / 60000 : (a.end - a.start) / 60000), busyNow };
+          }).sort((x, y) => (y.busyNow - x.busyNow) || (x.a.start - y.a.start));
+          const start = today ? new Date(Math.max(+D.start, Math.ceil(now / 900000) * 900000)) : D.start;
+          // Where their day starts: today, the job they're working (it's their first stop), else the
+          // last one they finished, else home.
+          const working = stops.find(x => x.busyNow && /^working$/i.test(x.a.techStatus[t.id] || x.a.status));
+          const startPt = working && working.pt ? working.pt : lastDone ? points.get(zip5(lastDone.zip)) : homePt;
+          const startWords = working && working.pt ? '🔧 Working now' : lastDone ? '✅ From their last job' + (lastDone.city ? ' (' + tidy(lastDone.city) + ')' : '') : '🏠 ' + (today ? 'From ' : 'Leaves ') + homeWords(h);
+          const R = { t, D, start, end: D.end, startPt, startWords, homePt, home: h, stops, fixedN: stops.filter(x => x.busyNow).length, n0: new Set(jobs.map(a => a.jobId)).size, added: [], sales: isSales(t.team) };
+          if (!R.startPt && !stops.some(x => x.pt)) return;   // nowhere to measure from
+          if (today && start >= D.end) return;                 // their day is over
+          R.base = simulate(R, stops, guess, grace);
+          R.before = R.base;
+          routes.push(R);
+        });
+        // The jobs, most urgent first, then the earliest window, then the longest waiting.
+        const order = jobs0.slice().sort((a, b) => prioRank(a.priority) - prioRank(b.priority) || ((a.win ? +a.win.start : 864e13) - (b.win ? +b.win.start : 864e13)) || ((a.created || 0) - (b.created || 0)) || a.jobId.localeCompare(b.jobId));
+        const left = [];
+        const memo = new Map();
+        const fitFor = (R, c) => { const k = R.t.id + '|' + c.typeId + '|' + c.type; if (!memo.has(k)) memo.set(k, fitOf(L, R.t, c.typeId, c.type)); return memo.get(k); };
+        order.forEach((c, i) => {
+          if (PHONE_ONLY.test(c.type)) { left.push({ c, why: 'a phone call only, not a visit' }); return; }
+          if (!c.pt) { left.push({ c, why: 'no location in ServiceTitan to measure to' }); return; }
+          const x = { kind: 'new', c, jobId: c.jobId, customer: c.customer, city: c.city, pt: c.pt, win: c.win, dur: c.dur, prio: norm(c.priority).toLowerCase() };
+          let best = null, why = null, closest = null;
+          const fits = routes.filter(R => fitFor(R, c).tier !== 'no');
+          if (!fits.length) {
+            const f = routes.length ? fitFor(routes[0], c) : null, by = f && f.by;
+            const off = by && skipTeams.has(by);
+            left.push({ c, why: off ? 'its department (' + by + ') is left out (Departments)' : 'no one on the board ' + (by ? 'in ' + by + ' ' : '') + 'does this kind of job' + (fieldOnly ? ' (field techs only)' : '') });
+            return;
+          }
+          fits.forEach(R => {
+            const f = fitFor(R, c);
+            for (let p = R.fixedN; p <= R.stops.length; p++) {
+              const stops = R.stops.slice(0, p).concat([x], R.stops.slice(p));
+              const sim = simulate(R, stops, guess, grace);
+              const add = sim.drive - R.base.drive;
+              if (!closest || add < closest.add) closest = { R, add, over: sim.over };
+              if (add > MAX_ADD) { why = why || 'far'; continue; }
+              const overCap = Math.max(MAX_OVER, R.base.over) + (x.win && x.win.evening ? Math.max(0, (x.win.end - R.end) / 60000) : 0);
+              if (sim.over > overCap) { why = why === 'late' ? why : 'room'; continue; }
+              if (sim.tooLate > R.base.tooLate) { why = 'late'; continue; }
+              let score = sim.cost - R.base.cost + PER_JOB * (R.n0 + R.added.length) + (f.tier === 'family' ? 8 : f.tier === 'unknown' ? 30 : 0);
+              if (R.sales) score += (Math.max(0, sim.drive - SALES_MAX) - Math.max(0, R.base.drive - SALES_MAX)) * OVER_WEIGHT;
+              if (!best || score < best.score) best = { R, p, stops, sim, score, f };
+            }
+          });
+          if (!best) {
+            left.push({ c, why: why === 'late' ? 'no one who does it can get there anywhere near its window (' + (c.win ? c.win.label : '') + ')' : why === 'room' ? 'no one close has room in their day' + (closest ? ' (' + closest.R.t.name + ' would be home about ' + mins(closest.over) + ' after their shift)' : '') :
+              'more than ' + mins(MAX_ADD) + ' out of the way for everyone who does it' + (closest ? ' (closest: ' + closest.R.t.name + ', about ' + mins(closest.add) + ' more driving)' : '') });
+            return;
+          }
+          x.fit = best.f;
+          best.R.stops = best.stops; best.R.base = best.sim; best.R.added.push(x);
+        });
+        // Real drive times for the routes that changed: one Mapbox Directions request each.
+        const changed = routes.filter(R => R.added.length);
+        say('Getting drive times for ' + plural(changed.length, 'route') + '…');
+        let noDrive = 0;
+        await Promise.all(changed.map(async R => {
+          const pts = [R.startPt].concat(R.stops.map(x => x.pt), [R.homePt]).filter(Boolean);
+          const legs = new Map();
+          try {
+            if (Date.now() - mapboxDown < 60000 || pts.length < 2 || pts.length > 25) throw new Error('skip');
+            const j = await outside(MB + 'directions/v5/mapbox/driving/' + pts.map(ptText).join(';') + '?overview=false&alternatives=false&access_token=' + encodeURIComponent(driveKey()), 12000);
+            const r = j && j.code === 'Ok' && Array.isArray(j.routes) ? j.routes[0] : null;
+            if (!r || !Array.isArray(r.legs)) throw new Error('no route');
+            r.legs.forEach((g, i) => { if (typeof g.duration === 'number') legs.set(ptText(pts[i]) + '>' + ptText(pts[i + 1]), Math.round(g.duration / 60)); });
+          } catch (e) { if (e.message !== 'skip') mapboxDown = Date.now(); noDrive++; R.guess = true; }
+          const leg = (a, b) => { const k = legs.get(ptText(a) + '>' + ptText(b)); return k != null ? k : guess(a, b); };
+          R.final = simulate(R, R.stops, leg, grace);
+          R.was = simulate(R, R.stops.filter(x => x.kind === 'board'), leg, grace);
+        }));
+        if (stale()) return;
+        const rows = [];
+        changed.forEach(R => R.added.forEach(x => rows.push({ jobId: x.jobId, techId: R.t.id, techName: R.t.name, customer: x.customer })));
+        lastPlan = { s, routes: changed, left, rows, grace, today, noDrive, zipError, total: jobs0.length };
+        renderPlan(lastPlan);
+      } catch (e) {
+        if (stale()) return;
+        say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t plan: ' + errText(e)));
+      } finally { if (run === planRun) setBusy(false); }
+    };
+    const renderPlan = P => {
+      planOut.textContent = '';
+      const n = P.rows.length;
+      const head = el('div', 'font-size:12.5px;font-weight:800;color:var(--st-ink)');
+      head.className = 'st-plan-head';
+      head.textContent = 'Plan for ' + dayText(P.s.day) + ': ' + n + ' of ' + plural(P.total, 'Unassigned job') + ' on ' + plural(P.routes.length, 'tech');
+      planOut.appendChild(head);
+      const btns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+      if (n) {
+        const send = smallBtn('➡️ Send ' + plural(n, 'job') + ' to Move Jobs', () => {
+          if (lock) return say('Wait for ' + lock + ' to finish first.');
+          const k = moves.takePlan(P.rows);
+          if (k < 0) return say('🔀 Move Jobs is busy. Wait for it to finish, then try again.');
+          showView('moves');
+        }, 'background:#6a1b9a;border-color:#6a1b9a;color:#fff');
+        send.id = 'st-plan-send';
+        send.title = 'Opens 🔀 Move Jobs with each job and its tech. Nothing changes until you review it and press Assign.';
+        btns.appendChild(send);
+      }
+      btns.appendChild(copyPill('📋 Copy routes', planText(P), 'Copies every route as text'));
+      planOut.appendChild(btns);
+      P.routes.forEach(R => planOut.appendChild(routeCard(R, P)));
+      if (P.left.length) {
+        const box = el('div', 'display:grid;gap:3px;padding:7px 9px;border:1px solid var(--st-amber-l);background:var(--st-amber-s);border-radius:8px;font-size:12px');
+        box.className = 'st-plan-left';
+        box.appendChild(el('div', 'font-weight:800;color:var(--st-amber)', 'Not planned (' + P.left.length + ')'));
+        P.left.forEach(l => box.appendChild(el('div', 'color:var(--st-ink-2)', '• #' + l.c.jobId + (l.c.customer ? ' ' + l.c.customer : '') + (l.c.win ? ' (' + l.c.win.label + ')' : '') + ': ' + l.why)));
+        planOut.appendChild(box);
+      }
+      if (P.noDrive) planOut.appendChild(small('⚠️ Drive times aren\'t available for ' + plural(P.noDrive, 'route') + ', so those times are guesses from straight-line miles (marked ~).', 'color:var(--st-amber)'));
+      if (P.zipError) planOut.appendChild(small('⚠️ Some zip codes couldn\'t be looked up: ' + P.zipError + '.', 'color:var(--st-amber)'));
+      planOut.appendChild(small('Late is OK up to ' + mins(P.grace) + ' after a window; 5-9s count lightly. Arrival times assume each job takes its booked time. Jobs on the board are measured to the middle of their zip code. Drive times © Mapbox © OpenStreetMap.'));
+      planOut.style.display = 'grid';
+      say(n ? 'Check the routes, then ➡️ Send to Move Jobs. Nothing changes until you press Assign there.' : 'Nothing could be planned (see why below).');
+      fit();
+    };
+    const routeCard = (R, P) => {
+      const f = R.final, g = R.guess ? '~' : '';
+      const box = el('div', 'border:1px solid var(--st-line);border-radius:10px;padding:7px 9px;background:var(--st-bg);font-size:12px;display:grid;gap:2px;color:var(--st-ink)');
+      box.className = 'st-plan-route';
+      box.setAttribute('data-tech', R.t.id);
+      const top = el('div', 'display:flex;gap:6px;align-items:baseline');
+      top.append(el('span', 'font-weight:800;font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', R.t.name),
+        el('span', 'font-weight:800;white-space:nowrap;color:#6a1b9a', '+' + plural(R.added.length, 'job')));
+      box.appendChild(top);
+      box.appendChild(el('div', 'color:var(--st-ink-3)', R.t.team || 'No team'));
+      box.appendChild(el('div', 'color:var(--st-ink-2)', 'Driving ' + g + mins(f.drive) + ' (was ' + g + mins(R.was.drive) + ')' + (R.sales && f.drive > SALES_MAX ? ' ⚠️ over the ' + mins(SALES_MAX) + ' sales goal' : '')));
+      const list = el('div', 'display:grid;gap:1px;margin-top:3px');
+      const line = (time, text, tone, bold, extra) => {
+        const r = el('div', 'display:flex;gap:6px;align-items:baseline;padding:2px 0;border-top:1px solid var(--st-line)' + (bold ? ';font-weight:700' : ''));
+        r.append(el('span', 'flex:none;width:62px;color:var(--st-ink-3);font-variant-numeric:tabular-nums', time), el('span', 'flex:1;min-width:0;overflow-wrap:anywhere;color:' + (tone || 'var(--st-ink)'), text));
+        if (extra) r.className = extra;
+        list.appendChild(r);
+      };
+      line(clock(R.start), R.startPt ? R.startWords : 'Start (nowhere to measure from)', 'var(--st-ink-3)');
+      f.out.forEach(o => {
+        const x = o.x, isNew = x.kind === 'new';
+        // Late within the grace is fine ("OK"); later than that is marked ⚠️.
+        const bad = o.late >= 5 && o.late > graceFor(x, P.grace) && !x.win.evening;
+        const lateText = o.late < 5 ? '' : (bad ? ' · ⚠️ ' : ' · ') + mins(o.late) + ' after ' + (x.win.label.indexOf('-') > -1 ? x.win.label.split('-')[1] : 'the window') + (bad ? '' : ' (OK)');
+        const text = (isNew ? '🆕 ' : '') + (x.customer || 'Job #' + x.jobId) + ' #' + x.jobId + (x.prio === 'urgent' || x.prio === 'high' ? ' ⭐' : '') + (x.win ? ' · ' + x.win.label : '') + (x.city ? ' · ' + tidy(x.city) : '') + (o.drive ? ' · ' + g + mins(o.drive) + ' drive' : '') + lateText;
+        line(clock(o.arrive), text, bad ? 'var(--st-red)' : o.late >= 5 ? 'var(--st-amber)' : isNew ? '#6a1b9a' : null, isNew, isNew ? 'st-plan-new' : 'st-plan-stop');
+      });
+      line(clock(f.home), '🏠 Home' + (f.over >= 5 ? ' · ' + mins(f.over) + ' after their shift' : ''), f.over >= 5 ? 'var(--st-amber)' : 'var(--st-ink-3)');
+      box.appendChild(list);
+      return box;
+    };
+    const planText = P => {
+      const lines = ['Plan for ' + dayText(P.s.day)];
+      P.routes.forEach(R => {
+        lines.push('', R.t.name + ' (' + (R.t.team || 'no team') + '): +' + plural(R.added.length, 'job') + ', driving ' + mins(R.final.drive));
+        R.final.out.forEach(o => lines.push('  ' + clock(o.arrive) + '  ' + (o.x.kind === 'new' ? 'NEW ' : '') + (o.x.customer || 'Job') + ' #' + o.x.jobId + (o.x.win ? ' (' + o.x.win.label + ')' : '') + (o.late >= 5 ? ' ' + mins(o.late) + ' late' : '')));
+        lines.push('  ' + clock(R.final.home) + '  home');
+      });
+      if (P.left.length) { lines.push('', 'Not planned:'); P.left.forEach(l => lines.push('  #' + l.c.jobId + ' ' + (l.c.customer || '') + ': ' + l.why)); }
+      return lines.join('\n');
+    };
+
+    board.onChange(() => { if (shown()) { fillTechs(); paint(); if (teamBody.style.display !== 'none') renderTeams(); teamLabel(); } });
     paintWhere();
     const refresh = () => {
       beta.style.display = 'block';   // the Beta warning, every time it's opened

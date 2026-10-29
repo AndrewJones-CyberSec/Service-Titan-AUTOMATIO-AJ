@@ -34,24 +34,29 @@
     16: 'Quote - Lead Turn Over - HVAC', 17: 'PHONE CALL ONLY', 21: 'Quote - Electrical', 31: 'Plumbing - Clogged Drain', 32: 'Plumbing - Water Leak', 41: 'Install - HVAC - Standard - Residential' };
   // The board's day (tomorrow): Dustin 8–10 in Hattiesburg and 1–3 in Petal (shift 8–5); Sam far from home;
   // Olivia has time off; Pat has nothing (and no shift on the board).
+  const AM = [{ name: '8-12 MORNING ', color: '#fff2a8' }], PM = [{ name: '12-5 AFTERNOON', color: '#ffd6a8' }];
   window.APPTS = [
-    { id: 9001, job: 7001, techs: [201], customer: 'Ann Early', start: at(8), end: at(10), zip: '39401', city: 'HATTIESBURG', jobType: T[11], jobTypeId: 11 },
-    { id: 9002, job: 7002, techs: [201], customer: 'Bo Petal', start: at(13), end: at(15), zip: '39465', city: 'Petal', jobType: T[11], jobTypeId: 11 },
-    { id: 9003, job: 7003, techs: [205], customer: 'Cy Far', start: at(8), end: at(10), zip: '39401', city: 'Hattiesburg', jobType: T[11], jobTypeId: 11 },
-    { id: 9004, job: 7004, techs: [205], customer: 'Di Purvis', start: at(13), end: at(15), zip: '39475', city: 'Purvis', jobType: T[11], jobTypeId: 11 },
-    { id: 9005, job: 7005, techs: [203], customer: 'Ed Volt', start: at(9), end: at(11), zip: '39465', city: 'Petal', jobType: T[21], jobTypeId: 21 }
+    { id: 9001, job: 7001, techs: [201], customer: 'Ann Early', start: at(8), end: at(10), zip: '39401', city: 'HATTIESBURG', jobType: T[11], jobTypeId: 11, tags: AM },
+    { id: 9002, job: 7002, techs: [201], customer: 'Bo Petal', start: at(13), end: at(15), zip: '39465', city: 'Petal', jobType: T[11], jobTypeId: 11, tags: PM },
+    { id: 9003, job: 7003, techs: [205], customer: 'Cy Far', start: at(8), end: at(10), zip: '39401', city: 'Hattiesburg', jobType: T[11], jobTypeId: 11, tags: AM },
+    { id: 9004, job: 7004, techs: [205], customer: 'Di Purvis', start: at(13), end: at(15), zip: '39475', city: 'Purvis', jobType: T[11], jobTypeId: 11, tags: PM },
+    { id: 9005, job: 7005, techs: [203], customer: 'Ed Volt', start: at(9), end: at(11), zip: '39465', city: 'Petal', jobType: T[21], jobTypeId: 21, tags: AM }
   ];
   // Eli (203) has time off 7 AM–7 PM on the board too, at the same time as his job (like ServiceTitan on Oct 29 2026).
   window.SHIFTS = { 201: [[8, 17]], 203: [[8, 17], [7, 19, 'TimeOff']], 204: [[8, 17]], 205: [[8, 17]], 206: [[8, 17]], 207: [[8, 17, 'TimeOff']] };
-  // The lists: [day offset or 'hold', id, job, customer, type, place, start h, hours, priority, phone, created (days ago)].
+  // The lists: [day offset or 'hold', id, job, customer, type, place, start h, hours, priority, phone, created (days ago), arrival-window tag].
   const near = (p, d) => [p[0] + d, p[1] - d];
   window.LISTS = [
-    [0, 9101, 7101, 'Near Quote', 11, near(P.hatt, 0.01), 11, 2, 'Normal', '6015550101', 3],
-    [0, 9102, 7102, 'Sparky Lamp', 21, near(P.hatt, 0.005), 11, 2, 'Normal', '6015550102', 3],
-    [0, 9103, 7103, 'Drippy Sink', 31, near(P.hatt, 0.005), 10, 2, 'Normal', '6015550103', 3],
+    [0, 9101, 7101, 'Near Quote', 11, near(P.hatt, 0.01), 11, 2, 'Normal', '6015550101', 3, '8-12 MORNING '],
+    [0, 9102, 7102, 'Sparky Lamp', 21, near(P.hatt, 0.005), 11, 2, 'Normal', '6015550102', 3, '12-5 AFTERNOON'],
+    [0, 9103, 7103, 'Drippy Sink', 31, near(P.hatt, 0.005), 10, 2, 'Normal', '6015550103', 3, '8-12 MORNING '],
     [0, 9104, 7104, 'Way Off', 11, P.jackson, 10, 2, 'Normal', '6015550104', 3],
-    [0, 9105, 7105, 'Big Install', 41, near(P.hatt, 0.01), 8, 8, 'Normal', '6015550105', 3],
-    [0, 9108, 7108, 'Late Quote', 11, near(P.petal, 0.01), 15.5, 1.5, 'Normal', '6015550108', 1],
+    [0, 9105, 7105, 'Big Install', 41, near(P.hatt, 0.01), 8, 8, 'Normal', '6015550105', 3, '8-12 MORNING '],
+    [0, 9108, 7108, 'Late Quote', 11, near(P.petal, 0.01), 15.5, 1.5, 'Normal', '6015550108', 1, '12-5 AFTERNOON'],
+    [0, 9110, 7110, 'Eve Quote', 11, near(P.hatt, 0.015), 17, 1, 'Normal', '6015550110', 2, '5-9 EVENING '],
+    // Two more plumbing jobs near Purvis in the morning: one of Pam's three 8-12s has to be late.
+    [0, 9111, 7111, 'Pipe Burst', 31, near(P.purvis, 0.01), 8, 3, 'Urgent', '6015550111', 1, '8-12 MORNING '],
+    [0, 9112, 7112, 'Slow Drain', 31, near(P.purvis, 0.02), 9, 2, 'Normal', '6015550112', 4, '8-12 MORNING '],
     [3, 9106, 7106, 'Gen Later', 12, near(P.petal, 0.005), 9, 2, 'Normal', '6015550106', 10],
     [5, 9107, 7107, 'Long Quote', 11, near(P.hatt, 0.01), 8, 4, 'Normal', '6015550107', 5],
     ['hold', 9201, 7201, 'Holly Heater', 13, near(P.purvis, 0.01), -30, 1.5, 'High', '6015550201', 40],
@@ -61,12 +66,12 @@
     [0, 9109, 7109, 'Just Call', 17, near(P.hatt, 0.01), 11, 0.5, 'Normal', '6015550109', 2]
   ];
   const rowOf = x => {
-    const [day, id, job, customer, type, pt, h, hrs, prio, phone, created] = x;
+    const [day, id, job, customer, type, pt, h, hrs, prio, phone, created, tag] = x;
     const s = day === 'hold' ? ago(-h, 9) : on(day, Math.floor(h), (h % 1) * 60), e = new Date(+s + hrs * 3600000);
     return { Id: id, JobId: job, AppointmentNumber: 1, Customer: customer, CustomerPhone: '(' + phone.slice(0, 3) + ') ' + phone.slice(3, 6) + '-' + phone.slice(6), Type: T[type], TypeId: type, JobTypeId: 0,
       Priority: prio, Duration: hrs * 3600, Start: s.toISOString(), End: e.toISOString(), ArrivalWindowStart: s.toISOString(), ArrivalWindowEnd: e.toISOString(), CreatedOn: ago(created).toISOString(),
       // Like ServiceTitan on Oct 29 2026: the map point in Latitude / Longitude, JobLatitude / JobLongitude empty.
-      Latitude: pt ? pt[0] : 0, Longitude: pt ? pt[1] : 0, JobLatitude: null, JobLongitude: null, Zip: '', City: 'Somewhere', State: 'MS', Tags: [], Technicians: [], AppointmentStatus: day === 'hold' ? 'Hold' : 'Scheduled', JobStatus: day === 'hold' ? 'Hold' : 'Scheduled', BusinessUnitId: 1 };
+      Latitude: pt ? pt[0] : 0, Longitude: pt ? pt[1] : 0, JobLatitude: null, JobLongitude: null, Zip: '', City: 'Somewhere', State: 'MS', Tags: tag ? [{ Id: 1, TypeId: 1, TypeName: tag, Color: '#ffe8a8', TextColor: null }] : [], Technicians: (window.ASSIGNED[id] || []).map(t => ({ Id: t, Name: (TECHS.find(x => x.id === t) || {}).name })), AppointmentStatus: day === 'hold' ? 'Hold' : 'Scheduled', JobStatus: day === 'hold' ? 'Hold' : 'Scheduled', BusinessUnitId: 1 };
   };
   // The last 4 weeks: who did which job types (Dustin and Pat split the coordinators' jobs).
   const past = [];
@@ -82,6 +87,14 @@
   // Skills: Dustin has Basic Quote (1); the generator quote needs Generator Certified (5).
   window.SKILLS = { 1: 'Basic Quote', 5: 'Generator Certified' };
   window.JOB_SKILLS = { 7101: [1], 7106: [5] };
+  // Move Jobs' changes (only on this fake page): appointment id -> tech ids.
+  window.ASSIGNED = {};
+  const apptInfo = id => {
+    const x = LISTS.find(r => r[1] === id);
+    if (x) { const r = rowOf(x); return { job: r.JobId, start: r.Start, end: r.End, techs: [] }; }
+    const a = APPTS.find(a => a.id === id);
+    return a ? { job: a.job, start: a.start.toISOString(), end: a.end.toISOString(), techs: a.techs } : null;
+  };
   // Switches: MAPBOX_DOWN, CENSUS_DOWN, HOLD_DOWN, PAST_BAD (in newboard.js), API_DELAY (ms).
   window.WRITES = []; window.mapboxCalls = 0; window.censusCalls = 0; window.getJobsCalls = 0; window.mapboxCoords = [];
   const miles = (a, b) => { const R = 3958.8, r = x => x * Math.PI / 180; const h = Math.sin(r(b[0] - a[0]) / 2) ** 2 + Math.cos(r(a[0])) * Math.cos(r(b[0])) * Math.sin(r(b[1] - a[1]) / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
@@ -100,6 +113,12 @@
       const m = /\/mapbox\/[a-z-]+\/([^?]+)\?(.*)$/.exec(u);
       const pts = decodeURIComponent(m[1]).split(';').map(p => p.split(',').map(Number)).map(([lon, lat]) => [lat, lon]);
       pts.forEach(p => window.mapboxCoords.push(p));
+      // Directions (a whole route): one leg between each two points in order.
+      if (u.indexOf('/directions/v5/') > -1) {
+        window.routeCalls = (window.routeCalls || 0) + 1;
+        const legs = pts.slice(1).map((p, i) => ({ duration: miles(pts[i], p) * 1.3 / 40 * 3600, distance: miles(pts[i], p) * 1.3 * 1609.34 }));
+        return json({ code: 'Ok', routes: [{ legs, duration: legs.reduce((t, l) => t + l.duration, 0) }] });
+      }
       const q = new URLSearchParams(m[2]);
       const src = q.get('sources').split(';').map(Number), dst = q.get('destinations').split(';').map(Number);
       const mi = (a, b) => miles(pts[a], pts[b]) * 1.3;
@@ -118,11 +137,24 @@
       window.lastGetJobs = body;
       if (body.JobType === 'Hold' && window.HOLD_DOWN) return json({ error: 'boom' }, 500);
       const d = new Date(body.Date);
-      const rows = LISTS.filter(x => body.JobType === 'Hold' ? x[0] === 'hold' : x[0] !== 'hold' && (() => { const s = on(x[0], 0); return s.getFullYear() === d.getFullYear() && s.getMonth() === d.getMonth() && s.getDate() === d.getDate(); })()).map(rowOf);
+      const rows = LISTS.filter(x => body.JobType === 'Hold' ? x[0] === 'hold' : x[0] !== 'hold' && !(window.ASSIGNED[x[1]] || []).length && (() => { const s = on(x[0], 0); return s.getFullYear() === d.getFullYear() && s.getMonth() === d.getMonth() && s.getDate() === d.getDate(); })()).map(rowOf);
       return json({ Jobs: rows.slice(body.QueryFilter.Skip, body.QueryFilter.Skip + body.QueryFilter.Take), Count: rows.length });
     }
     if (/\/dispatch\/job-edit-flyout\/GetJobAppointments\?jobId=(\d+)/.test(u)) return json([]);
     let m;
+    if ((m = /GetJobEditFlyoutData\?appointmentId=(\d+)/.exec(u))) {
+      const id = Number(m[1]), a = apptInfo(id);
+      if (!a) return json({}, 404);
+      const techs = window.ASSIGNED[id] || a.techs;
+      return json({ jobId: a.job, jobNumber: String(a.job), jobStatus: 'Scheduled', businessUnitId: 1, jobTotal: 0, locationAddress: { zip: '39401', city: 'Hattiesburg' }, customer: { name: 'Someone' },
+        jobAppointments: [{ id, number: 1, start: a.start, end: a.end, technicians: techs.map(t => ({ id: t, name: (TECHS.find(x => x.id === t) || {}).name })), jobAppointmentStatus: 0, isConfirmed: false }] });
+    }
+    if (u.indexOf('/Job/TechniciansAreBooked') === 0) return json([]);
+    if ((m = /\/dispatch\/job-edit-flyout\/(Assign|Unassign)Technicians/.exec(u))) {
+      const id = body.appointmentId, a = apptInfo(id), cur = window.ASSIGNED[id] || (a ? a.techs : []);
+      window.ASSIGNED[id] = m[1] === 'Assign' ? cur.concat(body.technicianIds.filter(t => cur.indexOf(t) < 0)) : cur.filter(t => body.technicianIds.indexOf(t) < 0);
+      return new Response('', { status: 200 });
+    }
     if ((m = /GetJobOverviewData\?jobId=(\d+)/.exec(u))) { window.skillCalls = (window.skillCalls || 0) + 1; return json({ jobTags: [], skills: (JOB_SKILLS[m[1]] || []).map(id => ({ id, name: SKILLS[id], active: true })) }); }
     return realFetch(url, opts);
   };

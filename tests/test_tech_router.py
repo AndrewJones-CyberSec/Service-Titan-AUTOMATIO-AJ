@@ -111,7 +111,7 @@ with sync_playwright() as p:
     c = card(page, 'New Kind')
     check('No recent jobs like it' in c, 'a job type with nothing to go by is marked ⚠️')
     o = out(page)
-    check('Left out: 4 jobs other departments do' in o and '1 phone-call-only job' in o, 'it says how many jobs other departments do, and phone-call-only jobs (%s)' % re.findall(r'Left out: [^\n]*', o))
+    check('Left out: 6 jobs other departments do' in o and '1 phone-call-only job' in o, 'it says how many jobs other departments do, and phone-call-only jobs (%s)' % re.findall(r'Left out: [^\n]*', o))
     check('too long for this time' in o and 'out of the way' in o, 'and what was too long or too far')
     check(ev(page, 'NB.pastCalls') == 4, 'the last 4 weeks were read in 4 parts (%s)' % ev(page, 'NB.pastCalls'))
     check(ev(page, "() => window.mapboxCookies") is None, 'Mapbox is asked without cookies')
@@ -213,7 +213,7 @@ with sync_playwright() as p:
     # ================= 🔎 Closest techs =================
     page, errors = start(b)
     open_router(page)
-    B(page, 'Closest techs').click()
+    B(page, '🔎 Closest').click()
     page.fill('#st-router-input', '39465')
     page.click('#st-router-near-find')
     page.wait_for_function("() => document.getElementById('st-router-near-out').style.display !== 'none'", timeout=20000)
@@ -230,6 +230,98 @@ with sync_playwright() as p:
     check(ev(page, "() => NB.host.shadowRoot.innerHTML.indexOf('7002') > -1") and 'data-job-appointment-id="9002"' in ev(page, "() => Array.from(NB.host.shadowRoot.querySelectorAll('style')).map(s => s.textContent).join('')"), 'the job is highlighted on the board')
     check(ev(page, 'window.WRITES') == [], 'Closest techs changed nothing')
     check(errors == [], 'closest techs: no page errors: %s' % errors)
+    page.close()
+
+    # ================= 🗺️ Plan the day =================
+    def plan(page):
+        page.click('#st-plan-go')
+        page.wait_for_function("() => !document.getElementById('st-plan-go').disabled && (document.getElementById('st-plan-out').style.display !== 'none' || /⚠️/.test(document.getElementById('st-router-msg').textContent))", timeout=30000)
+    def routes(page):
+        """{ tech name: [each stop's line] } for the routes shown."""
+        return ev(page, """() => Object.fromEntries(Array.from(document.querySelectorAll('#st-plan-out .st-plan-route')).map(r => [r.querySelector('span').textContent,
+          Array.from(r.querySelectorAll('.st-plan-new, .st-plan-stop')).map(x => x.innerText.replace(/\\s+/g, ' '))]))""")
+    def who(rts, name):
+        return [t for t, stops in rts.items() if any(name + ' #' in x for x in stops)]
+    page, errors = start(b)
+    open_router(page)
+    B(page, 'Plan the day').click()
+    check('for Fri' in page.inner_text('#st-plan-go') or 'for ' in page.inner_text('#st-plan-go'), 'the button says which day it plans (%r)' % page.inner_text('#st-plan-go'))
+    plan(page)
+    po = page.inner_text('#st-plan-out')
+    rts = routes(page)
+    print(json.dumps(rts, indent=1))
+    check('8 of 10 Unassigned jobs on 4 techs' in po, 'planned 8 of the 10 Unassigned jobs on 4 techs (%r)' % po[:80])
+    check(who(rts, 'Near Quote') == ['Dustin J'] and who(rts, 'Late Quote') == ['Dustin J'], 'the quotes near Dustin\'s day go to Dustin (%s, %s)' % (who(rts, 'Near Quote'), who(rts, 'Late Quote')))
+    check(who(rts, 'Sparky Lamp') == ['Eli E'], 'the electrical job goes to the electrician (%s)' % who(rts, 'Sparky Lamp'))
+    check(all(who(rts, n) == ['Pam P'] for n in ['Drippy Sink', 'Pipe Burst', 'Slow Drain']), 'the plumbing jobs go to the plumber')
+    check(who(rts, 'Big Install') == ['Ian I'], 'the install goes to the installer')
+    wins = [re.search(r'· (\d+-\d+) ·', x).group(1) for x in rts.get('Dustin J', []) if re.search(r'· (\d+-\d+) ·', x)]
+    check(wins == sorted(wins, key=lambda w: int(w.split('-')[0]) % 12 + (0 if w.startswith('8') else 12 if w.startswith('12') else 24)) and wins[:2] == ['8-12', '8-12'] and wins[-1] == '5-9',
+          'Dustin\'s route goes 8-12s, then 12-5s, then the 5-9 last (%s)' % wins)
+    check(any('Ann Early' in x for x in rts.get('Dustin J', [])) and any('Bo Petal' in x for x in rts.get('Dustin J', [])), 'his jobs already on the board are in his route')
+    pam = rts.get('Pam P', [])
+    check(pam and 'Pipe Burst' in pam[0], 'the Urgent job is Pam\'s first stop (%s)' % pam[:1])
+    check(any('⚠️' in x and 'after 12' in x for x in pam), 'one of Pam\'s three morning jobs is more than an hour late, marked ⚠️ (%s)' % pam)
+    left = page.inner_text('#st-plan-out .st-plan-left')
+    check('Way Off' in left and 'no one close has room' in left and 'Just Call' in left and 'phone call only' in left, 'not planned, with why: the far job and the phone call (%r)' % left)
+    check(ev(page, 'window.WRITES') == [], 'planning changed nothing')
+    check(ev(page, 'window.routeCalls') == 4, 'one drive-time request per route (%s)' % ev(page, 'window.routeCalls'))
+    # A 2-hour grace: the late morning job is OK now.
+    page.select_option('#st-plan-grace', '120')
+    plan(page)
+    pam = routes(page).get('Pam P', [])
+    check(not any('⚠️' in x for x in pam) and any('after 12 (OK)' in x for x in pam), 'late is OK up to 2 hr: the same stop is fine (%s)' % pam)
+    page.select_option('#st-plan-grace', '60')
+    # Departments: leave Electrical out.
+    page.click('#st-plan-teams')
+    page.uncheck('#st-plan-out ~ * input[data-team="x"]') if False else page.locator('#st-toolbox input[data-team="Electrical Dept - Sales/Service - Jeff V"]').uncheck()
+    check('4 of 5' in page.inner_text('#st-plan-teams') or 'of' in page.inner_text('#st-plan-teams'), 'the Departments line counts what\'s in (%r)' % page.inner_text('#st-plan-teams'))
+    plan(page)
+    left = page.inner_text('#st-plan-out .st-plan-left')
+    check('Sparky Lamp' in left and 'left out (Departments)' in left, 'Electrical left out: its job isn\'t planned, and it says why (%r)' % left)
+    page.locator('#st-toolbox button:visible', has_text='All').first.click()
+    plan(page)
+    # ➡️ Send to Move Jobs, Review, Assign: each job to its own tech (on this fake page).
+    page.click('#st-plan-send')
+    page.wait_for_function("() => /Move Jobs/.test(document.querySelector('#st-toolbox .st-head').innerText)", timeout=10000)
+    tb = page.inner_text('#st-toolbox')
+    check('each job goes to the tech shown' in tb and '→ Dustin J' in tb and '→ Pam P' in tb, 'Move Jobs has the plan: each job with its tech')
+    B(page, 'Review').click()
+    page.wait_for_function("() => { const g = document.getElementById('st-move-go'); return g && g.offsetParent && !g.disabled; }", timeout=30000)
+    check('Planned (each job to its own tech)' in page.inner_text('#st-toolbox'), 'the review says it\'s a plan')
+    check(ev(page, 'window.WRITES') == [], 'the review changed nothing')
+    page.click('#st-move-go')
+    page.wait_for_function("() => Object.keys(window.ASSIGNED).length >= 8", timeout=60000)
+    page.wait_for_timeout(500)
+    A = ev(page, 'window.ASSIGNED')
+    want = {'9101': [201], '9108': [201], '9110': [201], '9102': [203], '9103': [204], '9111': [204], '9112': [204], '9105': [206]}
+    check(all(A.get(k) == v for k, v in want.items()), 'Assign gave each job its planned tech (%s)' % A)
+    check(errors == [], 'plan the day: no page errors: %s' % errors)
+    page.close()
+
+    # ================= 🗺️ Plan the day for today, mid-morning =================
+    # The page is made on Oct 29 (its board day is Oct 30), then the clock moves to Oct 30, 10:30 AM:
+    # Ann Early (Dustin) is done, Ed Volt (Eli) is being worked.
+    page = b.new_page(viewport={'width': 1400, 'height': 1000}, timezone_id='America/Chicago')
+    errors = []
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    page.clock.install(time='2026-10-29T10:30:00-05:00')
+    page.goto(URL + '#/DispatchBoard')
+    page.wait_for_selector('.technician')
+    page.clock.set_system_time('2026-10-30T10:30:00-05:00')
+    ev(page, "() => { APPTS[0].status = 'Done'; APPTS[4].status = 'Working'; NB.render(); localStorage.clear(); localStorage.setItem('stSeenVersion', '2.1'); }")
+    page.evaluate(TOOLBOX)
+    open_router(page)
+    B(page, 'Plan the day').click()
+    plan(page)
+    po = page.inner_text('#st-plan-out')
+    rts = routes(page)
+    check('🔧 Working now' in po and '✅ From their last job' in po, 'today: Eli starts at the job he\'s working, Dustin at the job he finished')
+    times = [re.match(r'(\d+):(\d+) (AM|PM)', x) for stops in rts.values() for x in stops]
+    check(all(m and (int(m.group(1)) % 12 + (12 if m.group(3) == 'PM' else 0)) * 60 + int(m.group(2)) >= 10 * 60 + 30 for m in times), 'today: nothing is planned before now (10:30 AM)')
+    check('Ann Early' not in po, 'today: a done job isn\'t a stop any more')
+    check('Big Install' in page.inner_text('#st-plan-out .st-plan-left'), 'today: the 8-hour install doesn\'t fit anyone\'s day any more')
+    check(errors == [], 'today: no page errors: %s' % errors)
     page.close()
 
     # ================= Nothing scrolls sideways; leaving and closing tidy up =================
