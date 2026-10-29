@@ -42,19 +42,25 @@ def open_router(page):
     if B(page, '← Menu').count(): B(page, '← Menu').click()
     page.locator('#st-toolbox .st-tile', has_text='Tech Router').click()
     page.wait_for_function("() => document.querySelectorAll('#st-router-tech option').length > 2", timeout=10000)
-def find(page, tech, where=None):
+def find(page, tech):
     page.select_option('#st-router-tech', str(tech))
-    if where: B(page, where).click()
     page.click('#st-router-find')
     page.wait_for_function("() => !document.getElementById('st-router-find').disabled && (document.getElementById('st-router-fill-out').style.display !== 'none' || /⚠️/.test(document.getElementById('st-router-msg').textContent))", timeout=30000)
 def gaps(page):
-    """[(kind, [customer names in order])] for the open times shown (every one, Show more pressed)."""
-    for i in range(6):
-        more = page.locator('#st-router-fill-out button', has_text='Show more')
-        if not more.count(): break
-        more.first.click()
-    return ev(page, """() => Array.from(document.querySelectorAll('#st-router-fill-out .st-router-gap')).map(g => [g.getAttribute('data-kind'),
-      Array.from(g.querySelectorAll('.st-router-card')).map(c => c.querySelector('span').textContent.replace(/^\\d+\\. /, ''))])""")
+    """[(kind, [customer names in order])] for every open time (each one's tab clicked, Show more pressed).
+    The last open time is left showing."""
+    out = []
+    for i in range(page.locator('#st-router-fill-out .st-gap-chip').count()):
+        page.locator('#st-router-fill-out .st-gap-chip').nth(i).click()
+        more = page.locator('#st-router-fill-out button', has_text=re.compile(r'^Show \d+ more'))
+        if more.count(): more.first.click()
+        out.append(ev(page, """() => { const g = document.querySelector('#st-router-fill-out .st-router-gap'); return [g.getAttribute('data-kind'),
+          Array.from(g.querySelectorAll('.st-router-card')).map(c => c.querySelector('span').textContent.replace(/^\\d+\\. /, ''))]; }"""))
+    return out
+def show_gap(page, kind):
+    page.locator('#st-router-fill-out .st-gap-chip[data-kind="%s"]' % kind).first.click()
+    more = page.locator('#st-router-fill-out button', has_text=re.compile(r'^Show \d+ more'))
+    if more.count(): more.first.click()
 def card(page, name):
     return ev(page, "(n) => { const c = Array.from(document.querySelectorAll('#st-router-fill-out .st-router-card')).find(c => c.querySelector('span').textContent.replace(/^\\d+\\. /, '') === n); return c ? c.innerText : ''; }", name)
 def out(page):
@@ -96,23 +102,26 @@ with sync_playwright() as p:
     check(mid.index('Holly Heater') > mid.index('Lee Turnover'), 'a job 58 minutes out of the way comes after the close ones, even at High priority (%s)' % mid)
     check(mid.index('Gen Later') > mid.index('Holly Heater'), 'a job that needs a skill he doesn\'t have ranks lower (%s)' % mid)
     check(last[0] == 'Late Quote', 'end of day: the job already at 3:30 comes first (%s)' % last[:3])
+    show_gap(page, 'mid')
     c = card(page, 'Near Quote')
     check('(601) 555-0101' in c, 'the customer\'s phone number is on the card')
     check('its time fits' in c and 'Dustin did 5 of these' in c, 'it says why: the time fits, and Dustin did 5 like it (%r)' % c[:300])
     check('Unassigned' in c and 'from their 8–10 AM job in Hattiesburg' in c and 'on to their 1–3 PM job in Petal' in c, 'it says where the driving is from and to')
     c = card(page, 'Gen Later')
-    check("Needs a skill Dustin doesn't have: Generator Certified" in c, 'and its card says which skill (%r)' % c[:400])
+    check('needs Generator Certified' in c, 'and its card says which skill (%r)' % c[:400])
     check('3 days later' in c and 'call to move it up' in c, 'a job 3 days later: call to move it up (%r)' % c[:200])
-    check('Move Jobs' not in c, 'a job on another day isn\'t handed to Move Jobs (it needs a call first)')
+    check('Assign' not in c, 'a job on another day can\'t be sent to Move Jobs (it needs a call first)')
     c = card(page, 'Holly Heater')
-    check('On hold' in c and 'call to book it' in c and 'High priority' in c, 'a hold: on hold, call to book it, High priority (%r)' % c[:220])
+    check('On hold' in c and 'call to book it' in c and '⭐ High' in c, 'a hold: on hold, call to book it, High priority (%r)' % c[:220])
     c = card(page, 'Lee Turnover')
-    check('"Quote - Lead Turn Over" jobs' in c and 'rare' in c, 'a rare job type is matched by the start of its name (%r)' % c[:260])
+    check('"Quote - Lead Turn Over" jobs' in c, 'a rare job type is matched by the start of its name (%r)' % c[:260])
     c = card(page, 'New Kind')
-    check('No recent jobs like it' in c, 'a job type with nothing to go by is marked ⚠️')
+    check('⚠️ nothing like it to go by' in c, 'a job type with nothing to go by is marked ⚠️')
     o = out(page)
     check('Left out: 6 jobs other departments do' in o and '1 phone-call-only job' in o, 'it says how many jobs other departments do, and phone-call-only jobs (%s)' % re.findall(r'Left out: [^\n]*', o))
-    check('too long for this time' in o and 'out of the way' in o, 'and what was too long or too far')
+    show_gap(page, 'last')
+    o = out(page)
+    check('too long for this time' in o and 'out of the way' in o, 'and what was too long or too far for that open time')
     check(ev(page, 'NB.pastCalls') == 4, 'the last 4 weeks were read in 4 parts (%s)' % ev(page, 'NB.pastCalls'))
     check(ev(page, "() => window.mapboxCookies") is None, 'Mapbox is asked without cookies')
     coords = ev(page, 'window.mapboxCoords')
@@ -121,11 +130,13 @@ with sync_playwright() as p:
     hl = ev(page, "() => Array.from(NB.host.shadowRoot.querySelectorAll('style')).map(s => s.textContent).join('')")
     check('data-technician-id="201"' in hl, 'Dustin\'s name is highlighted on the board')
 
-    # Only the end of the day; the 4 weeks aren't read again.
-    find(page, 201, '🌇 End')
-    check([k for k, _ in gaps(page)] == ['last'], 'End: only the end of the day')
+    # Each open time is a tab: Mid-day is shown first (it's the first with jobs); the 4 weeks aren't read again.
+    find(page, 201)
+    tabs_ = ev(page, "() => Array.from(document.querySelectorAll('#st-router-fill-out .st-gap-chip')).map(b => [b.getAttribute('data-kind'), b.textContent, b.classList.contains('on')])")
+    check([t[0] for t in tabs_] == ['mid', 'last'] and tabs_[0][2] and '(7)' in tabs_[0][1], 'the open times are tabs with how many jobs fit, the first one showing (%s)' % tabs_)
+    page.locator('#st-router-fill-out .st-gap-chip[data-kind="last"]').click()
+    check(page.locator('#st-router-fill-out .st-router-gap').get_attribute('data-kind') == 'last' and 'End of day' in out(page), 'clicking End shows the end of the day')
     check(ev(page, 'NB.pastCalls') == 4, 'searching again doesn\'t read the 4 weeks again')
-    B(page, 'Any time').click()
 
     # No holds.
     page.uncheck('#st-router-hold')
@@ -136,7 +147,7 @@ with sync_playwright() as p:
 
     # ➡️ Move Jobs: the same-day job and Dustin filled in, nothing changed.
     find(page, 201)
-    page.locator('#st-router-fill-out .st-router-card', has_text='Near Quote').first.locator('button', has_text='Move Jobs').click()
+    page.locator('#st-router-fill-out .st-router-card', has_text='Near Quote').first.locator('button', has_text='Assign').click()
     page.wait_for_function("() => document.getElementById('st-move-to') && document.getElementById('st-move-to').value === '201'", timeout=10000)
     tb = page.inner_text('#st-toolbox')
     check('#7101' in tb and '🔀 Move Jobs' in page.inner_text('#st-toolbox .st-head'), '➡️ opens Move Jobs with the job and Dustin in To')
@@ -158,21 +169,24 @@ with sync_playwright() as p:
     # Time off on the board at the same time as a job: not counted (it would hide the whole day).
     find(page, 203)
     o = out(page)
-    check("isn't counted" in o and 'has time off' not in o and 'Open:' in o, 'time off at the same time as his job isn\'t counted, and it says so (%r)' % o[:300])
+    check("isn't counted" in o and 'has time off' not in o and page.locator('#st-router-fill-out .st-gap-chip').count() > 0, 'time off at the same time as his job isn\'t counted, and it says so (%r)' % o[:300])
     # No shift on the board.
     find(page, 202)
-    check('No shift on the board (8 AM–5 PM used)' in out(page), 'no shift on the board: 8 AM–5 PM is used')
+    check('no shift on the board (8 AM–5 PM used)' in out(page), 'no shift on the board: 8 AM–5 PM is used')
     # Sales: a long day of driving already.
     find(page, 205)
     o = out(page)
-    check('Sales goal' in o and 'sales goal is under 5 hr 30 min' in o, 'sales: a job that adds to an already long day of driving is marked ⚠️')
+    show_gap(page, 'last')
+    o = out(page)
+    check('~5 hr' in o and 'driving that day' in o and '⚠️ ~' in o, 'sales: his day of driving shows, and a job that takes it past 5 hr 30 min is marked ⚠️ (%r)' % o[:400])
     # A meeting in the middle of the day splits the opening.
     ev(page, "() => { window.EVENTS = { 201: [{ start: (() => { const d = new Date(NB.day()); d.setHours(11, 0, 0, 0); return d; })(), end: (() => { const d = new Date(NB.day()); d.setHours(12, 0, 0, 0); return d; })() }] }; }")
     ev(page, "() => NB.render()")
     page.wait_for_timeout(300)
     find(page, 201)
     o = out(page)
-    check('10–11 AM' in o and '12–1 PM' in o and '1 other event' in o, 'a meeting 11–12 splits the mid-day opening (%s)' % re.findall(r'Open: [^\n]*', o))
+    mids = ev(page, "() => Array.from(document.querySelectorAll('#st-router-fill-out .st-gap-chip[data-kind=mid]')).map(b => b.textContent)")
+    check(len(mids) == 2 and '10–11' in mids[0] and '12–1' in mids[1] and '1 other event' in o, 'a meeting 11–12 splits the mid-day opening (%s)' % mids)
     check(errors == [], 'other days: no page errors: %s' % errors)
     page.close()
 
@@ -237,31 +251,35 @@ with sync_playwright() as p:
         page.click('#st-plan-go')
         page.wait_for_function("() => !document.getElementById('st-plan-go').disabled && (document.getElementById('st-plan-out').style.display !== 'none' || /⚠️/.test(document.getElementById('st-router-msg').textContent))", timeout=30000)
     def routes(page):
-        """{ tech name: [each stop's line] } for the routes shown."""
-        return ev(page, """() => Object.fromEntries(Array.from(document.querySelectorAll('#st-plan-out .st-plan-route')).map(r => [r.querySelector('span').textContent,
+        """{ tech name: [each stop's line] } for the routes shown (every stop showing)."""
+        if page.locator('#st-plan-all', has_text='Show every stop').count(): page.click('#st-plan-all')
+        return ev(page, """() => Object.fromEntries(Array.from(document.querySelectorAll('#st-plan-out .st-plan-route')).map(r => [r.querySelector('span').textContent.replace(/^[▸▾] /, ''),
           Array.from(r.querySelectorAll('.st-plan-new, .st-plan-stop')).map(x => x.innerText.replace(/\\s+/g, ' '))]))""")
     def who(rts, name):
         return [t for t, stops in rts.items() if any(name + ' #' in x for x in stops)]
     page, errors = start(b)
     open_router(page)
     B(page, 'Plan the day').click()
-    check('for Fri' in page.inner_text('#st-plan-go') or 'for ' in page.inner_text('#st-plan-go'), 'the button says which day it plans (%r)' % page.inner_text('#st-plan-go'))
+    check(re.search(r'Plan (Mon|Tue|Wed|Thu|Fri|Sat|Sun), ', page.inner_text('#st-plan-go')), 'the button says which day it plans (%r)' % page.inner_text('#st-plan-go'))
     plan(page)
     po = page.inner_text('#st-plan-out')
+    chips_ = ev(page, "() => Object.fromEntries(Array.from(document.querySelectorAll('#st-plan-out .st-plan-route')).map(r => [r.querySelector('span').textContent.replace(/^[▸▾] /, ''), Array.from(r.querySelectorAll('.st-plan-chip')).map(c => c.textContent)]))")
+    check('8 of 10 jobs planned' in po and '4 techs' in po, 'planned 8 of the 10 Unassigned jobs on 4 techs (%r)' % po[:90])
+    check(len(chips_.get('Dustin J', [])) == 3 and all(re.match(r'\d+:\d\d \w', c) for c in chips_['Dustin J']), 'at a glance: each tech\'s new jobs as chips with their time (%s)' % chips_.get('Dustin J'))
+    check(ev(page, "() => document.querySelectorAll('#st-plan-out .st-tl').length") == 0, 'the routes start folded')
     rts = routes(page)
     print(json.dumps(rts, indent=1))
-    check('8 of 10 Unassigned jobs on 4 techs' in po, 'planned 8 of the 10 Unassigned jobs on 4 techs (%r)' % po[:80])
     check(who(rts, 'Near Quote') == ['Dustin J'] and who(rts, 'Late Quote') == ['Dustin J'], 'the quotes near Dustin\'s day go to Dustin (%s, %s)' % (who(rts, 'Near Quote'), who(rts, 'Late Quote')))
     check(who(rts, 'Sparky Lamp') == ['Eli E'], 'the electrical job goes to the electrician (%s)' % who(rts, 'Sparky Lamp'))
     check(all(who(rts, n) == ['Pam P'] for n in ['Drippy Sink', 'Pipe Burst', 'Slow Drain']), 'the plumbing jobs go to the plumber')
     check(who(rts, 'Big Install') == ['Ian I'], 'the install goes to the installer')
-    wins = [re.search(r'· (\d+-\d+) ·', x).group(1) for x in rts.get('Dustin J', []) if re.search(r'· (\d+-\d+) ·', x)]
+    wins = [re.search(r'(?:AM|PM) (\d+-\d+) ', x).group(1) for x in rts.get('Dustin J', []) if re.search(r'(?:AM|PM) (\d+-\d+) ', x)]
     check(wins == sorted(wins, key=lambda w: int(w.split('-')[0]) % 12 + (0 if w.startswith('8') else 12 if w.startswith('12') else 24)) and wins[:2] == ['8-12', '8-12'] and wins[-1] == '5-9',
           'Dustin\'s route goes 8-12s, then 12-5s, then the 5-9 last (%s)' % wins)
     check(any('Ann Early' in x for x in rts.get('Dustin J', [])) and any('Bo Petal' in x for x in rts.get('Dustin J', [])), 'his jobs already on the board are in his route')
     pam = rts.get('Pam P', [])
     check(pam and 'Pipe Burst' in pam[0], 'the Urgent job is Pam\'s first stop (%s)' % pam[:1])
-    check(any('⚠️' in x and 'after 12' in x for x in pam), 'one of Pam\'s three morning jobs is more than an hour late, marked ⚠️ (%s)' % pam)
+    check(any('⚠️' in x and 'late' in x for x in pam), 'one of Pam\'s three morning jobs is more than an hour late, marked ⚠️ (%s)' % pam)
     left = page.inner_text('#st-plan-out .st-plan-left')
     check('Way Off' in left and 'no one close has room' in left and 'Just Call' in left and 'phone call only' in left, 'not planned, with why: the far job and the phone call (%r)' % left)
     check(ev(page, 'window.WRITES') == [], 'planning changed nothing')
@@ -270,16 +288,21 @@ with sync_playwright() as p:
     page.select_option('#st-plan-grace', '120')
     plan(page)
     pam = routes(page).get('Pam P', [])
-    check(not any('⚠️' in x for x in pam) and any('after 12 (OK)' in x for x in pam), 'late is OK up to 2 hr: the same stop is fine (%s)' % pam)
+    check(not any('⚠️' in x for x in pam) and any('late (OK)' in x for x in pam), 'late is OK up to 2 hr: the same stop is fine (%s)' % pam)
     page.select_option('#st-plan-grace', '60')
-    # Departments: leave Electrical out.
-    page.click('#st-plan-teams')
-    page.uncheck('#st-plan-out ~ * input[data-team="x"]') if False else page.locator('#st-toolbox input[data-team="Electrical Dept - Sales/Service - Jeff V"]').uncheck()
-    check('4 of 5' in page.inner_text('#st-plan-teams') or 'of' in page.inner_text('#st-plan-teams'), 'the Departments line counts what\'s in (%r)' % page.inner_text('#st-plan-teams'))
+    # One department at a time: the plumbers, then the sales team.
+    opts = ev(page, "() => Array.from(document.querySelectorAll('#st-plan-team option')).map(o => o.textContent)")
+    check(opts[:2] == ['All departments', 'Sales & Project Coordinators'] and 'Plumbing Dept - Sales/Service' in opts and 'Project Coordinator' in opts, 'departments by their short names, and the sales team together (%s)' % opts)
+    page.select_option('#st-plan-team', 'Plumbing Dept - Sales/Service - James S')
     plan(page)
-    left = page.inner_text('#st-plan-out .st-plan-left')
-    check('Sparky Lamp' in left and 'left out (Departments)' in left, 'Electrical left out: its job isn\'t planned, and it says why (%r)' % left)
-    page.locator('#st-toolbox button:visible', has_text='All').first.click()
+    rts = routes(page)
+    po = page.inner_text('#st-plan-out')
+    check(list(rts) == ['Pam P'] and '3 of 3 jobs planned' in po and 'for other departments are left on the Unassigned list' in po, 'Plumbing only: just Pam, her 3 jobs, the rest left for the others (%s, %r)' % (list(rts), po[:120]))
+    page.select_option('#st-plan-team', 'sales')
+    plan(page)
+    rts = routes(page)
+    check(set(rts) <= {'Dustin J', 'Pat P', 'Sam S'} and who(rts, 'Near Quote') == ['Dustin J'] and who(rts, 'Drippy Sink') == [], 'Sales & Project Coordinators: only their routes and jobs (%s)' % list(rts))
+    page.select_option('#st-plan-team', '')
     plan(page)
     # ➡️ Send to Move Jobs, Review, Assign: each job to its own tech (on this fake page).
     page.click('#st-plan-send')
@@ -314,8 +337,8 @@ with sync_playwright() as p:
     open_router(page)
     B(page, 'Plan the day').click()
     plan(page)
-    po = page.inner_text('#st-plan-out')
     rts = routes(page)
+    po = page.inner_text('#st-plan-out')
     check('🔧 Working now' in po and '✅ From their last job' in po, 'today: Eli starts at the job he\'s working, Dustin at the job he finished')
     times = [re.match(r'(\d+):(\d+) (AM|PM)', x) for stops in rts.values() for x in stops]
     check(all(m and (int(m.group(1)) % 12 + (12 if m.group(3) == 'PM' else 0)) * 60 + int(m.group(2)) >= 10 * 60 + 30 for m in times), 'today: nothing is planned before now (10:30 AM)')
