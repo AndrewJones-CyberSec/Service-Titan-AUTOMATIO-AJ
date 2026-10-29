@@ -22,6 +22,7 @@ clock when the point is "it gave up after 15 seconds".
 
 | File | What it checks |
 |---|---|
+| `test_install_page.py` | The install page (index.html), served like GitHub Pages serves it: the bookmark, the version and latest update read from toolbox.js, the version history read from CHANGELOG.md, every tool in the demo Toolbox, picking on the sample board, Move Jobs moving a card and putting it back, fold, close and open again, wider by its edge; phone width, dark mode, reduce motion, JavaScript off |
 | `fastclock.py` | Not a suite: the helper that skips ahead through deliberate waits (see above) |
 | `test_notes.py` | 📝 Notes: note first or job first, a job panel still loading, a merged customer ("Page Could Not Be Found") |
 | `test_business_unit.py` | 🏢 Business Unit: picking, check, change, put back, locked jobs, errors, pop-ups, Stop |

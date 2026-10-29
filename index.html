@@ -8,15 +8,17 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito+Sans:opsz,wght@6..12,400;6..12,600;6..12,700;6..12,800;6..12,900&display=swap">
+<script>document.documentElement.classList.add('js');</script>
 <style>
 /* The page wears the Toolbox's own look: the panel's navy title bar, its blue, its tiles.
-   The hero shows the thing itself, the Toolbox open on a Day board; the one bold element
-   is the bookmark you drag. */
+   The hero is the thing itself: a working copy of the Toolbox open on a Day board. That demo is
+   the one bold element; everything around it stays quiet. The only motion nobody asked for is the
+   board and Toolbox opening once on load; everything else moves because you clicked something. */
 :root {
   --navy: #16202e; --navy-2: #223047; --navy-ink: #c9d3e1;
   --bg: #f4f6f9; --surface: #ffffff; --ink: #141a22; --ink-2: #4b5563; --ink-3: #7b8087;
   --line: #e2e5e9; --blue: #0265dc; --blue-d: #004491; --blue-s: #e8f2fe;
-  --green: #1f7a3d; --green-s: #e9f6ee; --amber: #8a5a00; --amber-s: #fff6e0;
+  --green: #1f7a3d; --green-s: #e9f6ee; --green-l: #a6d8b6; --amber: #8a5a00; --amber-s: #fff6e0;
   --sans: "Nunito Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   color-scheme: light;
 }
@@ -24,7 +26,7 @@
   :root {
     --bg: #0f141b; --surface: #171e28; --ink: #e8ecf1; --ink-2: #aab3c0; --ink-3: #8a94a3;
     --line: #2a3340; --blue: #5b9ef5; --blue-d: #9cc4ff; --blue-s: #16273d;
-    --green: #6fd394; --green-s: #142a1d; --amber: #f2c46b; --amber-s: #2b2312;
+    --green: #6fd394; --green-s: #142a1d; --green-l: #2c5a3c; --amber: #f2c46b; --amber-s: #2b2312;
     color-scheme: dark;
   }
 }
@@ -32,11 +34,12 @@
 html { -webkit-text-size-adjust: 100%; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 400 16px/1.6 var(--sans); }
 a { color: var(--blue); }
+button { font: inherit; color: inherit; cursor: pointer; }
 :focus-visible { outline: 3px solid #7fb5ff; outline-offset: 2px; border-radius: 6px; }
 .wrap { max-width: 1080px; margin: 0 auto; padding-inline: 16px; }
 
 /* ---------- Hero: navy, like the Toolbox title bar ---------- */
-.hero { background: var(--navy); color: #fff; padding-block: 40px 56px; overflow: hidden; }
+.hero { background: var(--navy); color: #fff; padding-block: 40px 52px; overflow: hidden; }
 .hero .wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr); gap: 48px; align-items: center; }
 .brand { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-weight: 800; font-size: 17px; }
 .pill { font-size: 13px; font-weight: 800; padding: 2px 10px; border-radius: 99px; background: rgba(255,255,255,.12); color: #e6edf7; }
@@ -54,10 +57,6 @@ h1 { font-size: clamp(2.4rem, 5.2vw, 3.6rem); line-height: 1.02; letter-spacing:
 .bm .ico { font-size: 1.4rem; line-height: 1; }
 .up { color: var(--navy-ink); font-size: .95rem; font-weight: 700; display: flex; align-items: center; gap: 8px; max-width: 15em; line-height: 1.35; }
 .up .arrow { font-size: 1.5rem; line-height: 1; display: inline-block; }
-@media (prefers-reduced-motion: no-preference) {
-  .up .arrow { animation: nudge 1.1s ease-in-out 0.6s 3; }
-  @keyframes nudge { 50% { transform: translateY(-8px); } }
-}
 .hint { min-height: 1.4em; margin: 12px 0 0; color: #ffd27a; font-weight: 700; font-size: .95rem; }
 
 .steps { list-style: none; margin: 26px 0 0; padding: 0; display: grid; gap: 10px; counter-reset: s; }
@@ -68,48 +67,116 @@ kbd { font: 700 .82em var(--sans); border: 1px solid rgba(255,255,255,.28); bord
 .already { margin: 24px 0 0; padding: 12px 14px; border-radius: 10px; background: rgba(255,255,255,.07); color: var(--navy-ink); font-size: .95rem; line-height: 1.45; }
 .already strong { color: #fff; }
 
-/* ---------- The picture: a Day board with the Toolbox open on it ---------- */
+/* ---------- The demo: a Day board with the Toolbox open on it ---------- */
 .shot { position: relative; min-width: 0; }
 .board { background: #fff; color: #1d2633; border-radius: 12px; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,.45); font-size: 11px; line-height: 1.25; }
-.bar { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid #e3e7ec; font-weight: 800; }
+.bar { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid #e3e7ec; font-weight: 800; min-height: 37px; }
 .bar .date { margin-right: auto; }
 .seg { display: inline-flex; border: 1px solid #c9d0d8; border-radius: 6px; overflow: hidden; font-weight: 700; }
 .seg span { padding: 2px 9px; color: #5b6573; }
 .seg .on { background: #1d2633; color: #fff; }
+.reopen { display: none; align-items: center; gap: 6px; border: 1px solid #c9d0d8; border-radius: 6px; background: #fff; color: #10223a; padding: 2px 9px; font-weight: 900; font-size: 11px; }
+.reopen:hover { border-color: var(--blue); background: #e8f2fe; }
 .ruler, .row { display: grid; grid-template-columns: 74px 1fr; }
 .ruler { border-bottom: 1px solid #e3e7ec; color: #7b8087; font-weight: 700; font-size: 10px; }
 .ruler .hrs { display: grid; grid-template-columns: repeat(9, 1fr); }
 .ruler .hrs span { padding: 4px 0 4px 4px; border-left: 1px solid #eef1f4; }
-.row { border-bottom: 1px solid #eef1f4; height: 46px; }
+.row { border-bottom: 1px solid #eef1f4; height: 52px; }
 .row:last-child { border-bottom: 0; }
-.tech { padding: 8px 8px; font-weight: 800; display: flex; flex-direction: column; justify-content: center; gap: 2px; border-right: 1px solid #e3e7ec; }
+.tech { padding: 8px; font-weight: 800; display: flex; flex-direction: column; justify-content: center; gap: 2px; border: 0; border-right: 1px solid #e3e7ec;
+  background: none; text-align: left; color: inherit; font-size: inherit; line-height: inherit; }
 .tech small { font-weight: 700; color: #7b8087; font-size: 9.5px; }
 .lane { position: relative; background-image: repeating-linear-gradient(90deg, transparent 0 calc(100%/9 - 1px), #f1f3f6 calc(100%/9 - 1px) calc(100%/9)); }
-.job { position: absolute; top: 6px; bottom: 6px; border-radius: 6px; padding: 4px 6px; background: #eaf3ff; border: 1px solid #b9d4f5; overflow: hidden; white-space: nowrap; font-weight: 700; }
+.job { position: absolute; top: 6px; bottom: 6px; border-radius: 6px; padding: 4px 6px; background: #eaf3ff; border: 1px solid #b9d4f5; overflow: hidden;
+  white-space: nowrap; font-weight: 700; text-align: left; color: inherit; font-size: inherit; line-height: inherit; }
 .job b { display: block; font-weight: 900; }
 .job .tag { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 3px; vertical-align: 0; }
 .job.work { background: #e9f6ee; border-color: #a6d8b6; }
-.job.picked { outline: 3px solid #ff8a00; outline-offset: -2px; }
+.job.picked, .job.pk { outline: 3px solid var(--pk, #ef6c00); outline-offset: -2px; box-shadow: 0 0 0 3px var(--pks, rgba(239,108,0,.22)); }
+.job.pk-off { outline-style: dashed; --pk: #616161; --pks: rgba(97,97,97,.2); }
+.tech.pk { outline: 3px solid #6a1b9a; outline-offset: -3px; background: rgba(106,27,154,.12); border-radius: 6px; }
+.job:hover { filter: brightness(.97); }
 
-.panel { position: absolute; right: -6px; top: 34px; width: 214px; background: #fff; color: #141414; border-radius: 12px; overflow: hidden;
-  box-shadow: 0 18px 44px rgba(0,0,0,.35), 0 0 0 1px rgba(0,0,0,.06); font-size: 11px; }
-.p-head { background: var(--navy); color: #fff; display: flex; align-items: center; gap: 6px; padding: 9px 10px; font-weight: 900; font-size: 12.5px; }
-.p-head .v { font-size: 9.5px; padding: 1px 6px; border-radius: 99px; background: rgba(255,255,255,.14); margin-right: auto; }
-.p-head .x { opacity: .8; font-weight: 700; }
-.p-body { padding: 9px; display: grid; gap: 6px; }
-.chips { display: flex; gap: 5px; }
+/* The Toolbox (the real one's look, at a smaller size). */
+.panel { position: absolute; right: -6px; top: 10px; width: 240px; background: #fff; color: #141414; border-radius: 12px; overflow: hidden;
+  box-shadow: 0 18px 44px rgba(0,0,0,.35), 0 0 0 1px rgba(0,0,0,.06); font-size: 11px; line-height: 1.35; text-align: left; }
+.panel[hidden] { display: none; }
+.p-grip { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; z-index: 3; }
+.p-grip:hover, .p-grip.on { background: rgba(2,101,220,.2); }
+.p-head { background: var(--navy); color: #fff; display: flex; align-items: center; gap: 6px; padding: 7px 6px 7px 10px; font-weight: 900; font-size: 12.5px; }
+.p-head .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.p-head .v { flex: none; font-size: 9.5px; padding: 1px 6px; border-radius: 99px; background: rgba(255,255,255,.14); margin-right: auto; }
+.hb { flex: none; width: 22px; height: 22px; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: #fff; font-weight: 700; font-size: 12px; padding: 0; }
+.hb:hover { background: rgba(255,255,255,.16); }
+.p-ok { display: none; padding: 6px 10px; background: #e9f6ee; color: #145c2c; font-weight: 700; border-bottom: 1px solid #a6d8b6; }
+.p-body { height: 324px; overflow: auto; }
+.panel.min .p-body, .panel.min .p-ok, .panel.min .p-grip { display: none !important; }
+.pv { padding: 9px; display: grid; gap: 7px; align-content: start; }
+.chips { display: flex; gap: 5px; flex-wrap: wrap; }
 .chips span { border-radius: 99px; padding: 2px 8px; font-weight: 800; font-size: 9.5px; background: #eceff3; color: #4b4f55; }
 .chips .day { background: #e8f2fe; color: #004491; }
-.tile { display: grid; grid-template-columns: 24px 1fr; gap: 8px; align-items: center; border: 1px solid #e2e5e9; border-radius: 8px; padding: 6px 7px; }
+.tile { display: grid; grid-template-columns: 24px 1fr auto; gap: 8px; align-items: center; width: 100%; border: 1px solid #e2e5e9; border-radius: 8px; padding: 5px 7px;
+  background: #fff; color: #141414; text-align: left; font-size: 11px; transition: border-color .12s, background-color .12s, transform .15s, box-shadow .15s; }
+.tile:hover { border-color: #0265dc; background: #e8f2fe; }
 .tile .i { width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; font-size: 13px; }
 .tile b { display: block; font-weight: 900; font-size: 11px; }
-.tile small { color: #7b8087; font-size: 9.5px; }
+.tile small { display: block; color: #7b8087; font-size: 9.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .go { color: #7b8087; font-size: 14px; }
+.p-msg { color: #4b4f55; font-size: 10.5px; }
+.p-row { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+.p-row .grow { margin-right: auto; font-weight: 800; }
+.p-btn { border: 1px solid #a6abb1; border-radius: 6px; background: #fff; color: #141414; padding: 3px 8px; font-weight: 700; font-size: 10.5px; line-height: 1.3; }
+.p-btn:hover:not(:disabled) { filter: brightness(.95); }
+.p-btn:active:not(:disabled) { transform: scale(.97); }
+.p-btn:disabled { opacity: .45; cursor: default; }
+.p-btn.pri { background: #0265dc; border-color: #0265dc; color: #fff; }
+.p-btn.dan { background: #c4200d; border-color: #c4200d; color: #fff; }
+.p-btn.on { color: #fff; }
+.p-btn.sel { border-color: #0265dc; background: #e8f2fe; }
+.p-btn.full { width: 100%; text-align: left; padding: 6px 8px; border-color: #e2e5e9; }
+.p-list { border: 1px solid #e2e5e9; border-radius: 8px; max-height: 118px; overflow: auto; }
+.p-item { display: flex; gap: 6px; align-items: flex-start; padding: 4px 7px; border-bottom: 1px solid #eef1f4; }
+.p-item:last-child { border-bottom: 0; }
+.p-item .body { flex: 1; min-width: 0; }
+.p-item .top { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.p-item .sub { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; color: #4b4f55; font-size: 10px; margin-top: 1px; }
+.p-item .x { border: 0; background: none; color: #7b8087; padding: 0 2px; font-size: 11px; }
+.p-empty { padding: 7px; color: #7b8087; font-size: 10.5px; }
+.chip { display: inline-block; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 5px; border-radius: 4px; font-size: 9.5px; line-height: 15px; font-weight: 700; }
+.p-res { border: 1px solid #a6d8b6; background: #f5fbf7; color: #145c2c; border-radius: 8px; padding: 6px 8px; font-size: 10.5px; }
+.p-res.warn { border-color: #f0cd8f; background: #fffbf3; color: #8f5300; }
+.p-res b { display: block; }
+.p-bubble { background: #eef3f9; border-radius: 10px 10px 10px 3px; padding: 6px 8px; color: #1d2633; font-size: 10.5px; }
+.p-sel { border: 1px solid #a6abb1; border-radius: 6px; padding: 2px 4px; font: inherit; font-size: 10.5px; background: #fff; color: #141414; max-width: 100%; }
+.p-foot { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-top: 2px; color: #7b8087; font-size: 9.5px; }
+.p-nav { display: flex; justify-content: flex-start; padding-top: 2px; }
+.try { margin: 16px 0 0; color: var(--navy-ink); font-size: .92rem; line-height: 1.45; max-width: 34em; }
+.try strong { color: #fff; }
+
+/* The one opening sequence (only with JavaScript, and only if the computer allows motion). */
+@media (prefers-reduced-motion: no-preference) {
+  .up .arrow { animation: nudge 1.1s ease-in-out 1.4s 3; }
+  @keyframes nudge { 50% { transform: translateY(-8px); } }
+  .js .board { animation: rise .35s cubic-bezier(.2,.8,.2,1) both; }
+  .js .board .job { animation: pop .26s cubic-bezier(.2,.8,.2,1) both; animation-delay: calc(var(--i, 0) * 45ms + .25s); }
+  .js .panel.opening { animation: tb-open .22s cubic-bezier(.2,.8,.2,1) both; animation-delay: var(--d, 0s); }
+  .tile:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(16,24,40,.10); }
+  @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
+  @keyframes pop { from { opacity: 0; transform: scale(.94); } }
+  @keyframes tb-open { from { opacity: 0; transform: translateY(10px); } }
+}
 
 /* ---------- Below the hero ---------- */
 main { padding-block: 56px 24px; }
 section + section { margin-top: 56px; }
 h2 { font-size: 1.6rem; line-height: 1.15; letter-spacing: -.015em; font-weight: 900; margin: 0 0 6px; }
+h3.sub-h { font-size: 1.1rem; font-weight: 900; margin: 30px 0 4px; }
 .sub { color: var(--ink-2); margin: 0 0 22px; max-width: 40em; }
+
+/* The newest update: the same green bar the Toolbox shows the first time you open it. */
+.latest { margin: 18px 0 0; border: 1px solid var(--green-l); background: var(--green-s); color: var(--green); border-radius: 12px; padding: 14px 18px; max-width: 46em; }
+.latest b { display: block; font-weight: 900; font-size: 1.02rem; margin-bottom: 2px; }
+.latest p { margin: 0; line-height: 1.55; }
 
 .new { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 40px; margin: 0; padding: 0; list-style: none; }
 .new li { display: grid; grid-template-columns: 34px 1fr; gap: 12px; padding: 14px 0; border-top: 1px solid var(--line); }
@@ -122,6 +189,9 @@ h2 { font-size: 1.6rem; line-height: 1.15; letter-spacing: -.015em; font-weight:
 .tool .i { width: 46px; height: 46px; border-radius: 10px; display: grid; place-items: center; font-size: 1.45rem; }
 .tool h3 { margin: 2px 0 2px; font-size: 1.05rem; font-weight: 900; }
 .tool p { margin: 0; color: var(--ink-2); font-size: .95rem; line-height: 1.5; }
+.tool .try-it { margin-top: 8px; border: 0; background: none; padding: 0; color: var(--blue); font-weight: 800; font-size: .92rem; }
+.tool .try-it:hover { text-decoration: underline; }
+html:not(.js) .try-it, html:not(.js) .try { display: none; }
 .i.y { background: #fff4d6; } .i.r { background: #ffe7dc; } .i.p { background: #efe9fd; }
 .i.b { background: #e4effc; } .i.g { background: #e3f5e9; } .i.m { background: #f5e6f7; }
 @media (prefers-color-scheme: dark) {
@@ -129,19 +199,20 @@ h2 { font-size: 1.6rem; line-height: 1.15; letter-spacing: -.015em; font-weight:
   .tool .i.b { background: #172a40; } .tool .i.g { background: #16301f; } .tool .i.m { background: #34203a; }
 }
 
-details { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
-summary { cursor: pointer; padding: 16px 18px; font-weight: 800; font-size: 1.05rem; list-style: none; display: flex; align-items: center; gap: 10px; }
+details.big { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+details.big > summary { cursor: pointer; padding: 16px 18px; font-weight: 800; font-size: 1.05rem; list-style: none; display: flex; align-items: center; gap: 10px; }
 summary::-webkit-details-marker { display: none; }
-summary::before { content: "▸"; color: var(--ink-3); transition: transform .15s; }
-details[open] summary::before { transform: rotate(90deg); }
-@media (prefers-reduced-motion: reduce) { summary::before { transition: none; } }
+details > summary::before { content: "▸"; color: var(--ink-3); transition: transform .15s; flex: none; }
+details[open] > summary::before { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { details > summary::before { transition: none; } }
 .fold { padding: 0 18px 18px; display: grid; gap: 14px; }
 .fold ol { margin: 0; padding-left: 1.3em; display: grid; gap: 8px; }
 .fold ul { margin: 6px 0 0; padding-left: 1.2em; display: grid; gap: 4px; }
 .fold kbd, .note kbd { border-color: var(--line); background: var(--bg); color: var(--ink); }
 .row-btn { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-button { font: 800 .95rem var(--sans); padding: 9px 16px; border-radius: 8px; border: 0; background: var(--blue); color: #fff; cursor: pointer; }
-@media (prefers-color-scheme: dark) { button { color: #0b1626; } }
+.btn { font: 800 .95rem var(--sans); padding: 9px 16px; border-radius: 8px; border: 0; background: var(--blue); color: #fff; }
+.btn.quiet { background: transparent; color: var(--blue); border: 1px solid var(--line); }
+@media (prefers-color-scheme: dark) { .btn { color: #0b1626; } .btn.quiet { color: var(--blue); } }
 .status { color: var(--green); font-weight: 700; font-size: .95rem; min-height: 1.4em; }
 textarea { width: 100%; height: 92px; font: 12px/1.45 ui-monospace, Consolas, monospace; color: var(--ink); background: var(--bg);
   border: 1px solid var(--line); border-radius: 8px; padding: 10px; resize: vertical; }
@@ -155,10 +226,26 @@ code { font: .9em ui-monospace, Consolas, monospace; }
 .callout.warn { background: var(--amber-s); color: var(--amber); }
 .callout.good { background: var(--green-s); color: var(--green); }
 
+/* Version history: one line per version, the newest open. */
+.history { border-top: 1px solid var(--line); max-width: 52em; }
+.ver { border-bottom: 1px solid var(--line); }
+.ver > summary { cursor: pointer; list-style: none; display: grid; grid-template-columns: 14px 4.2em minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 11px 2px; }
+.ver > summary .num { font-weight: 900; font-variant-numeric: tabular-nums; }
+.ver > summary .gist { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ver > summary .newest { font-size: .78rem; font-weight: 800; color: var(--green); background: var(--green-s); border-radius: 99px; padding: 1px 9px; }
+.ver-body { padding: 0 2px 16px 24px; color: var(--ink-2); font-size: .95rem; line-height: 1.55; }
+.ver-body p { margin: 0 0 8px; }
+.ver-body ul { margin: 0 0 6px; padding-left: 1.15em; display: grid; gap: 5px; }
+.ver-body ul ul { margin-top: 5px; }
+.ver-body b { color: var(--ink); }
+.more-row { margin-top: 16px; }
+
 footer { border-top: 1px solid var(--line); margin-top: 56px; padding-block: 20px 36px; color: var(--ink-3); font-size: .9rem; }
 footer .wrap { display: flex; flex-wrap: wrap; gap: 6px 20px; }
 
 /* ---------- Smaller screens ---------- */
+/* On a wide screen the Toolbox hangs off the board's right edge a little, so more of the board shows. */
+@media (min-width: 1240px) { .panel { right: -64px; } }
 @media (max-width: 900px) {
   .hero .wrap { grid-template-columns: 1fr; gap: 36px; }
   .panel { right: 8px; }
@@ -167,10 +254,14 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 6px 20px; }
   .new, .tools, .help { grid-template-columns: 1fr; }
   .board { font-size: 10px; }
   .ruler, .row { grid-template-columns: 58px 1fr; }
-  .panel { width: 178px; top: 40px; right: 6px; }
-  .p-body .tile:nth-of-type(n+4) { display: none; }
   .job b { font-size: 10px; }
   .bm { font-size: 1.12rem; }
+  /* The Toolbox sits under the board instead of on top of it, so the board stays readable. */
+  .panel { position: relative; right: auto; top: auto; width: min(300px, 100%) !important; margin: 12px 0 0 auto; }
+  .p-body { height: auto; max-height: 360px; }
+  .p-grip { display: none; }
+  .ver > summary { grid-template-columns: 14px 3.6em minmax(0, 1fr); }
+  .ver > summary .newest { display: none; }
 }
 </style>
 </head>
@@ -179,7 +270,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 6px 20px; }
 <header class="hero">
   <div class="wrap">
     <div>
-      <div class="brand">🧰 ServiceTitan Toolbox <span class="pill" id="ver">v2.0</span></div>
+      <div class="brand">🧰 ServiceTitan Toolbox <span class="pill" id="ver">v2.0.1</span></div>
       <h1>Built for the new Dispatch board.</h1>
       <p class="lead">Six time-savers in one small panel: notes, job notifications, tech messages, business units, customer texts and moving jobs. It runs from a bookmark and updates itself.</p>
 
@@ -198,47 +289,59 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 6px 20px; }
         <li><span>Open the Dispatch board on the <strong>Day</strong> view and click your new Toolbox bookmark.</span></li>
       </ol>
 
-      <p class="already"><strong>Already have the Toolbox bookmark?</strong> There's nothing to install. Click it on the new board's Day view and you're on 2.0.</p>
+      <p class="already"><strong>Already have the Toolbox bookmark?</strong> There's nothing to install. Click it on the new board's Day view and you get the newest version.</p>
     </div>
 
-    <div class="shot" aria-hidden="true">
-      <div class="board">
-        <div class="bar"><span class="date">Tue, Oct 27</span><span class="seg"><span class="on">Day</span><span>Week</span></span></div>
+    <div class="shot" id="shot">
+      <div class="board" id="board" role="group" aria-label="A sample Dispatch board for the demo">
+        <div class="bar"><span class="date">Tue, Oct 27</span><button type="button" class="reopen" id="reopen" title="Opens the Toolbox again, like clicking your bookmark">🧰 Toolbox</button><span class="seg"><span class="on">Day</span><span>Week</span></span></div>
         <div class="ruler"><span></span><div class="hrs"><span>8</span><span>9</span><span>10</span><span>11</span><span>12</span><span>1</span><span>2</span><span>3</span><span>4</span></div></div>
-        <div class="row"><div class="tech">Jack W<small>Level 1 Service</small></div><div class="lane">
-          <div class="job work" style="left:1%;width:23%"><b>🔧 Amy Lee</b><span class="tag" style="background:#ff9b2f"></span>12-5 AFTERNOON</div>
-          <div class="job picked" style="left:26%;width:22%"><b>Bob Smith</b><span class="tag" style="background:#00c853"></span>Club Member</div>
-          <div class="job" style="left:56%;width:20%"><b>Carl Diaz</b>Tune-up</div></div></div>
-        <div class="row"><div class="tech">Blake W<small>Level 1 Service</small></div><div class="lane">
-          <div class="job" style="left:1%;width:22%"><b>🚚 Eve Hall</b><span class="tag" style="background:#1eb53a"></span>New Client</div>
-          <div class="job picked" style="left:34%;width:24%"><b>Fay Moss</b>No cool</div></div></div>
-        <div class="row"><div class="tech">Dana K<small>Installers</small></div><div class="lane">
-          <div class="job" style="left:1%;width:44%"><b>Hal Fry</b><span class="tag" style="background:#7c4dff"></span>Install day 1</div></div></div>
-        <div class="row"><div class="tech">Andrew J<small>Plumbing</small></div><div class="lane">
-          <div class="job" style="left:12%;width:21%"><b>Ivy Kim</b>Water heater</div>
-          <div class="job" style="left:45%;width:20%"><b>Jon Poe</b><span class="tag" style="background:#ff9b2f"></span>12-5</div></div></div>
-        <div class="row"><div class="tech">Mia R<small>Electrical</small></div><div class="lane">
-          <div class="job" style="left:23%;width:23%"><b>Kai Ruiz</b>Panel check</div></div></div>
+        <div class="row"><button type="button" class="tech" data-tech="t1">Jack W<small>Level 1 Service</small></button><div class="lane" data-lane="t1">
+          <button type="button" class="job work" data-job="j1" style="left:1%;width:21%;--i:0"><b>🔧 Amy Lee</b><span class="tag" style="background:#ff9b2f"></span>12-5 AFTERNOON</button>
+          <button type="button" class="job picked" data-job="j2" style="left:23%;width:19%;--i:1"><b>Bob Smith</b><span class="tag" style="background:#00c853"></span>Club Member</button>
+          <button type="button" class="job" data-job="j3" style="left:44%;width:16%;--i:2"><b>Carl Diaz</b>Tune-up</button></div></div>
+        <div class="row"><button type="button" class="tech" data-tech="t2">Blake W<small>Level 1 Service</small></button><div class="lane" data-lane="t2">
+          <button type="button" class="job" data-job="j4" style="left:1%;width:20%;--i:3"><b>🚚 Eve Hall</b><span class="tag" style="background:#1eb53a"></span>New Client</button>
+          <button type="button" class="job picked" data-job="j5" style="left:30%;width:20%;--i:4"><b>Fay Moss</b>No cool</button></div></div>
+        <div class="row"><button type="button" class="tech" data-tech="t3">Dana K<small>Installers</small></button><div class="lane" data-lane="t3">
+          <button type="button" class="job" data-job="j6" style="left:1%;width:39%;--i:5"><b>Hal Fry</b><span class="tag" style="background:#7c4dff"></span>Install day 1</button></div></div>
+        <div class="row"><button type="button" class="tech" data-tech="t4">Owen T<small>Plumbing</small></button><div class="lane" data-lane="t4">
+          <button type="button" class="job" data-job="j7" style="left:10%;width:19%;--i:6"><b>Ivy Kim</b>Water heater</button>
+          <button type="button" class="job" data-job="j8" style="left:32%;width:19%;--i:7"><b>Jon Poe</b><span class="tag" style="background:#ff9b2f"></span>12-5</button></div></div>
+        <div class="row"><button type="button" class="tech" data-tech="t5">Mia R<small>Electrical</small></button><div class="lane" data-lane="t5">
+          <button type="button" class="job" data-job="j9" style="left:20%;width:20%;--i:8"><b>Kai Ruiz</b>Panel check</button></div></div>
+        <div class="row"><button type="button" class="tech" data-tech="t6">Sam T<small>Level 1 Service</small></button><div class="lane" data-lane="t6">
+          <button type="button" class="job" data-job="j10" style="left:10%;width:20%;--i:9"><b>Lia Cho</b><span class="tag" style="background:#e53935"></span>Rescheduled x1</button></div></div>
       </div>
 
-      <div class="panel">
-        <div class="p-head">🧰 Toolbox <span class="v">v2.0</span><span class="x">–&nbsp;&nbsp;✕</span></div>
-        <div class="p-body">
-          <div class="chips"><span class="day">📅 Tue, Oct 27</span><span>Mendenhall</span></div>
-          <div class="tile"><span class="i y">📝</span><span><b>Notes</b><small>Saved notes on a job</small></span></div>
-          <div class="tile"><span class="i r">🔕</span><span><b>Job Notifications</b><small>Turn them off or on</small></span></div>
-          <div class="tile"><span class="i p">💬</span><span><b>Tech Messages</b><small>Message the techs you pick</small></span></div>
-          <div class="tile"><span class="i g">📱</span><span><b>Customer Texts</b><small>Text, confirm appointments</small></span></div>
-          <div class="tile"><span class="i m">🔀</span><span><b>Move Jobs</b><small>Move, add, unassign, swap</small></span></div>
+      <div class="panel opening" id="panel" role="region" aria-label="Toolbox demo" style="--d:.6s">
+        <div class="p-grip" id="grip" title="Drag to make the Toolbox wider or narrower. Double-click for the usual width."></div>
+        <div class="p-head"><span class="t" id="p-title">🧰 Toolbox</span><span class="v" id="p-ver">v2.0.1</span>
+          <button type="button" class="hb" id="fold" title="Fold the Toolbox down to its title bar">–</button><button type="button" class="hb" id="close" title="Close">✕</button></div>
+        <div class="p-ok" id="p-ok" role="status">✅ Everything the Toolbox needs is where it should be.</div>
+        <div class="p-body" id="p-body">
+          <div class="pv">
+            <div class="chips"><span class="day">📅 Tue, Oct 27</span><span>Mendenhall</span></div>
+            <div class="tile"><span class="i y">📝</span><span><b>Notes</b><small>Saved notes on a job</small></span></div>
+            <div class="tile"><span class="i r">🔕</span><span><b>Job Notifications</b><small>Turn them off or on</small></span></div>
+            <div class="tile"><span class="i p">💬</span><span><b>Tech Messages</b><small>Message the techs you pick</small></span></div>
+            <div class="tile"><span class="i b">🏢</span><span><b>Business Unit</b><small>Switch jobs to a branch</small></span></div>
+            <div class="tile"><span class="i g">📱</span><span><b>Customer Texts</b><small>Text, confirm appointments</small></span></div>
+            <div class="tile"><span class="i m">🔀</span><span><b>Move Jobs</b><small>Move, add, unassign, swap</small></span></div>
+          </div>
         </div>
       </div>
+      <p class="try" id="try"><strong>This demo works.</strong> Open a tool, then click jobs or techs on the board. Nothing here touches ServiceTitan.</p>
     </div>
   </div>
 </header>
 
 <main class="wrap">
   <section aria-labelledby="new">
-    <h2 id="new">New in 2.0</h2>
+    <h2 id="new">What's new</h2>
+    <div class="latest" id="latest"><b>✨ Latest update: <span id="latest-ver">v2.0.1</span></b><p id="latest-text">Nothing inside the Toolbox scrolls sideways any more, and you can make it wider or narrower by dragging its left edge or bottom-right corner (it remembers; double-click for the usual width). Plus a few quick animations: it fades in and out, tools slide in, – folds it smoothly, and loading buttons show a spinner.</p></div>
+
+    <h3 class="sub-h">The 2.0 rebuild</h3>
     <p class="sub">ServiceTitan replaced the Dispatch board, so every tool was rebuilt for the new one. It reads more of the day than before, too.</p>
     <ul class="new">
       <li><span>🗓️</span><div><b>Works on the new board's Day view</b><p>Every tool works again. On the Week view the Toolbox asks you to switch to Day.</p></div></li>
@@ -254,18 +357,18 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 6px 20px; }
     <h2 id="tools">What's in the Toolbox</h2>
     <p class="sub">Each tool shows you what it will do before it changes anything, and nothing sends or saves on a timer.</p>
     <div class="tools">
-      <article class="tool"><span class="i y">📝</span><div><h3>Notes</h3><p>Ready-made notes in folders (Updates, Techs, Reschedule, plus your own). Click a job and a note, and it types the note on the customer for you to check and save.</p></div></article>
-      <article class="tool"><span class="i r">🔕</span><div><h3>Job Notifications</h3><p>Add jobs by clicking them, a tech's name, a tag or the whole board. Each shows 🔔 on or 🔕 off, and one button turns them off or back on.</p></div></article>
-      <article class="tool"><span class="i p">💬</span><div><h3>Tech Messages</h3><p>Send Good Morning, ETA or your own message to the techs you pick. Only teams you approve can be messaged, and you can block anyone by name.</p></div></article>
-      <article class="tool"><span class="i b">🏢</span><div><h3>Business Unit</h3><p>Switch picked or typed jobs to Mendenhall Branch, or another branch, in one go. Check first without changing anything, and Put back to undo.</p></div></article>
-      <article class="tool"><span class="i g">📱</span><div><h3>Customer Texts</h3><p>Text customers a saved message: holds, tech updates, reschedules, outreach. 📥 Check replies confirms everyone who answered C and lists the rest.</p></div></article>
-      <article class="tool"><span class="i m">🔀</span><div><h3>Move Jobs</h3><p>Move jobs to a tech, add or unassign one, or swap two jobs or two techs' whole day without dragging. Review warns about skills and double-booking, and Put back undoes it.</p></div></article>
+      <article class="tool"><span class="i y">📝</span><div><h3>Notes</h3><p>Ready-made notes in folders (Updates, Techs, Reschedule, plus your own). Click a job and a note, and it types the note on the customer for you to check and save.</p><button type="button" class="try-it" data-try="notes">Try it in the demo</button></div></article>
+      <article class="tool"><span class="i r">🔕</span><div><h3>Job Notifications</h3><p>Add jobs by clicking them, a tech's name, a tag or the whole board. Each shows 🔔 on or 🔕 off, and one button turns them off or back on.</p><button type="button" class="try-it" data-try="jobs">Try it in the demo</button></div></article>
+      <article class="tool"><span class="i p">💬</span><div><h3>Tech Messages</h3><p>Send Good Morning, ETA or your own message to the techs you pick. Only teams you approve can be messaged, and you can block anyone by name.</p><button type="button" class="try-it" data-try="msgs">Try it in the demo</button></div></article>
+      <article class="tool"><span class="i b">🏢</span><div><h3>Business Unit</h3><p>Switch picked or typed jobs to Mendenhall Branch, or another branch, in one go. Check first without changing anything, and Put back to undo.</p><button type="button" class="try-it" data-try="biz">Try it in the demo</button></div></article>
+      <article class="tool"><span class="i g">📱</span><div><h3>Customer Texts</h3><p>Text customers a saved message: holds, tech updates, reschedules, outreach. 📥 Check replies confirms everyone who answered C and lists the rest.</p><button type="button" class="try-it" data-try="texts">Try it in the demo</button></div></article>
+      <article class="tool"><span class="i m">🔀</span><div><h3>Move Jobs</h3><p>Move jobs to a tech, add or unassign one, or swap two jobs or two techs' whole day without dragging. Review warns about skills and double-booking, and Put back undoes it.</p><button type="button" class="try-it" data-try="moves">Try it in the demo</button></div></article>
     </div>
   </section>
 
-  <section aria-labelledby="manual">
-    <details id="manual">
-      <summary>Can't drag it? Copy the bookmark instead</summary>
+  <section aria-labelledby="manual-h">
+    <details class="big" id="manual">
+      <summary id="manual-h">Can't drag it? Copy the bookmark instead</summary>
       <div class="fold">
         <ol>
           <li>Click <strong>Copy bookmark</strong> below.</li>
@@ -279,7 +382,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 6px 20px; }
           <li>Clear the <strong>URL</strong> (or Address) box, paste, and save. It should start with <code>javascript:</code></li>
         </ol>
         <div class="row-btn">
-          <button type="button" id="copyBtn">Copy bookmark</button>
+          <button type="button" class="btn" id="copyBtn">Copy bookmark</button>
           <span class="status" id="status" role="status"></span>
         </div>
         <label for="code" class="note">The bookmark:</label>
@@ -296,6 +399,12 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 6px 20px; }
       <div class="callout good"><b>✨ When it updates</b><p>The first time you open a new version, a green bar at the top says what changed. Close it with ✕.</p></div>
       <div class="callout warn"><b>⚠️ If ServiceTitan changes something</b><p>A yellow bar says which tool is affected. Press Copy report and send it along so it can be fixed. 🩺 Check, at the bottom of the menu, runs the same check any time.</p></div>
     </div>
+  </section>
+
+  <section aria-labelledby="history-h">
+    <h2 id="history-h">Version history</h2>
+    <p class="sub">Every update, newest first.</p>
+    <div id="history"><p class="note">Read every update in the <a href="CHANGELOG.md">changelog</a>.</p></div>
   </section>
 </main>
 
@@ -316,17 +425,15 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 6px 20px; }
     "s.onerror=function(){alert('Could not load the Toolbox. Check your internet connection and try again.');};" +
     "document.head.appendChild(s);})();";
 
-  const bm = document.getElementById('bm');
-  const hint = document.getElementById('clickHint');
-  const code = document.getElementById('code');
-  const status = document.getElementById('status');
+  const $ = id => document.getElementById(id);
+  const bm = $('bm'), hint = $('clickHint'), code = $('code'), status = $('status');
   bm.href = loader;
   code.value = loader;
   bm.addEventListener('click', e => {
     e.preventDefault();
     hint.textContent = 'Drag it up to your bookmarks bar instead of clicking. It only works from there.';
   });
-  document.getElementById('copyBtn').addEventListener('click', () => {
+  $('copyBtn').addEventListener('click', () => {
     const fallback = () => { code.focus(); code.select(); status.textContent = 'Selected. Press Ctrl + C (Cmd + C on a Mac) to copy.'; };
     try {
       navigator.clipboard.writeText(code.value).then(
@@ -335,20 +442,504 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 6px 20px; }
     } catch (e) { fallback(); }
   });
 
-  // Show the current version, read straight from toolbox.js.
+  // Where the project lives on GitHub (when the page is on GitHub Pages).
+  const gh = location.hostname.match(/^([^.]+)\.github\.io$/i);
+  const project = location.pathname.split('/').filter(Boolean)[0];
+  const repo = gh ? { owner: gh[1], name: project || (gh[1] + '.github.io') } : null;
+  if (repo) {
+    const a = document.createElement('a');
+    a.href = 'https://github.com/' + repo.owner + '/' + repo.name; a.textContent = 'Source code on GitHub';
+    $('src').appendChild(a);
+  }
+
+  // ---- The current version and what's new in it, read straight from toolbox.js ----
+  const unquote = s => s.replace(/\\(.)/g, (m, c) => (c === 'n' ? ' ' : c));
   fetch(scriptUrl + '?t=' + Date.now()).then(r => r.ok ? r.text() : Promise.reject())
-    .then(t => { const m = t.match(/VERSION\s*=\s*'([^']+)'/); if (m) document.getElementById('ver').textContent = 'v' + m[1]; })
+    .then(t => {
+      const m = t.match(/VERSION\s*=\s*'([^']+)'/);
+      if (!m) return;
+      const v = 'v' + m[1];
+      ['ver', 'p-ver', 'latest-ver'].forEach(id => { $(id).textContent = v; });
+      const key = m[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const w = t.match(new RegExp("'" + key + "'\\s*:\\s*'((?:[^'\\\\]|\\\\.)*)'"));
+      if (w) $('latest-text').textContent = unquote(w[1]);
+    })
     .catch(() => {});
 
-  // Link to the source code on GitHub when hosted on GitHub Pages.
-  const gh = location.hostname.match(/^([^.]+)\.github\.io$/i);
-  if (gh) {
-    const project = location.pathname.split('/').filter(Boolean)[0];
-    const repoUrl = 'https://github.com/' + gh[1] + (project ? '/' + project : '');
-    const a = document.createElement('a');
-    a.href = repoUrl; a.textContent = 'Source code on GitHub';
-    document.getElementById('src').appendChild(a);
-  }
+  // ---- Version history, from CHANGELOG.md ----
+  const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const inline = s => esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, '$1<i>$2</i>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>');
+  const plain = s => s.replace(/\*\*|`|\*/g, '');
+  const parseChangelog = text => {
+    const versions = [];
+    let cur = null;
+    text.split(/\r?\n/).forEach(line => {
+      const h = /^##\s+(.+?)\s*$/.exec(line);
+      if (h) { cur = { v: h[1], lines: [] }; versions.push(cur); return; }
+      if (cur) cur.lines.push(line);
+    });
+    return versions;
+  };
+  // A version's notes as HTML: paragraphs and bullet lists (nested by indent). Lines about the
+  // automatic tests are left out: they're for whoever works on the Toolbox, not for using it.
+  const renderBody = lines => {
+    let html = '', depth = -1, para = [], skipBelow = null;
+    const closeTo = d => { while (depth > d) { html += '</li></ul>'; depth--; } };
+    const flush = () => { if (para.length) { closeTo(-1); html += '<p>' + inline(para.join(' ')) + '</p>'; para = []; } };
+    let gist = '';
+    lines.forEach(line => {
+      const b = /^(\s*)[-*]\s+(.*)$/.exec(line);
+      if (b) {
+        const d = Math.floor(b[1].replace(/\t/g, '  ').length / 2);
+        if (skipBelow !== null && d > skipBelow) return;
+        skipBelow = null;
+        if (d === 0 && /^Tests?:/i.test(b[2])) { skipBelow = 0; return; }
+        flush();
+        if (!gist) { const bold = /^\*\*(.+?)\*\*/.exec(b[2]); gist = bold ? bold[1] : b[2]; }
+        if (d > depth) { while (depth < d) { html += '<ul><li>'; depth++; } }
+        else { closeTo(d); html += '</li><li>'; }
+        html += inline(b[2]);
+        return;
+      }
+      if (!line.trim()) { if (para.length) flush(); return; }
+      if (depth >= 0 && /^\s{2,}\S/.test(line)) { html += ' ' + inline(line.trim()); return; }
+      skipBelow = null;
+      if (!gist) gist = line.trim();
+      para.push(line.trim());
+    });
+    flush(); closeTo(-1);
+    gist = plain(gist);
+    const sentence = gist.match(/^.*?[.!?](?=\s|$)/);
+    if (sentence) gist = sentence[0];
+    gist = gist.replace(/[:.]\s*$/, '');
+    return { html, gist: gist.length > 90 ? gist.slice(0, 88).replace(/\s+\S*$/, '') + '…' : gist };
+  };
+  const SHOW = 6;
+  const renderHistory = versions => {
+    const box = $('history');
+    box.textContent = '';
+    const list = document.createElement('div');
+    list.className = 'history';
+    versions.forEach((x, i) => {
+      const body = renderBody(x.lines);
+      const d = document.createElement('details');
+      d.className = 'ver';
+      if (i === 0) d.open = true;
+      if (i >= SHOW) d.hidden = true;
+      d.innerHTML = '<summary><span class="num"></span><span class="gist"></span>' + (i === 0 ? '<span class="newest">Newest</span>' : '') + '</summary><div class="ver-body">' + body.html + '</div>';
+      d.querySelector('.num').textContent = x.v;
+      d.querySelector('.gist').textContent = body.gist;
+      list.appendChild(d);
+    });
+    box.appendChild(list);
+    if (versions.length > SHOW) {
+      const row = document.createElement('div');
+      row.className = 'more-row';
+      const more = document.createElement('button');
+      more.type = 'button'; more.className = 'btn quiet'; more.id = 'more-versions';
+      more.textContent = 'Show all ' + versions.length + ' versions';
+      more.onclick = () => { list.querySelectorAll('.ver[hidden]').forEach(d => { d.hidden = false; }); row.remove(); };
+      row.appendChild(more);
+      box.appendChild(row);
+    }
+  };
+  const looksLikeChangelog = t => /^\s*# Changelog/.test(t) && /\n## /.test(t);
+  (async () => {
+    const tries = [base + 'CHANGELOG.md?t=' + Date.now()];
+    if (repo) tries.push('https://raw.githubusercontent.com/' + repo.owner + '/' + repo.name + '/main/CHANGELOG.md');
+    for (const url of tries) {
+      try {
+        const r = await fetch(url);
+        if (!r.ok) continue;
+        const t = await r.text();
+        if (looksLikeChangelog(t)) { renderHistory(parseChangelog(t)); return; }
+      } catch (e) {}
+    }
+    $('history').innerHTML = '<p class="note">The version history didn’t load. Read it in the <a href="' +
+      (repo ? 'https://github.com/' + repo.owner + '/' + repo.name + '/blob/main/CHANGELOG.md' : 'CHANGELOG.md') + '">changelog</a>.</p>';
+  })();
+
+  // =====================================================================
+  // The demo: a small working copy of the Toolbox on a sample board.
+  // Same names, buttons and colors as the real one; nothing leaves the page.
+  // =====================================================================
+  const motionOK = () => !window.matchMedia || !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const panel = $('panel'), body = $('p-body'), board = $('board');
+  const TECHS = {
+    t1: { name: 'Jack W', status: 'Working' }, t2: { name: 'Blake W', status: 'Dispatched' }, t3: { name: 'Dana K' },
+    t4: { name: 'Owen T' }, t5: { name: 'Mia R' }, t6: { name: 'Sam T' }
+  };
+  const JOBS = {
+    j1: { n: '48201', cust: 'Amy Lee', now: '🔧 Working · arrived 8:42 AM', tag: ['12-5 AFTERNOON', '#ff9b2f'], bu: 'Mendenhall Branch', note: true },
+    j2: { n: '48213', cust: 'Bob Smith', now: '🗓️ 10:00 AM–12:00 PM', tag: ['Club Member', '#00c853'], bu: 'Mendenhall Branch', note: true },
+    j3: { n: '48219', cust: 'Carl Diaz', now: '🗓️ 1:00–3:00 PM', bu: 'Mendenhall Branch', note: false },
+    j4: { n: '48224', cust: 'Eve Hall', now: '🚚 Dispatched · 8:10 AM', tag: ['New Client', '#1eb53a'], bu: 'Mendenhall Branch', note: true },
+    j5: { n: '48230', cust: 'Fay Moss', now: '🗓️ 11:00 AM–1:00 PM', bu: 'Mendenhall Branch', note: true },
+    j6: { n: '48236', cust: 'Hal Fry', now: '🗓️ 8:00 AM–12:00 PM', tag: ['Install day 1', '#7c4dff'], bu: 'Gulfport Branch', note: true },
+    j7: { n: '48241', cust: 'Ivy Kim', now: '🗓️ 9:00–11:00 AM', bu: 'Mendenhall Branch', note: true },
+    j8: { n: '48247', cust: 'Jon Poe', now: '🗓️ 12:00–5:00 PM', tag: ['12-5 AFTERNOON', '#ff9b2f'], bu: 'Mendenhall Branch', note: false },
+    j9: { n: '48252', cust: 'Kai Ruiz', now: '🗓️ 10:00 AM–12:00 PM', bu: 'Mendenhall Branch', note: true },
+    j10: { n: '48260', cust: 'Lia Cho', now: '🗓️ 9:00–11:00 AM', tag: ['Rescheduled x1', '#e53935'], bu: 'Mendenhall Branch', note: true }
+  };
+  const BRANCHES = ['Greenville Branch', 'Gulfport Branch', 'Mendenhall Branch', 'Tupelo Branch'];
+  const jobEl = j => board.querySelector('[data-job="' + j + '"]');
+  const techOf = j => jobEl(j).closest('[data-lane]').getAttribute('data-lane');
+  const jobsOf = t => Array.from(board.querySelectorAll('[data-lane="' + t + '"] [data-job]')).map(e => e.getAttribute('data-job'));
+  const first = name => name.split(' ')[0];
+  const ink = hex => { const n = parseInt(hex.slice(1), 16); return ((n >> 16) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000 > 150 ? '#141414' : '#fff'; };
+  const chip = t => t ? '<span class="chip" style="background:' + t[1] + ';color:' + ink(t[1]) + '">' + esc(t[0]) + '</span>' : '';
+  const and = list => list.length < 3 ? list.join(' and ') : list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1];
+  const s1 = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+
+  const TOOLS = {
+    notes: ['📝', 'Notes', 'Saved notes on a job', 'y', '#fff4d6'],
+    jobs: ['🔕', 'Job Notifications', 'Turn them off or on', 'r', '#ffebdd'],
+    msgs: ['💬', 'Tech Messages', 'Message the techs you pick', 'p', '#efe7fb'],
+    biz: ['🏢', 'Business Unit', 'Switch jobs to a branch', 'b', '#e3effd'],
+    texts: ['📱', 'Customer Texts', 'Text, confirm appointments', 'g', '#e3f5e9'],
+    moves: ['🔀', 'Move Jobs', 'Move, add, unassign, swap', 'm', '#f3e9fb']
+  };
+  // Picked jobs' outline on the board, in each tool's own color (as in the real Toolbox).
+  const COLOR = { jobs: ['#ef6c00', 'rgba(239,108,0,.22)'], biz: ['#0265dc', 'rgba(2,101,220,.22)'], texts: ['#2e7d32', 'rgba(46,125,50,.22)'], moves: ['#6a1b9a', 'rgba(106,27,154,.22)'], notes: ['#0265dc', 'rgba(2,101,220,.22)'] };
+
+  const NOTE_FOLDERS = [
+    ['📞 Updates', [['📞 No Answer', 'Attempted to contact customer. No answer. Left voicemail requesting call back.'], ['📬 Left Voicemail', 'Called customer. No answer. Left voicemail.'], ['✅ Confirmed', 'Called customer and confirmed the appointment.']]],
+    ['🚚 Techs', [['🚚 Tech On the Way', 'Called customer to let them know the tech is on the way.'], ['⏱️ Tech Running Behind', 'Let customer know the tech is running behind.']]],
+    ['📅 Reschedule', [['📞 Couldn\'t Reach Customer', 'Attempted to contact customer to reschedule. No answer. Left voicemail.'], ['📅 Rescheduled', 'Customer asked to reschedule. Moved to a new day.']]]
+  ];
+  const MESSAGES = [['☀️ Good Morning', 'Good morning {first}! Hope you have a great day today.'], ['⏱️ ETA', 'Hey {first}, what\'s your ETA on your next job?'], ['📋 Check In', 'Hey {first}, give the office a call when you get a minute.']];
+  const TEXT_FOLDERS = [
+    ['⏸️ Holds', 'Hi {first}, this is Andrew following up on your job that\'s on hold. Are you still interested in getting it scheduled?'],
+    ['🚚 Tech Updates', 'Hi {first}, quick update: your technician is running about 30 minutes behind. Thanks for your patience!'],
+    ['📅 Reschedule', 'Hi {first}, we need to move your appointment. Reply with a day that works and we\'ll get you rescheduled.'],
+    ['✅ Confirm Appt', 'Hi {first}, this is Andrew confirming your appointment {when}. Reply C to confirm.'],
+    ['📣 OutReach', 'Hi {first}! Cold nights are coming, so it\'s a good time to turn your heat on and make sure it works. Reply STOP to opt out.']
+  ];
+
+  const S = {
+    view: 'menu',
+    notes: { folder: null, job: null, done: '' },
+    jobs: { list: ['j2', 'j5', 'j8'], off: { j8: true }, done: '' },
+    msgs: { msg: 0, to: ['t1'], done: '' },
+    biz: { list: ['j6', 'j9'], branch: 'Mendenhall Branch', stage: '', undo: null },
+    texts: { folder: 3, list: [], stage: '' },
+    moves: { mode: 0, list: ['j5'], to: 't3', stage: '', undo: null, busy: false }
+  };
+
+  // ---- Each screen ----
+  const back = '<div class="p-nav"><button type="button" class="p-btn" data-go="menu">← Menu</button></div>';
+  const item = (j, mark, extra) => {
+    const x = JOBS[j];
+    return '<div class="p-item"><div class="body"><div class="top">' + (mark ? mark + ' ' : '') + '<b>#' + x.n + '</b> ' + esc(x.cust) + '</div>' +
+      '<div class="sub">' + esc(extra != null ? extra : x.now) + chip(x.tag) + '</div></div>' +
+      '<button type="button" class="x" data-act="drop" data-j="' + j + '" title="Take this job off the list">✕</button></div>';
+  };
+  const list = (ids, mark, extra, empty) => '<div class="p-list">' + (ids.length ? ids.map(j => item(j, mark && mark(j), extra && extra(j))).join('') :
+    '<div class="p-empty">' + empty + '</div>') + '</div>';
+  const SCREENS = {
+    menu: () => '<div class="pv"><div class="chips"><span class="day">📅 Tue, Oct 27</span><span>Mendenhall</span></div>' +
+      Object.keys(TOOLS).map(k => { const t = TOOLS[k]; return '<button type="button" class="tile" data-go="' + k + '"><span class="i" style="background:' + t[4] + '">' + t[0] + '</span><span><b>' + t[1] + '</b><small>' + t[2] + '</small></span><span class="go" aria-hidden="true">›</span></button>'; }).join('') +
+      '<div class="p-foot"><span>Works on the board\'s Day view.</span><button type="button" class="p-btn" data-act="check">🩺 Check</button></div></div>',
+
+    notes: () => {
+      const st = S.notes, j = st.job;
+      let h = '<div class="pv"><div class="p-msg">Click a job on the board, then a note. It types the note on the customer for you to check and save.</div>';
+      h += '<div class="p-res' + (j ? '' : ' warn') + '">' + (j ? '<b>Job selected</b>#' + JOBS[j].n + ' ' + esc(JOBS[j].cust) : 'No job selected yet. Click one on the board.') + '</div>';
+      if (st.folder === null) {
+        h += NOTE_FOLDERS.map((f, i) => '<button type="button" class="p-btn full" data-act="folder" data-i="' + i + '">' + f[0] + '  (' + f[1].length + ')</button>').join('');
+      } else {
+        const f = NOTE_FOLDERS[st.folder];
+        h += '<div class="p-row"><span class="grow">' + f[0] + '</span><button type="button" class="p-btn" data-act="folders">Folders</button></div>';
+        h += f[1].map((n, i) => '<button type="button" class="p-btn full" data-act="note" data-i="' + i + '" title="' + esc(n[1]) + '">' + n[0] + '</button>').join('');
+      }
+      if (st.done) h += '<div class="p-res">' + st.done + '</div>';
+      return h + back + '</div>';
+    },
+
+    jobs: () => {
+      const st = S.jobs, on = st.list.filter(j => !st.off[j]), off = st.list.filter(j => st.off[j]);
+      let h = '<div class="pv"><div class="p-msg">Click jobs on the board, or a tech\'s name for their whole day.</div>';
+      h += '<div class="p-row"><span class="grow">' + s1(st.list.length, 'job') + ' picked</span><button type="button" class="p-btn on" style="background:#ef6c00;border-color:#ef6c00">🖱️ Picking: ON</button><button type="button" class="p-btn" data-act="clear">Clear</button></div>';
+      h += list(st.list, j => st.off[j] ? '🔕' : '🔔', null, 'Click jobs on the board to add them.');
+      h += '<div class="p-row"><button type="button" class="p-btn dan" data-act="off"' + (on.length ? '' : ' disabled') + '>Turn off (' + on.length + ')</button><button type="button" class="p-btn" data-act="on"' + (off.length ? '' : ' disabled') + '>Turn on (' + off.length + ')</button></div>';
+      if (st.done) h += '<div class="p-res">' + st.done + '</div>';
+      return h + back + '</div>';
+    },
+
+    msgs: () => {
+      const st = S.msgs, m = MESSAGES[st.msg];
+      const count = s => Object.keys(TECHS).filter(t => TECHS[t].status === s).length;
+      let h = '<div class="pv"><div class="p-msg">Pick a message, choose techs, then Start. Clicking a tech\'s name on the board adds them too.</div>';
+      h += '<div class="p-row">' + MESSAGES.map((x, i) => '<button type="button" class="p-btn' + (i === st.msg ? ' sel' : '') + '" data-act="msg" data-i="' + i + '">' + x[0] + '</button>').join('') + '</div>';
+      const who = st.to.length ? TECHS[st.to[0]].name : 'Jack W';
+      h += '<div class="p-bubble">' + esc(m[1].replace('{first}', first(who))) + '</div>';
+      h += '<div class="p-row"><button type="button" class="p-btn" data-act="status" data-s="Working">＋ 🔧 Working (' + count('Working') + ')</button><button type="button" class="p-btn" data-act="status" data-s="Dispatched">＋ 🚚 Dispatched (' + count('Dispatched') + ')</button></div>';
+      h += '<div class="p-list">' + (st.to.length ? st.to.map(t => '<div class="p-item"><div class="body"><div class="top"><b>' + TECHS[t].name + '</b>' + (TECHS[t].status ? ' · ' + (TECHS[t].status === 'Working' ? '🔧 Working' : '🚚 Dispatched') : '') + '</div></div><button type="button" class="x" data-act="untech" data-t="' + t + '" title="Take off">✕</button></div>').join('') :
+        '<div class="p-empty">Nobody yet. Click techs\' names on the board.</div>') + '</div>';
+      h += '<div class="p-row"><button type="button" class="p-btn pri" data-act="start"' + (st.to.length ? '' : ' disabled') + '>Start (type only)</button></div>';
+      if (st.done) h += '<div class="p-res">' + st.done + '</div>';
+      return h + back + '</div>';
+    },
+
+    biz: () => {
+      const st = S.biz;
+      let h = '<div class="pv"><div class="p-msg">Switch jobs to a branch. Check first, then change. Put back undoes it.</div>';
+      h += '<div class="p-row"><span>Branch</span><select class="p-sel" data-act="branch" aria-label="Branch">' + BRANCHES.map(b => '<option' + (b === st.branch ? ' selected' : '') + '>' + b + '</option>').join('') + '</select></div>';
+      h += list(st.list, null, j => JOBS[j].bu, 'Click jobs on the board to add them.');
+      h += '<div class="p-row"><button type="button" class="p-btn" data-act="bcheck"' + (st.list.length ? '' : ' disabled') + '>Check jobs</button><button type="button" class="p-btn pri" data-act="bchange"' + (st.list.length ? '' : ' disabled') + '>Change to ' + st.branch + '</button></div>';
+      if (st.stage) h += '<div class="p-res">' + st.stage + '</div>';
+      if (st.undo) h += '<div class="p-row"><button type="button" class="p-btn" data-act="bundo">Put back (' + st.undo.length + ')</button></div>';
+      return h + back + '</div>';
+    },
+
+    texts: () => {
+      const st = S.texts, f = TEXT_FOLDERS[st.folder];
+      const who = st.list.length ? first(JOBS[st.list[0]].cust) : 'Bob';
+      let h = '<div class="pv"><div class="p-row">' + TEXT_FOLDERS.map((x, i) => '<button type="button" class="p-btn' + (i === st.folder ? ' sel' : '') + '" data-act="tfolder" data-i="' + i + '">' + x[0] + '</button>').join('') + '</div>';
+      h += '<div class="p-bubble">' + esc(f[1].replace('{first}', who).replace('{when}', 'tomorrow')) + '</div>';
+      h += '<div class="p-row"><span class="grow">' + s1(st.list.length, 'customer') + '</span><button type="button" class="p-btn" data-act="everyone">＋ Everyone on the board</button></div>';
+      if (!st.list.length) h += '<div class="p-msg">Or click jobs on the board to add their customers.</div>';
+      h += '<div class="p-row"><button type="button" class="p-btn pri" data-act="treview"' + (st.list.length ? '' : ' disabled') + '>Review and send to ' + st.list.length + '</button>' +
+        (st.folder === 3 ? '<button type="button" class="p-btn" data-act="replies">📥 Check replies</button>' : '') + '</div>';
+      if (st.stage) h += st.stage;
+      return h + back + '</div>';
+    },
+
+    moves: () => {
+      const st = S.moves;
+      const MODES = ['Move to a tech', 'Add a tech', 'Unassign', 'Swap'];
+      let h = '<div class="pv"><div class="p-row">' + MODES.map((m, i) => '<button type="button" class="p-btn' + (i === st.mode ? ' sel' : '') + '" data-act="mode" data-i="' + i + '">' + m + '</button>').join('') + '</div>';
+      if (st.mode) h += '<div class="p-res warn">The demo does Move to a tech. The real Move Jobs does all four.</div>';
+      h += '<div class="p-row"><span>To</span><select class="p-sel" data-act="to" aria-label="Move to">' + Object.keys(TECHS).map(t => '<option value="' + t + '"' + (t === st.to ? ' selected' : '') + '>' + TECHS[t].name + '</option>').join('') + '</select></div>';
+      h += list(st.list, null, j => TECHS[techOf(j)].name, 'Click jobs on the board to add them.');
+      h += '<div class="p-row"><button type="button" class="p-btn" data-act="mreview"' + (st.list.length && !st.busy ? '' : ' disabled') + '>Review</button>' +
+        (st.stage === 'ready' ? '<button type="button" class="p-btn pri" data-act="mgo">Go (' + s1(st.list.filter(j => techOf(j) !== st.to).length, 'job') + ')</button>' : '') + '</div>';
+      if (st.stage === 'ready') {
+        const go = st.list.filter(j => techOf(j) !== st.to), stay = st.list.filter(j => techOf(j) === st.to);
+        h += '<div class="p-res"><b>Ready: ' + s1(go.length, 'job') + '</b>' + go.map(j => esc(JOBS[j].cust) + ': ' + TECHS[techOf(j)].name + ' → ' + TECHS[st.to].name).join('<br>') +
+          (stay.length ? '<br>Already on ' + TECHS[st.to].name + ': ' + esc(and(stay.map(j => JOBS[j].cust))) : '') + '</div>';
+      } else if (st.stage) h += '<div class="p-res">' + st.stage + '</div>';
+      if (st.undo && !st.busy) h += '<div class="p-row"><button type="button" class="p-btn" data-act="mundo">Put back (' + st.undo.length + ')</button></div>';
+      return h + back + '</div>';
+    }
+  };
+
+  // ---- Drawing ----
+  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts', moves: '🔀 Move Jobs' };
+  const paint = () => {
+    board.querySelectorAll('.job').forEach(e => { e.classList.remove('pk', 'pk-off', 'picked'); e.style.removeProperty('--pk'); e.style.removeProperty('--pks'); });
+    board.querySelectorAll('.tech').forEach(e => e.classList.remove('pk'));
+    const v = S.view, c = COLOR[v];
+    const mark = (j, off) => { const e = jobEl(j); e.classList.add('pk'); if (off) e.classList.add('pk-off'); else { e.style.setProperty('--pk', c[0]); e.style.setProperty('--pks', c[1]); } };
+    if (v === 'jobs') S.jobs.list.forEach(j => mark(j, S.jobs.off[j]));
+    if (v === 'biz') S.biz.list.forEach(j => mark(j));
+    if (v === 'texts') S.texts.list.forEach(j => mark(j));
+    if (v === 'moves') S.moves.list.forEach(j => mark(j));
+    if (v === 'notes' && S.notes.job) mark(S.notes.job);
+    if (v === 'msgs') S.msgs.to.forEach(t => board.querySelector('[data-tech="' + t + '"]').classList.add('pk'));
+  };
+  const render = () => {
+    const top = body.scrollTop;
+    body.innerHTML = SCREENS[S.view]();
+    body.scrollTop = top;
+    $('p-title').textContent = TITLES[S.view];
+    paint();
+  };
+  const show = (view, focus) => {
+    const from = S.view;
+    S.view = view;
+    body.scrollTop = 0;
+    render();
+    // A tool slides in from the right, the menu from the left (as in the real Toolbox).
+    if (from !== view && motionOK() && body.firstElementChild && body.firstElementChild.animate) {
+      body.firstElementChild.animate([{ opacity: 0, transform: 'translateX(' + (view === 'menu' ? -14 : 14) + 'px)' }, { opacity: 1, transform: 'none' }], { duration: 180, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    }
+    if (focus) { const f = body.querySelector('button:not(:disabled), select'); if (f) f.focus({ preventScroll: true }); }
+  };
+  const say = text => { $('try').innerHTML = text; };
+
+  // ---- Moving cards on the board (Move Jobs) ----
+  const placeIn = (t, w) => {
+    const lane = board.querySelector('[data-lane="' + t + '"]');
+    const ends = Array.from(lane.children).map(e => parseFloat(e.style.left) + parseFloat(e.style.width));
+    return Math.min(Math.max(1, ends.length ? Math.max(...ends) + 2 : 1), 100 - w - 1);
+  };
+  const moveCard = (j, t, left) => {
+    const e = jobEl(j), before = e.getBoundingClientRect();
+    board.querySelector('[data-lane="' + t + '"]').appendChild(e);
+    e.style.left = left + '%';
+    if (!motionOK() || !e.animate) return Promise.resolve();
+    const after = e.getBoundingClientRect();
+    return e.animate([{ transform: 'translate(' + (before.left - after.left) + 'px,' + (before.top - after.top) + 'px)' }, { transform: 'none' }],
+      { duration: 420, easing: 'cubic-bezier(.3,.7,.2,1)' }).finished.catch(() => {});
+  };
+
+  // ---- Clicks in the Toolbox ----
+  body.addEventListener('change', e => {
+    const a = e.target.getAttribute('data-act');
+    if (a === 'branch') { S.biz.branch = e.target.value; S.biz.stage = ''; render(); }
+    if (a === 'to') { S.moves.to = e.target.value; S.moves.stage = ''; render(); }
+  });
+  body.addEventListener('click', async e => {
+    const b = e.target.closest('button');
+    if (!b || b.disabled) return;
+    const go = b.getAttribute('data-go');
+    if (go) { show(go, true); return; }
+    const a = b.getAttribute('data-act'), i = Number(b.getAttribute('data-i')), j = b.getAttribute('data-j');
+    const st = S[S.view];
+    if (a === 'check') { const ok = $('p-ok'); ok.style.display = 'block'; if (motionOK() && ok.animate) ok.animate([{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }], { duration: 180, easing: 'ease-out' }); setTimeout(() => { ok.style.display = 'none'; }, 4000); return; }
+    if (a === 'drop') { st.list = st.list.filter(x => x !== j); if (S.view === 'moves') st.stage = ''; render(); return; }
+    // Notes
+    if (a === 'folder') { st.folder = i; st.done = ''; }
+    if (a === 'folders') { st.folder = null; st.done = ''; }
+    if (a === 'note') {
+      const n = NOTE_FOLDERS[st.folder][1][i];
+      st.done = st.job ? '<b>Typed “' + esc(n[0].replace(/^\S+\s/, '')) + '” on ' + esc(JOBS[st.job].cust) + '</b>Check it, then click Add Note to save.' : 'Now click a job on the board.';
+    }
+    // Job Notifications
+    if (a === 'clear') { st.list = []; st.done = ''; }
+    if (a === 'off' || a === 'on') {
+      const turn = st.list.filter(x => (a === 'off') !== !!st.off[x]);
+      turn.forEach(x => { if (a === 'off') st.off[x] = true; else delete st.off[x]; });
+      st.done = '<b>' + (a === 'off' ? '🔕 Turned off ' : '🔔 Turned on ') + turn.length + '</b>' + esc(and(turn.map(x => JOBS[x].cust))) + '.';
+    }
+    // Tech Messages
+    if (a === 'msg') { st.msg = i; st.done = ''; }
+    if (a === 'status') { Object.keys(TECHS).forEach(t => { if (TECHS[t].status === b.getAttribute('data-s') && st.to.indexOf(t) < 0) st.to.push(t); }); st.done = ''; }
+    if (a === 'untech') { st.to = st.to.filter(t => t !== b.getAttribute('data-t')); st.done = ''; }
+    if (a === 'start') st.done = '<b>Typed to ' + esc(and(st.to.map(t => TECHS[t].name))) + '</b>' + (st.to.length > 1 ? 'One at a time. Press Send in each tech\'s message panel.' : 'Press Send in their message panel.');
+    // Business Unit
+    if (a === 'bcheck') st.stage = '<b>Checked ' + s1(st.list.length, 'job') + ' (nothing changed)</b>' + st.list.map(x => esc(JOBS[x].cust) + ': ' + (JOBS[x].bu === st.branch ? 'already ' + st.branch : JOBS[x].bu + ' → would change')).join('<br>');
+    if (a === 'bchange') {
+      const ch = st.list.filter(x => JOBS[x].bu !== st.branch);
+      st.undo = ch.map(x => [x, JOBS[x].bu]);
+      ch.forEach(x => { JOBS[x].bu = st.branch; });
+      st.stage = '<b>Done: ' + s1(ch.length, 'job') + ' changed</b>' + (ch.length ? ch.map(x => esc(JOBS[x].cust) + ': → ' + st.branch).join('<br>') : 'Every job was already ' + st.branch + '.');
+      if (!st.undo.length) st.undo = null;
+    }
+    if (a === 'bundo') { st.undo.forEach(([x, bu]) => { JOBS[x].bu = bu; }); st.stage = '<b>Put back ' + s1(st.undo.length, 'job') + '</b>' + st.undo.map(([x, bu]) => esc(JOBS[x].cust) + ': ' + bu + ' again').join('<br>'); st.undo = null; }
+    // Customer Texts
+    if (a === 'tfolder') { st.folder = i; st.stage = ''; }
+    if (a === 'everyone') { st.list = Object.keys(JOBS); st.stage = ''; }
+    if (a === 'treview') {
+      const skip = st.folder === 3 ? st.list.filter(x => !JOBS[x].note) : [];
+      const n = st.list.length - skip.length;
+      st.stage = '<div class="p-res"><b>Will text ' + s1(n, 'customer') + '</b>' + (skip.length ? 'Skipping ' + esc(and(skip.map(x => JOBS[x].cust))) + ': already confirmed.' : 'Nobody to skip.') +
+        '</div><div class="p-row"><button type="button" class="p-btn pri" data-act="tsend" data-i="' + n + '">Send ' + s1(n, 'text') + '</button></div>';
+    }
+    if (a === 'tsend') st.stage = '<div class="p-res"><b>Sent ' + s1(i, 'text') + '</b>Each one was checked in its conversation after it went out.</div>';
+    if (a === 'replies') st.stage = '<div class="p-res"><b>✅ 6 confirmed</b>They answered C or yes, so their appointments are marked confirmed.</div>' +
+      '<div class="p-res warn"><b>2 need a look</b>Eve Hall: “Can he come after 2?”<br>Jon Poe: “Who is this?”</div>';
+    // Move Jobs
+    if (a === 'mode') { st.mode = i; }
+    if (a === 'mreview') {
+      const go = st.list.filter(x => techOf(x) !== st.to);
+      st.stage = go.length ? 'ready' : '<b>Nothing to do</b>' + esc(and(st.list.map(x => JOBS[x].cust))) + (st.list.length === 1 ? ' is' : ' are') + ' already on ' + TECHS[st.to].name + '.';
+    }
+    if (a === 'mgo') {
+      const go = st.list.filter(x => techOf(x) !== st.to);
+      st.busy = true; st.stage = 'Moving ' + s1(go.length, 'job') + '…'; render();
+      st.undo = [];
+      for (const x of go) {
+        const e = jobEl(x);
+        st.undo.push([x, techOf(x), parseFloat(e.style.left)]);
+        await moveCard(x, st.to, placeIn(st.to, parseFloat(e.style.width)));
+      }
+      st.busy = false;
+      st.stage = '<b>Done: moved ' + s1(go.length, 'job') + ' to ' + TECHS[st.to].name + '</b>Refreshed the board to show the changes.';
+    }
+    if (a === 'mundo') {
+      const undo = st.undo; st.busy = true; st.stage = 'Putting back…'; render();
+      for (const [x, t, left] of undo.slice().reverse()) await moveCard(x, t, left);
+      st.busy = false; st.undo = null;
+      st.stage = '<b>Put back ' + s1(undo.length, 'job') + '</b>' + esc(and(undo.map(([x, t]) => JOBS[x].cust + ' on ' + TECHS[t].name))) + ' again.';
+    }
+    render();
+  });
+
+  // ---- Clicks on the board ----
+  board.addEventListener('click', e => {
+    const job = e.target.closest('[data-job]'), tech = e.target.closest('[data-tech]');
+    const v = S.view;
+    if (job) {
+      const j = job.getAttribute('data-job');
+      if (v === 'menu') { say('<strong>Open a tool first.</strong> Try 🔕 Job Notifications, then click jobs on the board.'); return; }
+      if (v === 'msgs') { say('<strong>Tech Messages picks techs:</strong> click a tech\'s name on the left of the board.'); return; }
+      if (v === 'notes') { S.notes.job = j; S.notes.done = ''; render(); return; }
+      if (v === 'moves' && S.moves.busy) return;
+      const st = S[v];
+      st.list = st.list.indexOf(j) > -1 ? st.list.filter(x => x !== j) : st.list.concat(j);
+      if (v === 'jobs') st.done = '';
+      if (v === 'moves' || v === 'texts') st.stage = '';
+      render();
+      return;
+    }
+    if (tech) {
+      const t = tech.getAttribute('data-tech');
+      if (v === 'msgs') { const st = S.msgs; st.to = st.to.indexOf(t) > -1 ? st.to.filter(x => x !== t) : st.to.concat(t); st.done = ''; render(); return; }
+      if (v === 'jobs') {
+        const st = S.jobs, day = jobsOf(t), all = day.every(x => st.list.indexOf(x) > -1);
+        st.list = all ? st.list.filter(x => day.indexOf(x) < 0) : st.list.concat(day.filter(x => st.list.indexOf(x) < 0));
+        st.done = ''; render(); return;
+      }
+      say('<strong>Tech names</strong> add a tech\'s whole day in 🔕 Job Notifications, and pick techs in 💬 Tech Messages.');
+    }
+  });
+
+  // ---- The title bar: fold, close, and opening it again ----
+  const fold = $('fold');
+  fold.addEventListener('click', () => {
+    const from = panel.getBoundingClientRect().height;
+    const min = panel.classList.toggle('min');
+    fold.textContent = min ? '▢' : '–';
+    fold.title = min ? 'Open the Toolbox back up' : 'Fold the Toolbox down to its title bar';
+    if (motionOK() && panel.animate) panel.animate([{ height: from + 'px' }, { height: panel.getBoundingClientRect().height + 'px' }], { duration: 200, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  });
+  const open = () => {
+    panel.hidden = false; $('reopen').style.display = 'none';
+    panel.classList.remove('opening'); void panel.offsetWidth;
+    panel.style.setProperty('--d', '0s'); panel.classList.add('opening');
+    show('menu');
+    $('close').focus({ preventScroll: true });
+  };
+  $('close').addEventListener('click', () => {
+    const done = () => { panel.hidden = true; $('reopen').style.display = 'inline-flex'; $('reopen').focus({ preventScroll: true }); paint(); };
+    S.view = 'menu';
+    if (motionOK() && panel.animate) panel.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(8px)' }], { duration: 150, easing: 'ease-in' }).finished.then(done, done);
+    else done();
+    say('<strong>Closed.</strong> The 🧰 Toolbox button on the board opens it again, like clicking your bookmark.');
+  });
+  $('reopen').addEventListener('click', open);
+
+  // ---- Wider or narrower: drag the left edge (as in the real Toolbox) ----
+  const grip = $('grip'), USUAL = 240;
+  grip.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const r = panel.getBoundingClientRect(), max = Math.min(340, $('shot').getBoundingClientRect().width - 8);
+    grip.classList.add('on'); grip.setPointerCapture(e.pointerId);
+    const move = ev => { panel.style.width = Math.max(210, Math.min(max, r.right - ev.clientX)) + 'px'; };
+    const up = () => { grip.classList.remove('on'); grip.removeEventListener('pointermove', move); grip.removeEventListener('pointerup', up); };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+  });
+  grip.addEventListener('dblclick', () => { panel.style.width = USUAL + 'px'; });
+
+  // ---- "Try it in the demo" under each tool ----
+  document.querySelectorAll('[data-try]').forEach(b => b.addEventListener('click', () => {
+    if (panel.hidden) open();
+    if (panel.classList.contains('min')) fold.click();
+    $('shot').scrollIntoView({ behavior: motionOK() ? 'smooth' : 'auto', block: 'center' });
+    show(b.getAttribute('data-try'), true);
+  }));
+
+  // The Toolbox starts on its menu, ready to click.
+  show('menu');
+  panel.addEventListener('animationend', () => panel.classList.remove('opening'));
 </script>
 </body>
 </html>
