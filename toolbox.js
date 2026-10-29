@@ -978,10 +978,24 @@
     '#' + ID + ' ::-webkit-scrollbar{width:8px;height:8px}#' + ID + ' ::-webkit-scrollbar-thumb{background:#c9ced4;border-radius:8px}#' + ID + ' ::-webkit-scrollbar-track{background:transparent}',
     '#' + ID + ' .st-tile:hover{border-color:var(--st-blue) !important;background:var(--st-blue-s) !important;filter:none !important}',
     '#' + ID + ' .st-hbtn:hover{background:rgba(255,255,255,.16) !important;filter:none !important}',
-    '#' + ID + '.st-min > :not(.st-head){display:none !important}'
+    '#' + ID + '.st-min > :not(.st-head){display:none !important}',
+    // Nothing inside is ever wider than the window (no sideways scrolling): one-column lists take
+    // the window's width instead of the widest thing in them (a long tag name in a list, say),
+    // lists and boxes shrink to fit, and a long word wraps.
+    '#' + ID + '{overflow-wrap:break-word}',
+    '#' + ID + ' [style*="display: grid"]{grid-template-columns:minmax(0,1fr)}',
+    '#' + ID + ' select,#' + ID + ' input,#' + ID + ' textarea,#' + ID + ' pre{max-width:100%}',
+    // The grips for making the Toolbox wider or narrower (its left edge and bottom-right corner).
+    '#' + ID + ' .st-grip{position:absolute;cursor:ew-resize;z-index:3}',
+    '#' + ID + ' .st-grip-l:hover,#' + ID + ' .st-grip.st-on{background-color:rgba(2,101,220,.18)}',
+    '#' + ID + '.st-min .st-grip{display:none}'
   ].join('\n');
   (document.head || document.documentElement).appendChild(sheet);
-  const panel = el('div', 'position:fixed;right:16px;bottom:16px;z-index:2147483647;width:340px;max-width:calc(100vw - 32px);' +
+  const DEFAULT_WIDTH = 340, MIN_WIDTH = 300;
+  const maxWidth = () => Math.max(MIN_WIDTH, Math.min(900, innerWidth - 16));
+  const resized = [];   // the tools' own fitting to the window, called after the Toolbox is resized
+  const afterResize = () => resized.forEach(fn => { try { fn(); } catch (e) {} });
+  const panel = el('div', 'position:fixed;right:16px;bottom:16px;z-index:2147483647;box-sizing:border-box;width:' + DEFAULT_WIDTH + 'px;max-width:calc(100vw - 16px);' +
     'background:var(--st-bg);color:var(--st-ink);border:1px solid rgba(16,24,40,.14);border-radius:12px;box-shadow:0 14px 36px rgba(16,24,40,.24),0 2px 6px rgba(16,24,40,.12);' +
     'font-size:13px;line-height:1.4;overflow:hidden;text-align:left');
   panel.id = ID;
@@ -1292,6 +1306,9 @@
       cleanup: () => { window.removeEventListener('click', onClick, true); board.unmount(style); }
     };
   };
+  // The width you last gave it (in this browser).
+  const savedWidth = parseInt(get('stWidth') || '', 10);
+  if (savedWidth >= MIN_WIDTH) panel.style.width = Math.min(savedWidth, maxWidth()) + 'px';
   const pos = (get('stPos') || get('qnPos') || '').split(',').map(Number);
   if (pos.length === 2 && pos.every(n => isFinite(n))) {
     panel.style.left = Math.min(Math.max(0, pos[0]), innerWidth - 120) + 'px';
@@ -2210,6 +2227,7 @@
       jobsPane.style.maxHeight = Math.max(220, innerHeight - top - others - 16) + 'px';
     };
     window.addEventListener('resize', fit);
+    resized.push(fit);
 
     // ---------- How the list stands ----------
     const tally = () => {
@@ -5481,6 +5499,7 @@
     };
     const onResize = () => fit();
     window.addEventListener('resize', onResize);
+    resized.push(fit);
     let busy = false, running = false, stop = false;
     let reviewing = false, reviewStop = false;   // a review in progress, and Stop checking pressed
     let planned = null;   // the last review: { mode, items, at }
@@ -6242,6 +6261,67 @@
     };
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
+  });
+
+  // Wider or narrower: drag the Toolbox's left edge or its bottom-right corner (the title bar
+  // still moves it). Double-click either for the usual width. The width is remembered in this
+  // browser, and the tools that fit their lists to the window fit them again.
+  const grip = side => {
+    const g = el('div', side === 'left' ? 'left:0;top:0;bottom:0;width:6px' : 'right:0;bottom:0;width:14px;height:14px;border-radius:0 0 11px 0;' +
+      'background:linear-gradient(135deg,transparent 50%,var(--st-ctl) 50%,var(--st-ctl) 58%,transparent 58%,transparent 70%,var(--st-ctl) 70%,var(--st-ctl) 78%,transparent 78%)');
+    g.className = side === 'left' ? 'st-grip st-grip-l' : 'st-grip st-grip-r';
+    g.title = 'Drag to make the Toolbox wider or narrower. Double-click for the usual width.';
+    g.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      const r = panel.getBoundingClientRect();
+      // Held by its left edge from here on (like after dragging it), so it grows the way you pull.
+      panel.style.left = r.left + 'px'; panel.style.top = r.top + 'px';
+      panel.style.right = panel.style.bottom = 'auto';
+      g.classList.add('st-on');
+      const grab = side === 'right' ? r.right - e.clientX : e.clientX - r.left;   // where on the grip it was pressed
+      const move = ev => {
+        if (side === 'right') {
+          panel.style.width = Math.max(MIN_WIDTH, Math.min(maxWidth(), ev.clientX + grab - r.left, innerWidth - r.left - 4)) + 'px';
+        } else {
+          const left = Math.max(4, Math.min(ev.clientX - grab, r.right - MIN_WIDTH));
+          const w = Math.min(maxWidth(), r.right - left);
+          panel.style.left = (r.right - w) + 'px';
+          panel.style.width = w + 'px';
+        }
+      };
+      const up = () => {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        g.classList.remove('st-on');
+        set('stWidth', String(Math.round(panel.getBoundingClientRect().width)));
+        set('stPos', parseInt(panel.style.left, 10) + ',' + parseInt(panel.style.top, 10));
+        afterResize();
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+    g.addEventListener('dblclick', e => {
+      e.preventDefault(); e.stopPropagation();
+      const r = panel.getBoundingClientRect();
+      panel.style.width = DEFAULT_WIDTH + 'px';
+      // The side you didn't double-click stays where it was.
+      if (side === 'left' && panel.style.left && panel.style.left !== 'auto') panel.style.left = Math.max(0, r.right - DEFAULT_WIDTH) + 'px';
+      set('stWidth', '');
+      if (panel.style.left && panel.style.left !== 'auto') set('stPos', parseInt(panel.style.left, 10) + ',' + parseInt(panel.style.top, 10));
+      afterResize();
+    });
+    return g;
+  };
+  panel.append(grip('left'), grip('right'));
+  // A smaller browser window: the Toolbox stays inside it.
+  window.addEventListener('resize', () => {
+    const w = panel.getBoundingClientRect().width;
+    if (w > maxWidth()) panel.style.width = maxWidth() + 'px';
+    if (panel.style.left && panel.style.left !== 'auto') {
+      const left = parseFloat(panel.style.left);
+      if (left + panel.getBoundingClientRect().width > innerWidth) panel.style.left = Math.max(0, innerWidth - panel.getBoundingClientRect().width) + 'px';
+    }
   });
 
   // Closing while a tool is running (Job Notifications, Tech Messages, Business Unit, Customer Texts or Move Jobs) would

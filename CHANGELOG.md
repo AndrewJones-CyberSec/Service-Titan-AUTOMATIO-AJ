@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.1
+
+- **No sideways scrolling.** Lists and boxes always fit the Toolbox's width. A long tag name in ＋ Jobs with a tag… used to make Move Jobs and Job Notifications scroll sideways.
+- **Wider or narrower:** drag the Toolbox's left edge or its bottom-right corner (300 to 900 px, never off the screen). The width is remembered in the browser; double-click either one for the usual width. A smaller browser window keeps the Toolbox inside it.
+- Tests: new `tests/test_panel_size.py`.
+
 ## 2.0
 
 ServiceTitan replaced the Dispatch board on Oct 27 2026, and every tool stopped working. 2.0 is rebuilt for the new board.

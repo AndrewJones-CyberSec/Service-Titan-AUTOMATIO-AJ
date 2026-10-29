@@ -11,6 +11,7 @@ Version 2.0 works on ServiceTitan's new Dispatch board, on its **Day** view. On 
 - **The whole day in one request:** ＋ Whole board, ＋ Everyone on the board and ＋ A department… read the day's jobs, techs and teams the way the board does, so they're quicker and don't miss jobs scrolled out of view.
 - **The Jobs Tray** under the board (Unassigned, Hold and the other tabs): click jobs in it to pick them, or **+ Tray page** to add the tab and page that are open.
 - **A new look**, matching the new board. **–** folds the Toolbox down to its title bar; click it again to open it back up.
+- **Make it wider or narrower** by dragging its left edge or bottom-right corner. It remembers the width; double-click either one for the usual width. Nothing inside scrolls sideways.
 
 ## Tools
 
