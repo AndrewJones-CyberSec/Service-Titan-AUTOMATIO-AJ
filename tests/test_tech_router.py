@@ -73,6 +73,14 @@ def opt(page, tech):
     ev(page, "() => { document.getElementById('st-opt-out').style.display = 'none'; }")
     page.select_option('#st-opt-tech', str(tech))
     page.wait_for_function("() => !document.getElementById('st-opt-go').disabled && (document.getElementById('st-opt-out').style.display !== 'none' || /⚠️/.test(document.getElementById('st-router-msg').textContent))", timeout=30000)
+def maps(page, box='#st-opt-out'):
+    """The Google Maps links shown: [(origin, [waypoints], destination)]."""
+    from urllib.parse import urlparse, parse_qs
+    out = []
+    for u in ev(page, "(b) => Array.from(document.querySelectorAll(b + ' .st-maps-open')).map(x => x.getAttribute('data-url'))", box):
+        q = parse_qs(urlparse(u).query)
+        out.append((q['origin'][0], q['waypoints'][0].split('|') if 'waypoints' in q else [], q['destination'][0]))
+    return out
 def score(page):
     s = page.locator('#st-opt-score')
     return int(s.inner_text().rstrip('%')) if s.count() else -1
@@ -283,6 +291,9 @@ with sync_playwright() as p:
     check(ev(page, "() => document.querySelectorAll('#st-plan-out .st-tl').length") == 0, 'the routes start folded')
     rts = routes(page)
     print(json.dumps(rts, indent=1))
+    m = maps(page, '#st-plan-out .st-plan-route[data-tech="201"]')
+    check(m and m[0][0] == '1 Main St, Hattiesburg, MS 39401' and any(w.startswith('9101 Oak Ave') for w in m[0][1]) and any(w.startswith('9001 Main St') for w in m[0][1]),
+          'an open route has 🗺️ Google Maps: home, the board\'s jobs and the new ones by address (%s)' % m)
     check(who(rts, 'Near Quote') == ['Dustin J'] and who(rts, 'Late Quote') == ['Dustin J'], 'the quotes near Dustin\'s day go to Dustin (%s, %s)' % (who(rts, 'Near Quote'), who(rts, 'Late Quote')))
     check(who(rts, 'Sparky Lamp') == ['Eli E'], 'the electrical job goes to the electrician (%s)' % who(rts, 'Sparky Lamp'))
     check(all(who(rts, n) == ['Pam P'] for n in ['Drippy Sink', 'Pipe Burst', 'Slow Drain']), 'the plumbing jobs go to the plumber')
@@ -405,8 +416,18 @@ with sync_playwright() as p:
     check(len(moves_) == 2 and moves_[0].startswith('⬆️ Zig Three') and '3rd → 2nd' in moves_[0] and moves_[1].startswith('⬇️ Zag Two'), 'what changes: Zig Three up, Zag Two down (%s)' % moves_)
     check('home at' in o and 'Driving' in o and '→' in o, 'and how the day changes: driving and when they\'re home')
     check(ev(page, "() => document.querySelectorAll('#st-opt-out .st-opt-stop.new').length") == 2, 'the moved jobs stand out on the route')
+    m = maps(page)
+    check(m == [('1 Main St, Hattiesburg, MS 39401', ['9301 Main St, Purvis, MS 39475', '9303 Main St, Purvis, MS 39475', '9302 Main St, Petal, MS 39465'], '1 Main St, Hattiesburg, MS 39401')],
+          '🗺️ Google Maps: from home, the jobs\' addresses in the suggested order, back home (%s)' % m)
+    ev(page, "() => { window.openedUrls = []; window.open = u => { window.openedUrls.push(u); return null; }; }")
+    page.locator('#st-opt-out .st-maps-open').click()
+    u = ev(page, 'window.openedUrls')
+    check(len(u) == 1 and u[0].startswith('https://www.google.com/maps/dir/?api=1&') and 'travelmode=driving' in u[0] and 'Zig' not in u[0], 'it opens Google Maps directions, with addresses only (no names) (%s)' % u)
+    check(page.locator('#st-opt-out .st-maps-copy').count() == 1, 'and 📋 Maps link copies it (to send to the tech)')
     page.click('#st-opt-out .st-opt-view[data-view=now]')
     check(stops(page) == ['Zig One', 'Zag Two', 'Zig Three'], 'As it is now: the board\'s order (%s)' % stops(page))
+    m = maps(page)
+    check(m and [w.split(' ')[0] for w in m[0][1]] == ['9301', '9302', '9303'], 'As it is now: Google Maps gets the board\'s order (%s)' % m)
     page.click('#st-opt-out .st-opt-view[data-view=best]')
     check('Leaves home (Hattiesburg)' in page.inner_text('#st-opt-out .st-opt-route') and '🏠 Home' in page.inner_text('#st-opt-out .st-opt-route'), 'the route runs from home to home')
     wide = ev(page, """() => Array.from(document.querySelectorAll('#st-toolbox *')).filter(e => e.offsetParent && e.scrollWidth > e.clientWidth + 2 &&
@@ -431,15 +452,19 @@ with sync_playwright() as p:
     check('no jobs' in page.inner_text('#st-opt-out') and msg(page) == 'Nothing to put in order.', 'Pam has no jobs: nothing to put in order')
     opt(page, 203)
     check('only one job' in page.inner_text('#st-opt-out'), 'Eli has one job: nothing to put in order')
-    # 📊 Score every tech: lowest first, and a click checks one.
+    # 📊 Score every tech: lowest first, with Mapbox drive times (every route in one request here), and a click checks one.
+    ev(page, "() => { window.mapboxCalls = 0; }")
     page.click('#st-opt-all')
     page.wait_for_function("() => !document.getElementById('st-opt-all').disabled && document.getElementById('st-opt-out').style.display !== 'none'", timeout=30000)
     rows = ev(page, "() => Array.from(document.querySelectorAll('#st-opt-out .st-opt-tech')).map(b => [b.getAttribute('data-tech'), parseInt(b.textContent, 10)])")
     check(rows and [r[1] for r in rows] == sorted(r[1] for r in rows) and dict(rows).get('206', 100) < 100 and dict(rows).get('201') == 100 and '204' not in dict(rows) and '208' not in dict(rows),
           'Score every tech: lowest first, Ian and Pat under 100%%, Dustin 100%%, no one without two jobs, no office staff (%s)' % rows)
+    check(ev(page, 'window.mapboxCalls') == 1 and '~' not in page.inner_text('#st-opt-out .st-opt-all'), 'drive times for every route from one Mapbox request (%s)' % ev(page, 'window.mapboxCalls'))
+    ian = dict(rows).get('206')
     page.locator('#st-opt-out .st-opt-tech[data-tech="206"]').click()
     page.wait_for_function("() => !document.getElementById('st-opt-go').disabled && document.getElementById('st-opt-score')", timeout=30000)
     check(page.input_value('#st-opt-tech') == '206' and 'Ian I' in page.inner_text('#st-opt-out'), 'clicking a tech there checks their route')
+    check(score(page) == ian and ev(page, 'window.mapboxCalls') == 1, 'the same score as in the list, with the drive times already had (%s, %s)' % (score(page), ian))
     # Picking the tech on the board.
     page.locator('#st-toolbox button[title^="Click a tech"]').click()
     page.locator('.technician[data-technician-id="201"]').click()
@@ -467,6 +492,16 @@ with sync_playwright() as p:
     zips = [x.split(' ')[1] for x in stops(page)]
     switches = sum(1 for a_, b_ in zip(zips, zips[1:]) if int(a_) % 2 != int(b_) % 2)
     check(score(page) < 100 and switches <= 2 and took < 10, 'a 10-job zig-zag: grouped by town (%d switches, %s%%, %.1fs)' % (switches, score(page), took))
+    m = maps(page)
+    check(len(m) == 2 and len(m[0][1]) == 9 and m[1][0] == m[0][2] and m[1][2] == '1 Main St, Hattiesburg, MS 39401' and len(m[0][1]) + 1 + len(m[1][1]) == 10,
+          'Google Maps takes 9 stops at a time: 2 parts, the second starting where the first ends (%s)' % [(len(x[1]), x[0][:12], x[2][:12]) for x in m])
+    check([b.strip() for b in ev(page, "() => Array.from(document.querySelectorAll('#st-opt-out .st-maps-open')).map(b => b.textContent)")] == ['🗺️ Maps, part 1 of 2', '🗺️ Maps, part 2 of 2'], 'one button per part')
+    # Mapbox down: the scores use straight-line miles, marked ~.
+    ev(page, "() => { window.MAPBOX_DOWN = true; }")
+    page.click('#st-opt-all')
+    page.wait_for_function("() => !document.getElementById('st-opt-all').disabled && document.getElementById('st-opt-out').style.display !== 'none'", timeout=30000)
+    o = page.inner_text('#st-opt-out')
+    check('~' in o and 'straight-line miles' in o, 'Mapbox down: scores from straight-line miles, marked ~ (%r)' % o[:200])
     check(errors == [], 'long day: no page errors: %s' % errors)
     page.close()
 

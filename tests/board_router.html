@@ -75,7 +75,7 @@
     return { Id: id, JobId: job, AppointmentNumber: 1, Customer: customer, CustomerPhone: '(' + phone.slice(0, 3) + ') ' + phone.slice(3, 6) + '-' + phone.slice(6), Type: T[type], TypeId: type, JobTypeId: 0,
       Priority: prio, Duration: hrs * 3600, Start: s.toISOString(), End: e.toISOString(), ArrivalWindowStart: s.toISOString(), ArrivalWindowEnd: e.toISOString(), CreatedOn: ago(created).toISOString(),
       // Like ServiceTitan on Oct 29 2026: the map point in Latitude / Longitude, JobLatitude / JobLongitude empty.
-      Latitude: pt ? pt[0] : 0, Longitude: pt ? pt[1] : 0, JobLatitude: null, JobLongitude: null, Zip: '', City: 'Somewhere', State: 'MS', Tags: tag ? [{ Id: 1, TypeId: 1, TypeName: tag, Color: '#ffe8a8', TextColor: null }] : [], Technicians: (window.ASSIGNED[id] || []).map(t => ({ Id: t, Name: (TECHS.find(x => x.id === t) || {}).name })), AppointmentStatus: day === 'hold' ? 'Hold' : 'Scheduled', JobStatus: day === 'hold' ? 'Hold' : 'Scheduled', BusinessUnitId: 1 };
+      Latitude: pt ? pt[0] : 0, Longitude: pt ? pt[1] : 0, JobLatitude: null, JobLongitude: null, Street: id + ' Oak Ave', Zip: '', City: 'Somewhere', State: 'MS', Tags: tag ? [{ Id: 1, TypeId: 1, TypeName: tag, Color: '#ffe8a8', TextColor: null }] : [], Technicians: (window.ASSIGNED[id] || []).map(t => ({ Id: t, Name: (TECHS.find(x => x.id === t) || {}).name })), AppointmentStatus: day === 'hold' ? 'Hold' : 'Scheduled', JobStatus: day === 'hold' ? 'Hold' : 'Scheduled', BusinessUnitId: 1 };
   };
   // The last 4 weeks: who did which job types (Dustin and Pat split the coordinators' jobs).
   const past = [];

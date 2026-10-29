@@ -26,7 +26,7 @@
 (() => {
   const VERSION = '2.1.1';
   const WHATS_NEW = {
-    '2.1.1': 'New in 🧭 Tech Router: ✨ Optimize. Pick a tech (or 🖱️ and their name) for a 0–100% score of their route\'s order (100% is already the best), the better order and what it saves. 📊 Score every tech lists everyone, lowest first. It only suggests: you move the jobs on the board. And 🗺️ Plan the day can now ＋ Fit in holds, to call and book.',
+    '2.1.1': 'New in 🧭 Tech Router: ✨ Optimize. Pick a tech (or 🖱️ and their name) for a 0–100% score of their route\'s order (100% is already the best), the better order and what it saves, with Mapbox drive times. 📊 Score every tech lists everyone, lowest first. 🗺️ Google Maps opens a route (here or in 🗺️ Plan the day) as directions, and 📋 Maps link copies it to send to the tech. It only suggests: you move the jobs on the board. And 🗺️ Plan the day can now ＋ Fit in holds, to call and book.',
     '2.1': 'New: 🧭 Tech Router (Beta). 📞 Fill a spot: pick a tech whose day is already planned, and it finds their open time (first thing, mid-day or the end of the day) and the jobs that would fit there from the Unassigned list (this day and the next 14) and the Hold list, with the customer\'s phone number to call and move them up. 🗺️ Plan the day: a tech and a route for every Unassigned job, 8-12s first, then 12-5s, then 5-9s (a little late is OK), sent to Move Jobs to assign. It learns which jobs each department does from the last 4 weeks of schedules, so a project coordinator only gets quotes, not electrical or plumbing ones. 🔎 Closest techs is back too. It\'s still being built, so check before you call; it only reads, and changes nothing on its own.',
     '2.0.2': 'Fixed: 💬 Tech Messages skipped every tech with "their name on the board has no menu". When the board scrolls to a tech it shows their name first and their menu about a second later; the Toolbox now waits for the menu, then opens it the way you would (a right-click or a left click on their name).',
     '2.0.1': 'Nothing inside the Toolbox scrolls sideways any more, and you can make it wider or narrower by dragging its left edge or bottom-right corner (it remembers; double-click for the usual width). Plus a few quick animations: it fades in and out, tools slide in, – folds it smoothly, and loading buttons show a spinner.',
@@ -304,8 +304,8 @@
       return d.skills.filter(s => s && s.active !== false).map(s => ({ id: s.id, name: norm(s.name) }));
     };
     // Every tech: [{ id, name, active, managed, skillIds, home }]. home (🧭 Tech Router): where the
-    // tech's profile says they live, { lat, lon, town }, or null when it has no map point. Seen Oct
-    // 2026: houseLatitude, houseLongitude, houseAddress ("street, City, MS 39402 USA").
+    // tech's profile says they live, { lat, lon, town, address }, or null when it has no map point.
+    // Seen Oct 2026: houseLatitude, houseLongitude, houseAddress ("street, City, MS 39402 USA").
     const technicians = async () => {
       const d = await getJSON('/app/api/data/technicians', 30000);
       if (!Array.isArray(d)) throw fail('bad', 'the technician list came back in a shape the Toolbox doesn\'t know');
@@ -314,7 +314,7 @@
       return d.filter(t => t && t.id != null).map(t => {
         const lat = coord(t.houseLatitude, 90), lon = coord(t.houseLongitude, 180);
         return { id: t.id, name: norm(t.name), active: t.active !== false, managed: !!t.isManagedTechnician, skillIds: Array.isArray(t.skillIds) ? t.skillIds : null,
-          home: lat != null && lon != null ? { lat, lon, town: townOf(t.houseAddress) } : null };
+          home: lat != null && lon != null ? { lat, lon, town: townOf(t.houseAddress), address: norm(t.houseAddress).replace(/,?\s*USA$/i, '') } : null };
       });
     };
     // Is each tech already booked at that time? The same check the job panel makes. Seen Oct 2026:
@@ -518,7 +518,8 @@
     //   shifts: Map(techId -> [{ start, end, off }]) (off: time off), events: Map(techId -> [{ start, end }])
     //   (meetings and other non-job events; their names aren't kept) }
     // An appt: { apptId, jobId, number, customer, customerId, start, end, windowStart, windowEnd,
-    //   status, jobStatus, confirmed, bu, buName, jobType, jobTypeId, city, zip, tags, techs: [tech ids], techStatus }
+    //   status, jobStatus, confirmed, bu, buName, jobType, jobTypeId, street, city, state, zip, tags, techs: [tech ids],
+    //   techStatus }
     // Statuses are ServiceTitan's words (Scheduled, Dispatched, Working, Hold, Done...).
     const bad = what => Object.assign(new Error('the board\'s ' + what + ' came back in a shape the Toolbox doesn\'t know'), { kind: 'bad' });
     const toDate = v => { if (!v) return null; const d = new Date(v); return isNaN(d) ? null : d; };
@@ -575,7 +576,7 @@
               x = { apptId: k, jobId: String(a.jobId), number: num.indexOf('-') > -1 ? num.split('-').pop() : num, customer: norm(a.customerName), customerId: a.customerId || null,
                 start: toDate(a.appointmentStart), end: toDate(a.appointmentEnd), windowStart: toDate(a.arrivalWindowStart), windowEnd: toDate(a.arrivalWindowEnd),
                 status: norm(a.appointmentStatus), jobStatus: norm(a.jobStatus), confirmed: a.isConfirmed === true, bu: a.businessUnitId, buName: norm(a.businessUnitName),
-                jobType: norm(a.jobTypeName), jobTypeId: a.jobTypeId != null ? String(a.jobTypeId) : '', city: norm(a.city), zip: norm(a.zip), tags: (Array.isArray(a.tags) ? a.tags : []).map(tagOf).filter(Boolean), techs: [], techStatus: {} };
+                jobType: norm(a.jobTypeName), jobTypeId: a.jobTypeId != null ? String(a.jobTypeId) : '', street: norm(a.street), city: norm(a.city), state: norm(a.state), zip: norm(a.zip), tags: (Array.isArray(a.tags) ? a.tags : []).map(tagOf).filter(Boolean), techs: [], techStatus: {} };
               appts.set(k, x);
               if (!byJob.has(x.jobId)) byJob.set(x.jobId, []);
               byJob.get(x.jobId).push(x);
@@ -6653,6 +6654,52 @@
         return { out, ok: true };
       } catch (e) { mapboxDown = Date.now(); return { out, ok: false }; }
     };
+    // Drive times between every two places on each route (✨ Optimize), kept for LEG_TTL. Routes are
+    // packed together into Matrix requests of up to 25 places (every place to every other, in one
+    // request), a few requests at a time, and only places not asked about lately are asked about.
+    // No traffic: it's the order of a day's stops that matters, not the time of day. sets: [[point]].
+    // true if every drive time was had (the rest are guesses from straight-line miles).
+    const LEG_TTL = 15 * 60000, MATRIX_MAX = 25;
+    const legCache = new Map();
+    const legKey = (a, b) => ptText(a) + '>' + ptText(b);
+    const cachedLeg = (a, b) => { const c = legCache.get(legKey(a, b)); return c && Date.now() - c.at < LEG_TTL ? c.min : null; };
+    const uniq = pts => { const u = []; pts.forEach(p => { if (p && !u.some(q => ptText(q) === ptText(p))) u.push(p); }); return u; };
+    const fillLegs = async (sets, stale) => {
+      const need = sets.map(uniq).filter(u => u.length > 1 && u.some(a => u.some(b => cachedLeg(a, b) == null)));
+      if (!need.length) return true;
+      const key = driveKey();
+      if (!key || Date.now() - mapboxDown < 60000) return false;
+      const batches = [];
+      need.sort((a, b) => b.length - a.length).forEach(u => {
+        const b = u.length > MATRIX_MAX ? null : batches.find(B => B.length <= MATRIX_MAX && uniq(B.concat(u)).length <= MATRIX_MAX);
+        if (b) uniq(u).forEach(p => { if (!b.some(q => ptText(q) === ptText(p))) b.push(p); }); else batches.push(u.slice());
+      });
+      const keep = (a, b, min, at) => legCache.set(legKey(a, b), { min, at });
+      let ok = true;
+      const one = async P => {
+        const at = Date.now();
+        if (P.length > MATRIX_MAX) {   // one route with more than 25 places: in parts
+          const m = await matrix(P, P, false);
+          if (!m.ok) ok = false;
+          P.forEach((a, i) => P.forEach((b, j) => { const d = m.out[i][j]; if (d) keep(a, b, d.min, at); }));
+          return;
+        }
+        const all = P.map((x, i) => i).join(';');
+        try {
+          const r = await outside(MB + 'directions-matrix/v1/mapbox/driving/' + P.map(ptText).join(';') + '?sources=' + all + '&destinations=' + all + '&annotations=duration&access_token=' + encodeURIComponent(key), 15000);
+          if (!r || r.code !== 'Ok' || !Array.isArray(r.durations)) throw new Error('no drive times');
+          P.forEach((a, i) => P.forEach((b, j) => { const d = r.durations[i] && r.durations[i][j]; if (typeof d === 'number' && isFinite(d)) keep(a, b, Math.round(d / 60), at); }));
+        } catch (e) { mapboxDown = Date.now(); ok = false; }
+      };
+      for (let i = 0; i < batches.length; i += 3) {
+        if (stale && stale()) return false;
+        await Promise.all(batches.slice(i, i + 3).map(one));
+        if (!ok) break;
+      }
+      return ok;
+    };
+    // A leg's drive time: Mapbox's when it was had, else a guess (and flag.guess is set).
+    const legFrom = flag => (a, b) => { const c = cachedLeg(a, b); if (c != null) return c; if (ptText(a) === ptText(b)) return 0; flag.guess = true; return guess(a, b); };
 
     // ---------- Techs' homes (their ServiceTitan profile), read once ----------
     let homes = null;
@@ -6757,7 +6804,7 @@
 
     // ---------- The jobs to fill a spot with: the Unassigned list (the day and the next 14) and the Hold list ----------
     // A job from either list: { apptId, jobId, customer, customerId, phone, typeId, type, priority,
-    // start, end, dur (minutes), created, pt ({ lat, lon } or null), zip, city, tags, source ('ua' or
+    // start, end, dur (minutes), created, pt ({ lat, lon } or null), street, city, state, zip, tags, source ('ua' or
     // 'hold'), day (the Unassigned list's day) }, or null (canceled, or Unassigned with a tech on it).
     const candOf = (x, source, day) => {
       if (!x || x.Id == null || x.JobId == null) return null;
@@ -6775,7 +6822,7 @@
       return { apptId: S(x.Id), jobId, customer: norm(x.Customer), customerId: x.CustomerId || null, phone: last10(x.CustomerPhone),
         typeId: x.TypeId != null ? S(x.TypeId) : '', type: norm(x.Type), priority: norm(x.Priority), start: s0, end: e0,
         dur: Math.max(15, Math.min(dur, 12 * 60)), created: toDate(x.CreatedOn), pt: lat != null && lon != null && okPt([lat, lon]) ? { lat, lon } : null,
-        zip: zip5(x.Zip), city: tidy(x.City), tags: (Array.isArray(x.Tags) ? x.Tags : []).map(board.tagOf).filter(Boolean), source, day: day || null };
+        street: norm(x.Street), state: norm(x.State), zip: zip5(x.Zip), city: tidy(x.City), tags: (Array.isArray(x.Tags) ? x.Tags : []).map(board.tagOf).filter(Boolean), source, day: day || null };
     };
     // Read at most once a minute. { rows, notes (what couldn't be read) } or null if stopped.
     let uaCache = null, holdCache = null;
@@ -7775,8 +7822,47 @@
       const over = Math.max(0, (t - R.end) / 60000);
       return { cost: cost + drive + over, drive, over, home: new Date(t), back, out, tooLate };
     };
+    // A job's address for Google Maps: "street, City, ST zip". With no street: the job's map point if it
+    // has its own (Unassigned and Hold jobs), else its town and zip code.
+    const addrOf = (street, city, state, zip, pt) => {
+      street = norm(street);
+      const tail = [tidy(city), [norm(state), zip5(zip)].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+      return street ? street + (tail ? ', ' + tail : '') : pt ? pt.lat + ',' + pt.lon : tail;
+    };
+    // 🗺️ A route in Google Maps (driving directions): from where it starts, through its stops in
+    // order, to home. Only the addresses go in the link (no names). A link takes at most MAPS_STOPS
+    // stops between its start and end (Google's limit; 3 on a phone's web browser), so a longer route
+    // comes in parts, each starting where the one before ends.
+    const MAPS_STOPS = 9;
+    const mapsLinks = (R, stops) => {
+      const all = [R.startAddr].concat(stops.map(x => x.addr), [R.homeAddr]).filter(Boolean);
+      const list = all.filter((p, i) => i === 0 || p !== all[i - 1]);
+      const out = [];
+      for (let i = 0; i < list.length - 1; i += MAPS_STOPS + 1) {
+        const part = list.slice(i, i + MAPS_STOPS + 2), e = encodeURIComponent;
+        out.push('https://www.google.com/maps/dir/?api=1&origin=' + e(part[0]) + '&destination=' + e(part[part.length - 1]) +
+          (part.length > 2 ? '&waypoints=' + part.slice(1, -1).map(e).join('%7C') : '') + '&travelmode=driving');
+      }
+      return out;
+    };
+    // The buttons for it: 🗺️ Google Maps (or one per part) and 📋 Maps link (to send to the tech).
+    const mapsPills = (R, stops) => {
+      const links = mapsLinks(R, stops), out = [];
+      if (!links.length) return out;
+      const go = url => { try { window.open(url, '_blank', 'noopener'); } catch (e) {} };
+      links.forEach((url, i) => {
+        const b = pill(links.length > 1 ? '🗺️ Maps, part ' + (i + 1) + ' of ' + links.length : '🗺️ Google Maps', 'Opens this route in Google Maps' + (links.length > 1 ? ' (Google takes ' + MAPS_STOPS + ' stops at a time, so it\'s in parts)' : '') + '. Only the addresses go to Google.', () => go(url));
+        b.className = 'st-maps-open';
+        b.setAttribute('data-url', url);
+        out.push(b);
+      });
+      const c = copyPill('📋 Maps link' + (links.length > 1 ? 's' : ''), links.length > 1 ? links.map((u, i) => 'Part ' + (i + 1) + ': ' + u).join('\n') : links[0], 'Copies the Google Maps link, to send to the tech');
+      c.classList.add('st-maps-copy');
+      out.push(c);
+      return out;
+    };
     // A tech's day as a route, from the board as it stands: { t, D, start, end, startPt, startWords,
-    // homePt, home, stops, fixedN (stops being worked or driven to now, which stay first), n0, added,
+    // startAddr, homePt, homeAddr (for 🗺️ Google Maps), home, stops, fixedN (stops being worked or driven to now, which stay first), n0, added,
     // sales, base (simulated with straight-line guesses) }, or null (time off, nowhere to measure
     // from, or their day is over). Today: from now, without the jobs they've finished.
     const routeOf = (s, t, points, now, grace) => {
@@ -7789,7 +7875,7 @@
       const lastDone = done.find(a => points.get(zip5(a.zip)));
       const stops = jobs.map(a => {
         const busyNow = today && /^(working|dispatched)$/i.test(a.techStatus[t.id] || a.status);
-        return { kind: 'board', a, jobId: a.jobId, customer: a.customer, city: a.city, pt: points.get(zip5(a.zip)) || null, win: windowOf(a.tags, a.windowStart, a.windowEnd, day),
+        return { kind: 'board', a, jobId: a.jobId, customer: a.customer, city: a.city, addr: addrOf(a.street, a.city, a.state, a.zip), pt: points.get(zip5(a.zip)) || null, win: windowOf(a.tags, a.windowStart, a.windowEnd, day),
           dur: Math.max(15, busyNow && a.end > now ? (a.end - now) / 60000 : (a.end - a.start) / 60000), busyNow };
       }).sort((x, y) => (y.busyNow - x.busyNow) || (x.a.start - y.a.start));
       const start = today ? new Date(Math.max(+D.start, Math.ceil(now / 900000) * 900000)) : D.start;
@@ -7798,7 +7884,9 @@
       const working = stops.find(x => x.busyNow && /^working$/i.test(x.a.techStatus[t.id] || x.a.status));
       const startPt = working && working.pt ? working.pt : lastDone ? points.get(zip5(lastDone.zip)) : homePt;
       const startWords = working && working.pt ? '🔧 Working now' : lastDone ? '✅ From their last job' + (lastDone.city ? ' (' + tidy(lastDone.city) + ')' : '') : '🏠 ' + (today ? 'From ' : 'Leaves ') + homeWords(h);
-      const R = { t, D, start, end: D.end, startPt, startWords, homePt, home: h, stops, fixedN: stops.filter(x => x.busyNow).length, n0: new Set(jobs.map(a => a.jobId)).size, added: [], sales: isSales(t.team) };
+      const homeAddr = h ? h.address || h.lat + ',' + h.lon : '';
+      const startAddr = working && working.pt ? working.addr : lastDone ? addrOf(lastDone.street, lastDone.city, lastDone.state, lastDone.zip) : homeAddr;
+      const R = { t, D, start, end: D.end, startPt, startWords, startAddr, homePt, homeAddr, home: h, stops, fixedN: stops.filter(x => x.busyNow).length, n0: new Set(jobs.map(a => a.jobId)).size, added: [], sales: isSales(t.team) };
       if (!R.startPt && !stops.some(x => x.pt)) return null;   // nowhere to measure from
       if (today && start >= D.end) return null;                 // their day is over
       R.base = simulate(R, stops, guess, grace);
@@ -7855,7 +7943,7 @@
           if (pick && !fits.length) { otherDept++; return; }
           if (PHONE_ONLY.test(c.type)) { left.push({ c, why: 'a phone call only, not a visit' }); return; }
           if (!c.pt) { left.push({ c, why: 'no location in ServiceTitan to measure to' }); return; }
-          const x = { kind: 'new', c, jobId: c.jobId, customer: c.customer, city: c.city, pt: c.pt, win: c.win, dur: c.dur, prio: norm(c.priority).toLowerCase() };
+          const x = { kind: 'new', c, jobId: c.jobId, customer: c.customer, city: c.city, addr: addrOf(c.street, c.city, c.state, c.zip, c.pt), pt: c.pt, win: c.win, dur: c.dur, prio: norm(c.priority).toLowerCase() };
           let best = null, why = null, closest = null;
           if (!fits.length) {
             const f = routes.length ? fitFor(routes[0], c) : null, by = f && f.by;
@@ -7901,7 +7989,7 @@
           const pool = H.rows.filter(c => c.pt && !PHONE_ONLY.test(c.type) && !planned.has(c.jobId)).map(c => Object.assign({}, c, { win: windowOf(c.tags, null, null, day) }));
           const near = (R, h) => [R.startPt, R.homePt].concat(R.stops.map(x => x.pt)).some(p => p && miles(p, h.pt) <= HOLD_NEAR);
           const bestFor = (R, h) => {
-            const x = { kind: 'hold', c: h, jobId: h.jobId, customer: h.customer, city: h.city, pt: h.pt, win: h.win, dur: h.dur, prio: norm(h.priority).toLowerCase(), phone: h.phone };
+            const x = { kind: 'hold', c: h, jobId: h.jobId, customer: h.customer, city: h.city, addr: addrOf(h.street, h.city, h.state, h.zip, h.pt), pt: h.pt, win: h.win, dur: h.dur, prio: norm(h.priority).toLowerCase(), phone: h.phone };
             const badBase = R.base.out.filter(o => o.bad).length;
             let best = null;
             for (let p = R.fixedN; p <= R.stops.length; p++) {
@@ -8071,6 +8159,9 @@
       });
       row(clock(f.home), '🏠 Home' + (f.over >= 5 ? ' · ' + mins(f.over) + ' past their shift' : ''), f.back ? '🚗 ' + g + mins(f.back) : '', 'edge');
       box.appendChild(tl);
+      // 🗺️ The whole route (new jobs and holds too) in Google Maps.
+      const maps = mapsPills(R, f.out.map(o => o.x));
+      if (maps.length) { const m = el('div', 'display:flex;gap:6px;flex-wrap:wrap;margin-top:3px'); m.className = 'st-plan-maps'; maps.forEach(b => m.appendChild(b)); box.appendChild(m); }
       return box;
     };
     const planText = P => {
@@ -8094,8 +8185,9 @@
     //     there; 8-12s first, then 12-5s, then 5-9s), and home on time.
     //   - A job with no arrival window (no window tag, no window on the appointment) stays near its
     //     booked time: no earlier than EARLY minutes before it, and late after BOOKED minutes.
-    //   - Drive times between every place on the route come from one Mapbox request (📊 Score every
-    //     tech uses straight-line miles, to be quick).
+    //   - Drive times between every place on the route come from Mapbox (fillLegs: one request for a
+    //     route, or for several routes at once in 📊 Score every tech, kept 15 minutes, so checking a
+    //     tech after scoring everyone asks Mapbox nothing).
     //   - Between orders that are otherwise as good, the one that gets them home sooner (HOME_WEIGHT
     //     a minute: 30 minutes sooner counts as 3 minutes less driving), then the one that moves the
     //     fewest jobs (MOVE_WEIGHT each: two jobs at the same place aren't swapped for nothing).
@@ -8103,6 +8195,7 @@
     //     save (driving, lateness, time past their shift and getting home, in minutes):
     //     100 × (1 − saved / (now + 30)), where now is what the board's order costs.
     // It only suggests: the jobs are moved on the board, by you (the Toolbox doesn't change times).
+    // 🗺️ Google Maps opens the route shown (suggested, or as it is now) as driving directions.
     const BRUTE = 8, BOOKED = 120, HOME_WEIGHT = 0.1, MOVE_WEIGHT = 0.3;
     // Their route with a window for each job that has none: its booked time.
     const withBooked = (R, grace) => {
@@ -8160,6 +8253,8 @@
       if (dHome <= -5) out.push('gets them home ' + mins(-dHome) + ' later');
       return out.length ? out : ['gets them to their jobs a little sooner'];
     };
+    // Every place on a route: where it starts, home, and each stop.
+    const routePts = R => [R.startPt, R.homePt].concat(R.stops.map(x => x.pt));
     const sharedWith = (x, t) => x.a && Array.isArray(x.a.techs) ? x.a.techs.filter(id => S(id) !== S(t.id)).length : 0;
     let optRun = 0, lastOpt = null, optView = 'best';
     const optimize = async () => {
@@ -8190,17 +8285,13 @@
         const R = withBooked(R0, grace), movable = R.stops.length - R.fixedN;
         if (movable < 2) return renderOpt({ s, t, R, none: !R.stops.length ? t.name + ' has no jobs ' + (today ? 'left today' : 'that day') + '.' : movable === 1 ? t.name + ' has only one job ' + (today ? 'left ' : '') + 'to put in order.' : 'Every job ' + t.name + ' has left is underway.' });
         say('Getting drive times between their stops…');
-        const P = [];
-        [R.startPt, R.homePt].concat(R.stops.map(x => x.pt)).forEach(p => { if (p && !P.some(q => ptText(q) === ptText(p))) P.push(p); });
-        const m = await matrix(P, P, false);
+        await fillLegs([routePts(R)], stale);
         if (stale()) return;
-        const idx = new Map(P.map((p, i) => [ptText(p), i]));
-        const leg = (a, b) => { const i = idx.get(ptText(a)), j = idx.get(ptText(b)), d = i != null && j != null ? m.out[i][j] : null; return d ? d.min : guess(a, b); };
         say('Trying every order…');
         await wait(0);
-        const { cur, best, saved } = bestOrder(R, leg, grace);
+        const flag = { guess: false }, { cur, best, saved } = bestOrder(R, legFrom(flag), grace);
         optView = 'best';
-        renderOpt(lastOpt = { s, t, R, cur, best, score: scoreOf(cur, saved), guess: !m.ok, grace, today, zipError: error, noPt: R.stops.filter(x => !x.pt).length });
+        renderOpt(lastOpt = { s, t, R, cur, best, score: scoreOf(cur, saved), guess: flag.guess, grace, today, zipError: error, noPt: R.stops.filter(x => !x.pt).length });
       } catch (e) {
         if (stale()) return;
         say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t check the route: ' + errText(e)));
@@ -8289,15 +8380,16 @@
       });
       row(clock(show.home), '🏠 Home' + (show.over >= 5 ? ' · ' + mins(show.over) + ' past their shift' : ''), show.back ? '🚗 ' + g + mins(show.back) : '', 'edge');
       optOut.appendChild(tl);
-      if (!same) {
-        const foot = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
-        foot.appendChild(copyPill('📋 Copy suggested order', optText(O), 'Copies the suggested order as text'));
-        optOut.appendChild(foot);
-      }
+      // 🗺️ The route shown, in Google Maps.
+      const foot = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+      foot.className = 'st-opt-foot';
+      mapsPills(O.R, show.out.map(o => o.x)).forEach(b => foot.appendChild(b));
+      if (!same) foot.appendChild(copyPill('📋 Copy suggested order', optText(O), 'Copies the suggested order as text'));
+      optOut.appendChild(foot);
       if (O.noPt) optOut.appendChild(small('⚠️ ' + plural(O.noPt, 'job has', 'jobs have') + ' no zip code to measure to, so ' + (O.noPt === 1 ? 'its' : 'their') + ' driving isn\'t counted.', 'color:var(--st-amber)'));
       if (O.zipError) optOut.appendChild(small('⚠️ Some zip codes couldn\'t be looked up: ' + O.zipError + '.', 'color:var(--st-amber)'));
-      optOut.appendChild(small((O.guess ? '⚠️ Drive times aren\'t available right now, so these are guesses from straight-line miles (marked ~). ' : 'Drive times © Mapbox © OpenStreetMap. ') +
-        'Late is OK up to ' + mins(O.grace) + ' (Late OK, in 🗺️ Plan). Times assume each job takes its booked time. It only suggests: to use it, move the jobs on the board.'));
+      optOut.appendChild(small((O.guess ? '⚠️ Some drive times aren\'t available right now, so those are guesses from straight-line miles (marked ~). ' : 'Drive times © Mapbox © OpenStreetMap. ') +
+        'Late is OK up to ' + mins(O.grace) + ' (Late OK, in 🗺️ Plan). Times assume each job takes its booked time. It only suggests: to use it, move the jobs on the board. 🗺️ Google Maps shows ' + (same || optView === 'now' ? 'this' : 'the suggested') + ' order.'));
       optOut.style.display = 'grid';
       say(same ? 'Already the best order for these jobs.' : 'A better order is below. Nothing changes unless you move the jobs on the board.');
       fit();
@@ -8308,8 +8400,10 @@
       lines.push('  ' + clock(O.best.sim.home) + '  home', '', 'The suggested order ' + gains(O.cur, O.best.sim).join(', ') + '.');
       return lines.join('\n');
     };
-    // 📊 Score every tech: each field tech's route score for the day the board shows, lowest first
-    // (straight-line miles, to be quick). Clicking one checks theirs with drive times.
+    // 📊 Score every tech: each field tech's route score for the day the board shows, lowest first,
+    // with Mapbox drive times, the same way as checking one tech (so the scores match). The routes'
+    // places go to Mapbox packed together (about one request for every 3 or 4 techs). Clicking one
+    // shows theirs (with the drive times already had).
     const scoreAll = async () => {
       const run = ++optRun;
       const stale = () => run !== optRun || !alive;
@@ -8328,15 +8422,22 @@
         field.forEach(t => (s.byTech.get(S(t.id)) || []).forEach(a => zips.push(zip5(a.zip))));
         const { points } = await zipPoints(zips);
         if (stale()) return;
-        say('Scoring every route…');
-        await wait(0);
-        const grace = Number(graceSel.value) || 60, now = new Date(), rows = [];
+        const grace = Number(graceSel.value) || 60, now = new Date(), routes = [], rows = [];
         field.forEach(t => {
           const R0 = routeOf(s, t, points, now, grace);
-          if (!R0 || R0.stops.length - R0.fixedN < 2) return;
-          const R = withBooked(R0, grace), { cur, best, saved } = bestOrder(R, guess, grace, 7);
-          rows.push({ t, R, score: scoreOf(cur, saved), gs: gains(cur, best.sim) });
+          if (R0 && R0.stops.length - R0.fixedN >= 2) routes.push(withBooked(R0, grace));
         });
+        if (routes.length) say('Getting drive times for ' + plural(routes.length, 'route') + '…');
+        await fillLegs(routes.map(routePts), stale);
+        if (stale()) return;
+        let guessed = 0;
+        for (let i = 0; i < routes.length; i++) {
+          // A moment between techs, so the page keeps up while it tries every order.
+          if (i % 4 === 0) { say('Scoring ' + (i + 1) + ' of ' + routes.length + '…'); await wait(0); if (stale()) return; }
+          const R = routes[i], flag = { guess: false }, { cur, best, saved } = bestOrder(R, legFrom(flag), grace);
+          if (flag.guess) guessed++;
+          rows.push({ t: R.t, R, score: scoreOf(cur, saved), gs: gains(cur, best.sim), guess: flag.guess });
+        }
         if (stale()) return;
         rows.sort((a, b) => a.score - b.score || a.t.name.localeCompare(b.t.name));
         optOut.appendChild(el('div', 'font-size:13px;font-weight:800', 'Route scores · ' + dayText(s.day)));
@@ -8349,14 +8450,15 @@
           b.type = 'button';
           b.className = 'st-opt-tech';
           b.setAttribute('data-tech', x.t.id);
-          b.append(el('span', 'flex:none;width:42px;font-weight:900;font-size:14px;color:' + ink, x.score + '%'),
+          b.append(el('span', 'flex:none;width:44px;font-weight:900;font-size:14px;color:' + ink, (x.guess ? '~' : '') + x.score + '%'),
             el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', x.t.name + ' · ' + plural(x.R.stops.length, 'stop') + (x.score < 100 ? ' · ' + x.gs[0] : ' · ✓ best order')));
-          b.title = (x.score === 100 ? 'Already the best order. ' : 'A better order ' + x.gs.join(', ') + '. ') + 'Click to check it with drive times.';
+          b.title = (x.score === 100 ? 'Already the best order. ' : 'A better order ' + x.gs.join(', ') + '. ') + 'Click for the details.';
           b.onclick = () => { fillTechs(true); optSel.value = x.t.id; set('stOptTech', x.t.id); paint(); optimize(); };
           list.appendChild(b);
         });
         if (rows.length) optOut.appendChild(list);
-        optOut.appendChild(small('Lowest first. Scored with straight-line miles to be quick; click a tech to check theirs with drive times.'));
+        if (guessed) optOut.appendChild(small('⚠️ Some drive times for ' + plural(guessed, 'route') + ' aren\'t available right now, so those scores use straight-line miles (marked ~).', 'color:var(--st-amber)'));
+        optOut.appendChild(small('Lowest first; click a tech for the details. Drive times © Mapbox © OpenStreetMap.'));
         optOut.style.display = 'grid';
         say(rows.length ? 'Route scores for every field tech with two or more jobs. Click one for the details.' : 'Nothing to score.');
         fit();
