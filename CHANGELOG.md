@@ -4,7 +4,8 @@
 
 - **No sideways scrolling.** Lists and boxes always fit the Toolbox's width. A long tag name in ＋ Jobs with a tag… used to make Move Jobs and Job Notifications scroll sideways.
 - **Wider or narrower:** drag the Toolbox's left edge or its bottom-right corner (300 to 900 px, never off the screen). The width is remembered in the browser; double-click either one for the usual width. A smaller browser window keeps the Toolbox inside it.
-- Tests: new `tests/test_panel_size.py`.
+- **Animations**, short and quiet (0.15–0.2 seconds), and only in the Toolbox, never on the board: it fades in when opened and out when closed, a tool slides in from the right and the menu from the left, **–** folds it down (and back up) smoothly, menu tiles lift a little on hover, buttons dip when pressed, the green, yellow and red bars drop in, and ＋ Whole board, ＋ Everyone on the board, Load holds and ＋ All Unassigned show a spinner while they load. Nothing waits on an animation: closing, folding and switching tools take effect at once. Computers set to reduce motion get none of it.
+- Tests: new `tests/test_panel_size.py` and `tests/test_animations.py`.
 
 ## 2.0
 

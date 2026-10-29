@@ -12,6 +12,7 @@ Version 2.0 works on ServiceTitan's new Dispatch board, on its **Day** view. On 
 - **The Jobs Tray** under the board (Unassigned, Hold and the other tabs): click jobs in it to pick them, or **+ Tray page** to add the tab and page that are open.
 - **A new look**, matching the new board. **–** folds the Toolbox down to its title bar; click it again to open it back up.
 - **Make it wider or narrower** by dragging its left edge or bottom-right corner. It remembers the width; double-click either one for the usual width. Nothing inside scrolls sideways.
+- **Quick animations** (fading in and out, tools sliding in, smooth folding, loading spinners). If your computer is set to reduce motion, they're turned off.
 
 ## Tools
 

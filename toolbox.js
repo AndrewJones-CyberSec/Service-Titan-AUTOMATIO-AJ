@@ -20,8 +20,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.0';
+  const VERSION = '2.0.1';
   const WHATS_NEW = {
+    '2.0.1': 'Nothing inside the Toolbox scrolls sideways any more, and you can make it wider or narrower by dragging its left edge or bottom-right corner (it remembers; double-click for the usual width). Plus a few quick animations: it fades in and out, tools slide in, – folds it smoothly, and loading buttons show a spinner.',
     '2.0': 'Built for ServiceTitan\'s new Dispatch board (use its Day view), with a new look. Every tool works on it again. New: tags show on every job, and ＋ Jobs with a tag… adds all the jobs with one tag. Jobs show how their day is going (🚚 Dispatched 10:20 AM, 🔧 Working). ＋ Whole board is quicker (the whole day comes in one request). 💬 Tech Messages adds everyone Working or Dispatched in one click. – folds the Toolbox down to its title bar.',
     '1.7.2': 'New in 📱 Customer Texts: ＋ A department… next to ＋ Everyone on the board adds just one team\'s customers for the day (Level 1 Service, Installers…) or just the Unassigned list. Pick another to add it too. 📥 Check replies then looks only at those customers.',
     '1.7.1': '📥 Check replies counts earlier confirm texts: a C to Saturday\'s text for Monday still counts after a newer reminder, if all they said after it was "already confirmed", "already did" or "thanks". A coworker\'s text that only says the weekday ("your appointment Monday") counts for that day, and one naming another day ("Saturday") no longer counts for Monday.',
@@ -988,8 +989,33 @@
     // The grips for making the Toolbox wider or narrower (its left edge and bottom-right corner).
     '#' + ID + ' .st-grip{position:absolute;cursor:ew-resize;z-index:3}',
     '#' + ID + ' .st-grip-l:hover,#' + ID + ' .st-grip.st-on{background-color:rgba(2,101,220,.18)}',
-    '#' + ID + '.st-min .st-grip{display:none}'
+    '#' + ID + '.st-min .st-grip{display:none}',
+    // Animations (2.0.1): short and quiet, and only in the Toolbox (never on the board). Skipped
+    // when the computer is set to reduce motion.
+    '@media (prefers-reduced-motion: no-preference){' +
+      '@keyframes st-tb-open{from{opacity:0;transform:translateY(10px)}}' +
+      '@keyframes st-tb-right{from{opacity:0;transform:translateX(14px)}}' +
+      '@keyframes st-tb-left{from{opacity:0;transform:translateX(-14px)}}' +
+      '@keyframes st-tb-drop{from{opacity:0;transform:translateY(-6px)}}' +
+      '@keyframes st-tb-spin{to{transform:rotate(360deg)}}' +
+      // Opening the Toolbox; a tool sliding in from the right, the menu from the left.
+      '#' + ID + '{animation:st-tb-open .2s cubic-bezier(.2,.8,.2,1)}' +
+      '#' + ID + ' > .st-view{animation:st-tb-right .18s cubic-bezier(.2,.8,.2,1)}' +
+      '#' + ID + ' > .st-view-menu{animation-name:st-tb-left}' +
+      // The green, yellow and red bars under the title bar.
+      '#' + ID + ' > .st-bar{animation:st-tb-drop .18s ease-out}' +
+      // Tiles lift a little on hover; buttons dip when pressed.
+      '#' + ID + ' button{transition:background-color .12s,border-color .12s,box-shadow .12s,filter .12s,transform .08s}' +
+      '#' + ID + ' button:not(:disabled):active{transform:scale(.97)}' +
+      '#' + ID + ' .st-tile{transition:background-color .12s,border-color .12s,box-shadow .15s,transform .15s}' +
+      '#' + ID + ' .st-tile:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(16,24,40,.10)}' +
+      '#' + ID + ' .st-tile:active{transform:translateY(0) scale(.99)}' +
+      // A small spinner on a button while it loads.
+      '#' + ID + ' .st-busy::before{content:"";display:inline-block;width:9px;height:9px;margin-right:6px;vertical-align:-1px;' +
+        'border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:st-tb-spin .7s linear infinite}' +
+    '}'
   ].join('\n');
+  const motionOK = () => { try { return !window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return true; } };
   (document.head || document.documentElement).appendChild(sheet);
   const DEFAULT_WIDTH = 340, MIN_WIDTH = 300;
   const maxWidth = () => Math.max(MIN_WIDTH, Math.min(900, innerWidth - 16));
@@ -1332,13 +1358,18 @@
   const closeX = headBtn('✕', 'Close');
   header.append(titleWrap, minBtn, closeX);
   // Folded down (remembered in this browser): only the title bar shows, so the board is free.
-  const setMin = on => {
+  const setMin = (on, animate) => {
+    const from = animate && motionOK() && panel.isConnected ? panel.getBoundingClientRect().height : null;
     panel.classList.toggle('st-min', !!on);
     minBtn.textContent = on ? '▢' : '–';
     minBtn.title = on ? 'Open the Toolbox back up' : 'Fold the Toolbox down to its title bar';
     set('stMin', on ? '1' : '0');
+    if (from != null && typeof panel.animate === 'function') {
+      const to = panel.getBoundingClientRect().height;
+      if (Math.abs(to - from) > 2) panel.animate([{ height: from + 'px' }, { height: to + 'px' }], { duration: 200, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    }
   };
-  minBtn.onclick = () => setMin(!panel.classList.contains('st-min'));
+  minBtn.onclick = () => setMin(!panel.classList.contains('st-min'), true);
 
   // "What's new", shown once after an update: a title line with ✕, then the text. It goes away
   // by itself after 40 seconds (not while the mouse is on it), or with ✕.
@@ -1531,6 +1562,9 @@
   const textsPane = el('div', 'display:none');
   const movesPane = el('div', 'display:none;overflow-y:auto');
   const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane, texts: textsPane, moves: movesPane };
+  Object.keys(views).forEach(k => { views[k].classList.add('st-view'); if (k === 'menu') views[k].classList.add('st-view-menu'); });
+  news.classList.add('st-bar');
+  health.bar.classList.add('st-bar');
   const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts', moves: '🔀 Move Jobs' };
   const showView = name => {
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
@@ -2391,7 +2425,7 @@
     const addWhole = async () => {
       if (wholeLoading || running) return;
       if (!onBoard()) { say(board.need()); return; }
-      wholeLoading = true; wholeBtn.textContent = 'Loading…'; dim(wholeBtn, true);
+      wholeLoading = true; wholeBtn.textContent = 'Loading…'; wholeBtn.classList.add('st-busy'); dim(wholeBtn, true);
       say('Loading the whole board…');
       try {
         const r = await boardData.whole(TOOL);
@@ -2401,7 +2435,7 @@
         say('Added ' + plural(n, 'job') + ' from ' + boardDate() + ' (' + r.onTimeline + ' on the timeline, ' + r.unassigned + ' unassigned' +
           (r.canceled ? ', ' + r.canceled + ' canceled left out' : '') + ')' + (n < r.jobs.length ? '. ' + (r.jobs.length - n) + ' were already picked' : '') + '. Take any off with ✕.');
       } catch (e) { say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t load the whole board: ' + errText(e))); }
-      finally { wholeLoading = false; wholeBtn.textContent = '＋ Whole board'; dim(wholeBtn, running); fillTechs(true); }
+      finally { wholeLoading = false; wholeBtn.textContent = '＋ Whole board'; wholeBtn.classList.remove('st-busy'); dim(wholeBtn, running); fillTechs(true); }
     };
 
     const setEnabled = on => {
@@ -4012,7 +4046,7 @@
       const top = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap');
       const info = el('span', 'font-size:12px;flex:1;min-width:120px');
       const loadBtn = smallBtn(holds ? '↻ Reload' : 'Load holds', () => doLoadHolds());
-      if (holdsLoading) { info.textContent = 'Loading holds…'; loadBtn.disabled = true; loadBtn.style.opacity = '.5'; }
+      if (holdsLoading) { info.textContent = 'Loading holds…'; loadBtn.disabled = true; loadBtn.style.opacity = '.5'; loadBtn.classList.add('st-busy'); }
       else if (!holds) info.textContent = onBoard() ? 'Loads every hold on the board\'s Hold list.' : board.need();
       else info.textContent = s1(holds.jobs.length, 'hold') + (holds.bus.length ? ' · ' + holds.bus.join(', ') : ' · all business units') +
         ' · ' + holds.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -4090,6 +4124,7 @@
     const renderPicked = () => {
       whoBox.textContent = '';
       everyoneBtn.textContent = everyoneLoading ? 'Loading…' : '＋ Everyone on the board';
+      everyoneBtn.classList.toggle('st-busy', !!everyoneLoading);
       everyoneBtn.disabled = everyoneLoading;
       everyoneBtn.style.opacity = everyoneLoading ? '.5' : '1';
       deptSel.disabled = everyoneLoading;
@@ -5565,6 +5600,7 @@
       if (busy) return;
       if (!onBoard()) return say(board.need());
       busy = true; updateButtons();
+      uaBtn.classList.add('st-busy');
       say('Loading the Unassigned list for ' + dayText(boardDay()) + '...');
       try {
         const rows = await loadUnassigned();
@@ -5576,7 +5612,7 @@
         say(jobs.length ? 'Added ' + plural(n, 'job') + ' from the Unassigned list for ' + dayText(boardDay()) + (n < jobs.length ? ' (' + (jobs.length - n) + ' were already picked or didn\'t fit)' : '') + '.' : 'The Unassigned list for ' + dayText(boardDay()) + ' is empty.');
       } catch (e) {
         say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t load the Unassigned list: ' + errText(e)));
-      } finally { busy = false; updateButtons(); }
+      } finally { busy = false; uaBtn.classList.remove('st-busy'); updateButtons(); }
     };
 
     // ---------- Working out what to do ----------
@@ -6330,6 +6366,7 @@
   const closeText = el('div', 'margin-bottom:6px');
   const closeBtns = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
   closeBar.append(closeText, closeBtns);
+  closeBar.classList.add('st-bar');
   header.after(closeBar);
   let closing = false;
   const finishClose = () => {
@@ -6341,9 +6378,17 @@
     texts.cleanup();
     moves.cleanup();
     board.stop();
-    panel.remove();
-    sheet.remove();
     delete window.__stToolbox;
+    const gone = () => { panel.remove(); sheet.remove(); };
+    if (!motionOK() || typeof panel.animate !== 'function') return gone();
+    // Its styles follow it to the other name, so it looks the same while it fades.
+    panel.style.animation = 'none';
+    sheet.textContent = sheet.textContent.split('#' + ID).join('#' + ID + '-bye');
+    panel.id = ID + '-bye';
+    panel.style.pointerEvents = 'none';
+    const fade = panel.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(8px)' }], { duration: 150, easing: 'ease-in', fill: 'forwards' });
+    fade.onfinish = gone;
+    setTimeout(gone, 600);
   };
   const close = () => {
     const runners = [[notify, 'Job Notifications'], [msgs, 'Tech Messages'], [biz, 'Business Unit'], [texts, 'Customer Texts'], [moves, 'Move Jobs']];
