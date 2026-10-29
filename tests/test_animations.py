@@ -76,6 +76,7 @@ with sync_playwright() as p:
     check(page.locator('#st-toolbox').count() == 0 and not ev(page, "() => !!window.__stToolbox"), 'closing: gone at once for everything else')
     check(page.locator('#st-toolbox-bye').count() == 1, 'closing: the old Toolbox fades out')
     check(ev(page, "() => getComputedStyle(document.getElementById('st-toolbox-bye')).pointerEvents") == 'none', 'closing: the fading one can\'t be clicked')
+    check(ev(page, "() => document.getElementById('st-toolbox-bye').querySelectorAll('[id]').length") == 0, 'closing: nothing inside the fading one can be found by its name')
     check(ev(page, "() => getComputedStyle(document.getElementById('st-toolbox-bye')).backgroundColor") == 'rgb(255, 255, 255)', 'closing: it keeps its look while it fades')
     page.evaluate(TOOLBOX)
     check(page.locator('#st-toolbox').count() == 1 and ev(page, "() => !!window.__stToolbox"), 'opening again right away works')

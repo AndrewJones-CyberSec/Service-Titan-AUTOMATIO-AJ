@@ -6385,6 +6385,9 @@
     panel.style.animation = 'none';
     sheet.textContent = sheet.textContent.split('#' + ID).join('#' + ID + '-bye');
     panel.id = ID + '-bye';
+    // Its insides give up their names too, so nothing (a new Toolbox opened right away, say) finds
+    // the fading one's lists and boxes instead of its own.
+    panel.querySelectorAll('[id]').forEach(e => e.removeAttribute('id'));
     panel.style.pointerEvents = 'none';
     const fade = panel.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(8px)' }], { duration: 150, easing: 'ease-in', fill: 'forwards' });
     fade.onfinish = gone;
