@@ -107,6 +107,23 @@ with sync_playwright() as p:
     check(errors == [], 'menus loading after a scroll: no page errors: %s' % errors)
     page.close()
 
+    # ---- The menu stays open after Send Message (like the real one): closed after each tech ----
+    page, errors, done = send_run(b, "() => {}")
+    check(done and page.evaluate("() => NB.host.shadowRoot.querySelectorAll('[role=menu]').length") == 0, 'no tech menu left open after the run')
+    page.close()
+
+    # ---- Something covers the message box for a moment (the panel still coming in): it waits ----
+    page, errors, done = send_run(b, "() => { NB.cfg.cover = 1200; }")
+    check(done and sent(page) == ['Tech One', 'Tech Two'], 'message box covered for a moment: it waits, then sends (%s)' % sent(page))
+    page.close()
+
+    # ---- Covered the whole time: skipped, and the log says what covers it ----
+    page, errors, done = send_run(b, "() => { NB.cfg.cover = 'always'; }")
+    lg = log_text(page)
+    check(done and sent(page) == [], 'message box covered the whole time: nothing sent')
+    check('something is covering the message box (div[test-cover])' in lg, 'the log says what covers it')
+    page.close()
+
     # ---- The menu never opens: stop at the first tech with the yellow bar, not a skip per tech ----
     page, errors, done = send_run(b, "() => { NB.cfg.menu = false; }")
     lg = log_text(page); yb = bar(page)

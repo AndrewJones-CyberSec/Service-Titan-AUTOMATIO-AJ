@@ -4,6 +4,9 @@
 
 - **Fixed: 💬 Tech Messages skipped every tech** with *their name on the board has no menu* (Oct 29 2026; nothing was sent). When the board scrolls a tech's row into view it first draws a plain name with no menu, and the real one (with its menu button and the `data-hover-popover-trigger` mark the Toolbox looked for) about 1.5 seconds later. The Toolbox looked a quarter second after scrolling, so it saw the plain name. It now waits for the menu button (up to 6 seconds), then opens the menu the way you would: a right-click, then a left click, whichever worked last first.
 - If the menu never opens, the run stops at the first tech with the yellow bar instead of skipping everyone one by one. If it opened for others, a tech without one is skipped, with why.
+- **Fixed: *something is covering the message box*.** After Send Message the message panel slides in for about half a second, and the Toolbox checked at about half a second (sometimes too soon on a busy computer). It now gives the box up to 2.5 seconds to show, and if something really does cover it, the log says what.
+- The tech menu stays open after Send Message, and an Escape on the page doesn't close it: the Toolbox now closes it with an Escape on the menu itself, after each tech and before opening the next one. Send Message is looked for in that tech's own menu first.
+- The Toolbox slides out of the message panel's way again (the panel's outer element has no size of its own on the new board, so it never moved).
 - Send Message in the menu is found by its words if its label ever changes.
 - Tests: new `tests/test_tech_menu.py`; the fake board's tech menu opens like today's real one.
 

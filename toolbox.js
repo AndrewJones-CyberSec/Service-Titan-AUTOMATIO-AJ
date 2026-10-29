@@ -2820,22 +2820,44 @@
       }
       return e || null;
     };
-    // True only if the message box is the thing actually showing on screen at that spot.
-    const boxOnTop = () => {
+    // What's showing on top of the message box: '' if the box itself is (at any of a few spots in
+    // the part of it that's on screen), or else a short description of what covers it, for the log.
+    const describe = e => e.tagName.toLowerCase() + (e.getAttribute('data-cy') ? '[' + e.getAttribute('data-cy') + ']' : '') +
+      (e.getAttribute('role') ? ' role=' + e.getAttribute('role') : '') + (e.getAttribute('aria-label') ? ' "' + e.getAttribute('aria-label').slice(0, 30) + '"' : '');
+    const coverOf = () => {
       const box = chatBox();
-      if (!box) return false;
+      if (!box) return 'no message box';
       const r = box.getBoundingClientRect();
-      if (r.width < 20 || r.bottom > innerHeight || r.top < 0) return false;
-      const top = deepAt(r.left + r.width / 2, r.top + r.height / 2);
-      return !!top && (top === box || box.contains(top));
+      const top = Math.max(r.top, 0), bottom = Math.min(r.bottom, innerHeight), left = Math.max(r.left, 0), right = Math.min(r.right, innerWidth);
+      if (right - left < 20 || bottom - top < 8) return 'the message box is off the screen';
+      let first = null;
+      for (const [fx, fy] of [[0.5, 0.5], [0.2, 0.5], [0.8, 0.5], [0.5, 0.2], [0.5, 0.8]]) {
+        const e = deepAt(left + (right - left) * fx, top + (bottom - top) * fy);
+        if (e && (e === box || box.contains(e))) return '';
+        if (!first && e) first = e;
+      }
+      return first ? describe(first) : 'nothing showing there';
     };
+    const boxOnTop = () => !coverOf();
     // Moves the Toolbox panel to the left of the message panel so it doesn't cover it.
     // The run puts it back where it was afterward (see go()).
     let dodged = false;
+    const acRect = () => {
+      const box = chatBox();
+      if (!box) return null;
+      // From the message box outward: the widest part that's still a side panel, not the whole page.
+      let best = box.getBoundingClientRect();
+      for (let e = box.parentElement || (box.parentNode && box.parentNode.host); e; e = e.parentElement || (e.parentNode && e.parentNode.host)) {
+        const q = e.getBoundingClientRect();
+        if (q.width > Math.max(640, innerWidth * 0.5)) break;
+        if (q.width && q.height) best = q;
+      }
+      return best;
+    };
     const dodge = () => {
-      const h = acHost();
-      if (!h) return;
-      const hr = h.getBoundingClientRect(), pr = panel.getBoundingClientRect();
+      const hr = acRect();
+      if (!hr) return;
+      const pr = panel.getBoundingClientRect();
       if (hr.width && pr.right > hr.left && pr.left < hr.right) {
         panel.style.left = Math.max(0, hr.left - pr.width - 16) + 'px';
         panel.style.right = 'auto';
@@ -2861,6 +2883,14 @@
     };
     // How the tech menu opened last ('right' or 'left' click), so the next tech is quicker.
     let menuHow = null;
+    // Every tech menu that's open, closed with an Escape on the menu itself (seen Oct 29 2026: an
+    // Escape on the page doesn't reach it, and the menu stays open after Send Message).
+    const openItems = () => board.qa('[data-cy="tmi-send-message"]').filter(visible).concat([menuItem()]).filter((x, i, a) => x && a.indexOf(x) === i);
+    const closeMenus = async () => {
+      const items = openItems();
+      items.forEach(it => (it.closest('[role="menu"]') || it).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, composed: true, cancelable: true })));
+      if (items.length) await until(() => !openItems().length, 1000, 100);
+    };
     const openChatFor = async t => {
       if (!board.root()) return changed('can\'t find the Dispatch board on the page', 'SERVICETITAN-DISPATCH-CENTER-*');
       // The board only draws the rows on screen: bring the tech's row into view first.
@@ -2890,7 +2920,7 @@
         el.dispatchEvent(new MouseEvent('click', Object.assign({ button: 0, buttons: 0 }, o)));
       };
       const openMenu = async how => {
-        if (menuItem()) { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true })); await wait(200); }
+        await closeMenus();
         press(how);
         const found = await until(() => menuItem(h), 1500);
         if (found) menuHow = how;
@@ -2898,7 +2928,7 @@
       };
       const ways = menuHow === 'left' ? ['left', 'right'] : ['right', 'left'];
       let item = null;
-      for (let round = 0; round < 2 && !item; round++) {   // one more round for a slow board
+      for (let round = 0; round < 3 && !item; round++) {   // more rounds for a slow board
         if (round) await wait(500);
         for (const how of ways) { if ((item = await openMenu(how))) break; }
       }
@@ -2912,6 +2942,7 @@
       if (norm(item.textContent) !== 'Send Message') return changed('the tech menu has no "Send Message" option', '[data-cy="tmi-send-message"]: Send Message');
       item.click();
       const ok = await until(() => chatBox() && panelName().toLowerCase() === t.name.toLowerCase(), 8000);
+      await closeMenus();   // the menu stays open after Send Message
       if (!ok) {
         if (!acHost(true)) return changed('can\'t find the message panel', 'SERVICETITAN-ACTIVITY-CENTER-*');
         if (!chatBox()) return changed('can\'t find the message box', '[data-cy=technician-chat-input]');
@@ -3327,8 +3358,13 @@
           if (err) { out(t, 'skipped: ' + err, 'problem'); continue; }
           await wait(400);
           dodge();
-          if (!boxOnTop()) { await closeJobDrawer(); await wait(300); dodge(); }
-          if (!boxOnTop()) { out(t, 'skipped: something is covering the message box', 'problem'); continue; }
+          let cover = coverOf();
+          if (cover) {
+            await closeMenus(); await closeJobDrawer(); dodge();
+            // The panel may still be sliding in: give it up to 2.5 seconds.
+            cover = (await until(() => !coverOf(), 2500, 150)) ? '' : coverOf();
+          }
+          if (cover) { out(t, 'skipped: something is covering the message box (' + cover + ')', 'problem'); continue; }
           const box = chatBox();
           if (box.value.trim()) { out(t, 'skipped: their message box already had unsent text', 'problem'); continue; }
           const ab = attachBox();

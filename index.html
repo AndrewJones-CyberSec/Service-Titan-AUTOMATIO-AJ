@@ -470,7 +470,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 6px 20px; }
   const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   const inline = s => esc(s)
     .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')   // bold can have *italic* inside
     .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, '$1<i>$2</i>')
     .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>');
   const plain = s => s.replace(/\*\*|`|\*/g, '');

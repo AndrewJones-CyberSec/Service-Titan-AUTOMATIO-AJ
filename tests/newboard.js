@@ -108,7 +108,7 @@
     'a.appointment{display:inline-block;padding:6px 10px;background:#cfe;border:1px solid #9c9;cursor:pointer;color:#000;text-decoration:none;border-radius:6px}' +
     '.team-name{font-weight:bold;background:#ddd;padding:2px 6px}[role=menu]{position:fixed;background:#fff;border:1px solid #999;padding:4px;z-index:5}' +
     '[role=menuitem]{padding:4px 8px;cursor:pointer}.job-list table{border-collapse:collapse}.job-list td{padding:8px;border-bottom:1px solid #ddd}' +
-    'servicetitan-activity-center-test01{position:fixed;right:0;top:0;width:380px;height:100vh;background:#eef;display:none}';
+    'servicetitan-activity-center-test01{display:none}';
   const ready = () => !NB.cfg.hydrateMs || Date.now() >= (NB.readyAt || 0);
   const techRow = (t, list) => '<div class="techrow"><div class="technician' + (ready() ? '' : ' lite') + '" id="team-technician-' + t.id + '" data-cy="ddb-technician-header-' + t.id + '" data-technician-id="' + t.id + '"' +
     (NB.cfg.popoverMark && !t.noMenu && ready() ? ' data-hover-popover-trigger=""' : '') + '>' +
@@ -215,7 +215,8 @@
     if (ac && sr.contains(ac)) return ac;
     ac = document.createElement('servicetitan-activity-center-test01');
     const r = ac.attachShadow({ mode: 'open' });
-    r.innerHTML = '<div style="padding:10px"><button data-cy="close-messaging">✕</button><h3 id="who"></h3><div id="hist"></div>' +
+    r.innerHTML = '<style>.col{position:fixed;right:0;top:0;width:380px;height:100vh;background:#eef;box-sizing:border-box}</style>' +
+      '<div class="col" style="padding:10px"><button data-cy="close-messaging">✕</button><h3 id="who"></h3><div id="hist"></div>' +
       '<textarea data-cy="technician-chat-input" style="width:340px;height:60px"></textarea>' +
       '<label><input type="checkbox" data-cy="attach-message-to-job"> Attach this message to the technician\'s current job</label>' +
       '<button data-cy="send-chat-message">Send</button></div>';
@@ -228,12 +229,20 @@
       box.value = '';
     });
     r.querySelector('[data-cy="close-messaging"]').addEventListener('click', () => { ac.style.display = 'none'; });
+    // NB.cfg.cover: 'always', or a number of ms after the panel opens, while something covers the
+    // message box (a stand-in for whatever covered it on Oct 29 2026).
+    const cover = document.createElement('div');
+    cover.setAttribute('data-cy', 'test-cover');
+    cover.style.cssText = 'position:fixed;right:0;bottom:0;width:400px;height:100vh;background:rgba(0,0,0,.3);z-index:9;display:none';
+    r.appendChild(cover);
+    ac.__cover = cover;
     sr.appendChild(ac);
     return ac;
   };
   const openMenu = (t, e) => {
     const sr = NB.host.shadowRoot;
     sr.querySelectorAll('[role=menu]').forEach(m => m.remove());
+    window.menusOpen = 1;
     const name = t.querySelector('.name').textContent;
     const m = document.createElement('div');
     m.setAttribute('role', 'menu');
@@ -241,13 +250,18 @@
     m.innerHTML = '<div role="menuitem" data-cy="tmi-add-edit-memo">Add/Edit Memo</div><div role="menuitem" data-cy="tmi-call-technician">Call Technician</div><div role="menuitem" data-cy="tmi-send-message"><span>Send Message</span></div>';
     const send = m.querySelector('[data-cy="tmi-send-message"]');
     if (NB.cfg.menuWords) m.querySelectorAll('[data-cy]').forEach(x => x.removeAttribute('data-cy'));
+    // Like the real menu (Oct 29 2026): it stays open after Send Message, and an Escape on the
+    // menu itself closes it (an Escape on the page doesn't).
+    m.addEventListener('keydown', e => { if (e.key === 'Escape') { m.remove(); window.menusOpen = 0; } });
     send.addEventListener('click', () => {
-      m.remove();
       window.menuOpened = (window.menuOpened || 0) + 1;
       const host = activityCenter();
       host.shadowRoot.getElementById('who').textContent = name;
       host.shadowRoot.getElementById('hist').textContent = '';
-      host.style.display = 'block';
+      host.style.display = 'inline';
+      const c = NB.cfg.cover;
+      host.__cover.style.display = c ? 'block' : 'none';
+      if (typeof c === 'number') setTimeout(() => { host.__cover.style.display = 'none'; }, c);
     });
     sr.appendChild(m);
   };
