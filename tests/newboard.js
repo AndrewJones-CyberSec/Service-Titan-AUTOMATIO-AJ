@@ -15,7 +15,10 @@
 //   tray(): [{ job, n, customer, customerId, appt, tags }]   (the Jobs Tray rows), trayTab: 'Unassigned'
 //   history(): [{ tech, appt, job, status, at }]
 //   onCard(job, appt, el), onTech(id, el), onTray(job, el)   (what a normal click does)
-//   menu: true   (a right-click on a tech's name opens their menu, with Send Message)
+//   menu: true   (a left click or a right-click on a tech's name opens their menu, with Send Message,
+//                 as on the real board since Oct 29 2026; menuOn: 'left' or 'right' for only one;
+//                 popoverMark: tech names marked data-hover-popover-trigger, as on Oct 27;
+//                 menuWords: the menu's items have no data-cy labels; a tech with noMenu has none)
 //   filler: n    (n extra rows in the Jobs Tray, and a tall board above it)
 // NB.render() draws the board when the page is on it. '#/DispatchBoard' goes to the new address,
 // like ServiceTitan does. NB.setDay(d) changes the day. window.SENT lists [tech name, text] sent.
@@ -104,7 +107,7 @@
     '[role=menuitem]{padding:4px 8px;cursor:pointer}.job-list table{border-collapse:collapse}.job-list td{padding:8px;border-bottom:1px solid #ddd}' +
     'servicetitan-activity-center-test01{position:fixed;right:0;top:0;width:380px;height:100vh;background:#eef;display:none}';
   const techRow = (t, list) => '<div class="techrow"><div class="technician" id="team-technician-' + t.id + '" data-cy="ddb-technician-header-' + t.id + '" data-technician-id="' + t.id + '"' +
-    (t.noMenu ? '' : ' data-hover-popover-trigger=""') + '><span class="name">' + esc(t.name) + '</span></div>' +
+    (NB.cfg.popoverMark && !t.noMenu ? ' data-hover-popover-trigger=""' : '') + '><span class="name">' + esc(t.name) + '</span></div>' +
     '<div class="cards" id="team-timeline-row-' + t.id + '">' + list.map(a => '<a class="appointment" data-cy="wdb-job-appt-card" data-job-appointment-id="' + a.id +
       '" data-technician-id="' + t.id + '" data-job-id="' + a.job + '" data-id="' + a.id + '">' + esc(a.label || a.customer) + '</a>').join('') + '</div></div>';
   NB.render = () => {
@@ -173,8 +176,13 @@
       else window.opened.push(a.getAttribute('data-job-id'));
     }));
     sr.querySelectorAll('.technician').forEach(t => {
-      t.addEventListener('click', () => { window.techOpened = (window.techOpened || 0) + 1; window.opened = window.opened || []; window.opened.push('tech' + t.getAttribute('data-technician-id')); if (c.onTech) c.onTech(t.getAttribute('data-technician-id'), t); });
-      t.addEventListener('contextmenu', e => { e.preventDefault(); if (c.menu && t.hasAttribute('data-hover-popover-trigger')) openMenu(t, e); });
+      const id = t.getAttribute('data-technician-id');
+      const hasMenu = () => c.menu && !(techs().find(x => String(x.id) === id) || {}).noMenu;
+      t.addEventListener('click', e => {
+        window.techOpened = (window.techOpened || 0) + 1; window.opened = window.opened || []; window.opened.push('tech' + id); if (c.onTech) c.onTech(id, t);
+        if (hasMenu() && c.menuOn !== 'right') { window.menuBy = 'left'; openMenu(t, e); }
+      });
+      t.addEventListener('contextmenu', e => { e.preventDefault(); if (hasMenu() && c.menuOn !== 'left') { window.menuBy = 'right'; openMenu(t, e); } });
     });
     const sc = sr.querySelector('.scroller');
     if (sc) { sc.scrollTop = top; if (c.virtual) sc.addEventListener('scroll', () => { clearTimeout(NB.vt); NB.vt = setTimeout(NB.render, 30); }); }
@@ -212,8 +220,10 @@
     const m = document.createElement('div');
     m.setAttribute('role', 'menu');
     m.style.left = (e.clientX || 10) + 'px'; m.style.top = (e.clientY || 10) + 'px';
-    m.innerHTML = '<div role="menuitem" data-cy="tmi-add-edit-memo">Add/Edit Memo</div><div role="menuitem" data-cy="tmi-call-technician">Call Technician</div><div role="menuitem" data-cy="tmi-send-message">Send Message</div>';
-    m.querySelector('[data-cy="tmi-send-message"]').addEventListener('click', () => {
+    m.innerHTML = '<div role="menuitem" data-cy="tmi-add-edit-memo">Add/Edit Memo</div><div role="menuitem" data-cy="tmi-call-technician">Call Technician</div><div role="menuitem" data-cy="tmi-send-message"><span>Send Message</span></div>';
+    const send = m.querySelector('[data-cy="tmi-send-message"]');
+    if (NB.cfg.menuWords) m.querySelectorAll('[data-cy]').forEach(x => x.removeAttribute('data-cy'));
+    send.addEventListener('click', () => {
       m.remove();
       window.menuOpened = (window.menuOpened || 0) + 1;
       const host = activityCenter();

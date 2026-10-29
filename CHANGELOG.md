@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.2
+
+- **Fixed: 💬 Tech Messages skipped every tech** with *their name on the board has no menu*. On Oct 29 2026 ServiceTitan took away the mark the Toolbox looked for on tech names (`data-hover-popover-trigger`), though the menu still opened (now with a left click as well as a right-click). Nothing was sent. The Toolbox now opens the menu to find out: a right-click, then a left click, whichever worked last first, on the innermost part of the name.
+- If the menu never opens, the run stops at the first tech with the yellow bar instead of skipping everyone one by one. If it opened for others, a tech without one is skipped, with why.
+- Send Message in the menu is found by its words if its label ever changes.
+- Tests: new `tests/test_tech_menu.py`; the fake board's tech menu opens like today's real one.
+
 ## 2.0.1
 
 - **No sideways scrolling.** Lists and boxes always fit the Toolbox's width. A long tag name in ＋ Jobs with a tag… used to make Move Jobs and Job Notifications scroll sideways.

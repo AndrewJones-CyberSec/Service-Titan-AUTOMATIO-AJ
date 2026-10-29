@@ -20,8 +20,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.0.1';
+  const VERSION = '2.0.2';
   const WHATS_NEW = {
+    '2.0.2': 'Fixed: 💬 Tech Messages skipped every tech with "their name on the board has no menu" after a ServiceTitan change on Oct 29. It now opens each tech\'s menu the way you would (a right-click or a left click on their name).',
     '2.0.1': 'Nothing inside the Toolbox scrolls sideways any more, and you can make it wider or narrower by dragging its left edge or bottom-right corner (it remembers; double-click for the usual width). Plus a few quick animations: it fades in and out, tools slide in, – folds it smoothly, and loading buttons show a spinner.',
     '2.0': 'Built for ServiceTitan\'s new Dispatch board (use its Day view), with a new look. Every tool works on it again. New: tags show on every job, and ＋ Jobs with a tag… adds all the jobs with one tag. Jobs show how their day is going (🚚 Dispatched 10:20 AM, 🔧 Working). ＋ Whole board is quicker (the whole day comes in one request). 💬 Tech Messages adds everyone Working or Dispatched in one click. – folds the Toolbox down to its title bar.',
     '1.7.2': 'New in 📱 Customer Texts: ＋ A department… next to ＋ Everyone on the board adds just one team\'s customers for the day (Level 1 Service, Installers…) or just the Unassigned list. Pick another to add it too. 📥 Check replies then looks only at those customers.',
@@ -683,8 +684,12 @@
     };
 
     // ---- A tech's row, brought into view (the board only draws the rows on screen) ----
-    const headerOf = id => qa('[data-cy^="ddb-technician-header-"][data-technician-id="' + id + '"]').find(h => h.hasAttribute('data-hover-popover-trigger')) ||
-      qa('[data-cy^="ddb-technician-header-"][data-technician-id="' + id + '"]')[0] || null;
+    // A tech's name on the board. (On Oct 27 2026 the one with the menu was marked
+    // data-hover-popover-trigger; by Oct 29 that mark was gone, so the one showing is used.)
+    const headerOf = id => {
+      const all = qa('[data-cy^="ddb-technician-header-"][data-technician-id="' + id + '"]');
+      return all.find(h => h.hasAttribute('data-hover-popover-trigger')) || all.find(visible) || all[0] || null;
+    };
     const scrollerOf = el => { for (let e = el; e; e = e.parentElement) { const s = getComputedStyle(e); if (/(auto|scroll)/.test(s.overflowY) && e.scrollHeight > e.clientHeight + 4) return e; } return null; };
     const showTech = async id => {
       let h = headerOf(id);
@@ -2839,23 +2844,59 @@
     };
     // A missing ServiceTitan piece (not a one-off glitch): flag it and stop the whole run.
     const changed = (what, detail) => { health.flag('Tech Messages', what, detail); return { changed: true, what }; };
-    const menuItem = () => board.qa('[data-cy="tmi-send-message"]').find(visible) || null;
+    // "Send Message" in the tech menu: by its label, or else by its words (in the board or on the
+    // page, never in the Toolbox), in case ServiceTitan renames the label.
+    const menuItem = () => {
+      const byLabel = board.qa('[data-cy="tmi-send-message"]').find(visible);
+      if (byLabel) return byLabel;
+      const SEL = '[role="menuitem"], [role="menu"] *, li, button';
+      const said = board.qa(SEL).concat(Array.from(document.querySelectorAll(SEL)))
+        .filter(e => !panel.contains(e) && visible(e) && norm(e.textContent) === 'Send Message');
+      const inner = said.find(e => !said.some(o => o !== e && e.contains(o)));
+      return inner ? (inner.closest('[role="menuitem"], li, button') || inner) : null;
+    };
+    // How the tech menu opened last ('right' or 'left' click), so the next tech is quicker.
+    let menuHow = null;
     const openChatFor = async t => {
       if (!board.root()) return changed('can\'t find the Dispatch board on the page', 'SERVICETITAN-DISPATCH-CENTER-*');
       // The board only draws the rows on screen: bring the tech's row into view first.
       const h = await board.showTech(t.id);
       if (!h) return 'not showing on the board right now (a board filter may hide them)';
-      if (!h.hasAttribute('data-hover-popover-trigger')) return 'their name on the board has no menu (ServiceTitan doesn\'t offer messages for them)';
-      // The tech menu opens with a right-click on their name (seen Oct 2026).
-      const openMenu = async () => {
-        if (menuItem()) { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true })); await wait(200); }
-        const r = h.getBoundingClientRect();
-        h.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, composed: true, cancelable: true, view: window, clientX: r.left + Math.min(40, r.width / 2), clientY: r.top + r.height / 2, button: 2, buttons: 2 }));
-        return until(menuItem, 3000);
+      // The tech menu opens from their name: a right-click (Oct 27 2026) or a left click (it does
+      // both since Oct 29). Whichever worked last is tried first. The press goes to the innermost
+      // part of the name at that spot, so it reaches the menu whichever part listens for it.
+      const press = how => {
+        const r = h.getBoundingClientRect(), x = r.left + Math.min(40, r.width / 2), y = r.top + r.height / 2;
+        let el = h;
+        for (let c; (c = Array.from(el.children).find(k => { const q = k.getBoundingClientRect(); return q.width && x >= q.left && x <= q.right && y >= q.top && y <= q.bottom; })); ) el = c;
+        const o = { bubbles: true, composed: true, cancelable: true, view: window, clientX: x, clientY: y };
+        if (how === 'right') { el.dispatchEvent(new MouseEvent('contextmenu', Object.assign({ button: 2, buttons: 2 }, o))); return; }
+        const pt = Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, o);
+        el.dispatchEvent(new PointerEvent('pointerdown', Object.assign({ button: 0, buttons: 1 }, pt)));
+        el.dispatchEvent(new MouseEvent('mousedown', Object.assign({ button: 0, buttons: 1 }, o)));
+        el.dispatchEvent(new PointerEvent('pointerup', Object.assign({ button: 0, buttons: 0 }, pt)));
+        el.dispatchEvent(new MouseEvent('mouseup', Object.assign({ button: 0, buttons: 0 }, o)));
+        el.dispatchEvent(new MouseEvent('click', Object.assign({ button: 0, buttons: 0 }, o)));
       };
-      let item = await openMenu();
-      if (!item) { await wait(500); item = await openMenu(); }   // one retry for a slow board
-      if (!item) return changed('the tech menu didn\'t open from a tech\'s name', '[data-cy="tmi-send-message"]');
+      const openMenu = async how => {
+        if (menuItem()) { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true })); await wait(200); }
+        press(how);
+        const found = await until(menuItem, 1500);
+        if (found) menuHow = how;
+        return found;
+      };
+      const ways = menuHow === 'left' ? ['left', 'right'] : ['right', 'left'];
+      let item = null;
+      for (let round = 0; round < 2 && !item; round++) {   // one more round for a slow board
+        if (round) await wait(500);
+        for (const how of ways) { if ((item = await openMenu(how))) break; }
+      }
+      if (!item) {
+        // The menu has opened for others in this run: it's this tech (ServiceTitan may not offer
+        // messages for them). It never opened: something changed, so stop rather than skip everyone.
+        if (menuHow) return 'their menu didn\'t open from their name (ServiceTitan may not offer messages for them)';
+        return changed('the tech menu didn\'t open from a tech\'s name (right-click or left click)', '[data-cy="tmi-send-message"] / "Send Message"');
+      }
       // Only ever the item that says exactly "Send Message" (never the memo or call items).
       if (norm(item.textContent) !== 'Send Message') return changed('the tech menu has no "Send Message" option', '[data-cy="tmi-send-message"]: Send Message');
       item.click();
@@ -3238,6 +3279,7 @@
       if (lock) { sub('main'); return say('Wait for ' + lock + ' to finish first.'); }
       setPicking(false);
       running = true; stopRun = false; lock = 'Tech Messages';
+      menuHow = null;   // each run finds out again how the tech menu opens
       const auto = mode === 'auto';
       const tmpl = list[pickIdx][1];
       const people = pending.slice();
