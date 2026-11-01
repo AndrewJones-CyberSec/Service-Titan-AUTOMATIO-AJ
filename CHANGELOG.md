@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.3
+
+- **🧭 Tech Router → ✨ Optimize → ➡️ Set this order in Move Jobs is neater.** It used to give each job the minute the route gets there (to the nearest 5 minutes), so a day came out spread out, with times like 1:05 PM and 2:40 PM. Now the day keeps its own time slots (the start times its jobs have on the board) and the jobs fill them in the better order: a 12 / 1 / 2:30 day stays 12 / 1 / 2:30, with only which job is in which slot changing.
+  - A job starts later than its slot only when it has to: the job before it hasn't ended yet, its arrival window hasn't started (a 12-5 job in an 8 AM slot goes to 12), a job with no window would be more than 30 minutes before its booked time, the customer asked for later, or (today) the slot has passed. Then it goes to the next half hour.
+  - Each job keeps its length, and jobs sit back to back the way the board has them. Jobs underway, and jobs whose time doesn't change, aren't sent.
+
 ## 2.1.2
 
 - **Fixed: 🧭 Tech Router counted phone calls as stops.** A *PHONE CALL ONLY* job on a tech's day was routed like a visit, driving to the customer's address, so ✨ Optimize's score, its suggested order and drive times were off. Phone calls aren't part of a route now, in ✨ Optimize, 📊 Score every tech and 🗺️ Plan the day: they aren't scored, moved, sent to 🔀 Move Jobs or put in 🗺️ Google Maps, and keep their time. ✨ Optimize says how many it left out (*📞 1 phone call isn't part of the route*). A phone call also isn't used as where a tech's day starts from.

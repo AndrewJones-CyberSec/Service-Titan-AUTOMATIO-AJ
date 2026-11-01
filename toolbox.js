@@ -25,8 +25,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.1.2';
+  const VERSION = '2.1.3';
   const WHATS_NEW = {
+    '2.1.3': 'Neater: ➡️ Set this order in Move Jobs (from 🧭 Tech Router\'s ✨ Optimize) keeps the tech\'s day in its own time slots and just puts the jobs in them in the better order, instead of spreading them out to times like 1:05 and 2:40. A job only goes later than its slot when it has to (the job before it isn\'t done, its window hasn\'t started, or the customer asked for later), and then on the half hour.',
     '2.1.2': 'Fixed: 🧭 Tech Router counted phone calls as stops on a tech\'s route. Phone calls (PHONE CALL ONLY jobs) have nothing to drive to, so ✨ Optimize, 📊 Score every tech and 🗺️ Plan the day leave them out now: they aren\'t scored, moved, sent to Move Jobs or put in Google Maps, and keep their time. ✨ Optimize says how many it left out.',
     '2.1.1': 'New in 🧭 Tech Router: ✨ Optimize. Pick a tech (or 🖱️ and their name) for a 0–100% score of their route\'s order (100% is already the best), the better order and what it saves; ➡️ Set this order in Move Jobs gives each job its new time (Review, then Set times; ↩ Put back undoes it). 📊 Score every tech lists everyone, lowest first. 🗺️ Google Maps opens a route as directions. The routes now keep to times customers asked for in job summaries and notes ("not home until 11am", "first call"), go by the appointment\'s arrival window, and measure jobs to their street address. And 🗺️ Plan the day can ＋ Fit in holds, to call and book.',
     '2.1': 'New: 🧭 Tech Router (Beta). 📞 Fill a spot: pick a tech whose day is already planned, and it finds their open time (first thing, mid-day or the end of the day) and the jobs that would fit there from the Unassigned list (this day and the next 14) and the Hold list, with the customer\'s phone number to call and move them up. 🗺️ Plan the day: a tech and a route for every Unassigned job, 8-12s first, then 12-5s, then 5-9s (a little late is OK), sent to Move Jobs to assign. It learns which jobs each department does from the last 4 weeks of schedules, so a project coordinator only gets quotes, not electrical or plumbing ones. 🔎 Closest techs is back too. It\'s still being built, so check before you call; it only reads, and changes nothing on its own.',
@@ -8922,25 +8923,29 @@
       say(same ? 'Already the best order for these jobs.' : 'A better order is below. Nothing changes unless you move the jobs on the board.');
       fit();
     };
-    // The suggested order as new appointment times, for 🔀 Move Jobs. Each job starts at its suggested
-    // arrival, but not before its arrival window starts (the route may get there a little before it),
-    // nor before the job before it ends plus the drive between them; to the nearest ORDER_ROUND
-    // minutes (rounded up when it has to wait on the job before). Each keeps its length. Jobs underway,
-    // and jobs whose time doesn't change, aren't in it.
-    const ORDER_ROUND = 5;
+    // The suggested order as new appointment times, for 🔀 Move Jobs, kept neat: the day keeps its own
+    // time slots (the start times its jobs have on the board now), and the jobs fill them in the new
+    // order, so only which job is in which slot changes (seen Nov 1 2026: going by the route's arrival
+    // times spread a day out to times like 1:05 and 2:40). A job starts later than its slot only when
+    // it has to: the job before it hasn't ended, its arrival window hasn't started (or, with no window,
+    // more than EARLY minutes before its booked time), the customer asked for later, or (today) it's
+    // already past. Then it goes to the next ORDER_ROUND minutes. Each job keeps its length; the jobs
+    // sit back to back the way the board has them (drive time comes out of the job's time, as now).
+    // Jobs underway, and jobs whose time doesn't change, aren't in it.
+    const ORDER_ROUND = 30;
     const orderRows = O => {
-      const out = [], q = ORDER_ROUND * 60000;
-      let prevEnd = null;
-      O.best.sim.out.forEach(o => {
-        const a = o.x.a;
-        if (!a) return;
-        if (o.x.busyNow) { prevEnd = +o.arrive + o.x.dur * 60000; return; }
-        const len = a.end - a.start;
-        let base = +o.arrive;
-        if (o.x.win && !o.x.win.booked && base < +o.x.win.start) base = +o.x.win.start;
-        const need = prevEnd == null ? 0 : prevEnd + (o.drive || 0) * 60000;
-        let start = Math.round(base / q) * q;
-        if (start < need) start = Math.ceil(need / q) * q;
+      const out = [], q = ORDER_ROUND * 60000, up = t => Math.ceil(t / q) * q;
+      const rows = O.best.sim.out.filter(o => o.x.a);
+      const slots = rows.filter(o => !o.x.busyNow).map(o => +o.x.a.start).sort((x, y) => x - y);
+      let prevEnd = O.today ? +O.R.start : null, k = 0;
+      rows.forEach(o => {
+        const a = o.x.a, x = o.x;
+        if (x.busyNow) { prevEnd = Math.max(prevEnd || 0, +o.arrive + x.dur * 60000); return; }
+        const len = a.end - a.start, slot = slots[k++];
+        let need = prevEnd == null ? 0 : prevEnd;
+        if (x.win) need = Math.max(need, +x.win.start - (x.win.booked ? EARLY * 60000 : 0));
+        if (x.ask && x.ask.at != null) need = Math.max(need, +x.ask.at);
+        const start = slot >= need ? slot : up(need);
         prevEnd = start + len;
         if (Math.abs(start - a.start) >= 60000) out.push({ apptId: a.apptId, jobId: a.jobId, customer: a.customer, start: new Date(start), end: new Date(start + len) });
       });
