@@ -196,7 +196,7 @@ with sync_playwright() as p:
     review(page)
     rt = review_text(page)
     check('outside its arrival window' not in rt, 'a window compared by time of day on the new day: no false warning')
-    check('one job goes first' in rt, 'the review says one job goes first for the window')
+    check('goes first' in rt, 'the review says one job goes first for the window')
     tick(page, 'shared')
     check(go(page), 'run finished')
     order = [k[1] for k in calls(page) if k[0] == 'time']
@@ -221,6 +221,24 @@ with sync_playwright() as p:
     ev(page, "() => { window.WINDOW_STAYS = false; }")
     check(snapshot(page) == start_w, 'put back exactly')
     ev(page, "() => { delete APPTS[9002].ws; delete APPTS[9002].we; delete APPTS[9004].ws; delete APPTS[9004].we; }")
+
+    # ---- Windows already dated another day (Nov 1 2026: a job on Nov 2 with its window on Oct 22,
+    # as after a drag on the board). Not the move's doing, so the run doesn't stop for it. ----
+    ev(page, """() => { window.calls = []; window.timePuts = []; window.WINDOW_STAYS = true;
+      const old = (h) => { const d = new Date(APPTS[9001].s); d.setDate(d.getDate() - 10); d.setHours(h, 0, 0, 0); return d; };
+      APPTS[9002].ws = old(8); APPTS[9002].we = old(12); APPTS[9004].ws = old(12); APPTS[9004].we = old(17); }""")
+    start_old = snapshot(page)
+    day_to(page, None); set_day(page, day2)
+    review(page)
+    tick(page, 'shared')
+    check(go(page), 'run finished')
+    order = [k[1] for k in calls(page) if k[0] == 'time']
+    L = log(page)
+    check(len(order) == 3, 'windows already dated another day: all 3 moved, no stop: %s' % order)
+    check('kept its arrival window' not in L and 'Stopped' not in L, 'no false window warning: ' + L[-300:])
+    put_back(page)
+    check(snapshot(page) == start_old, 'put back exactly')
+    ev(page, "() => { window.WINDOW_STAYS = false; delete APPTS[9002].ws; delete APPTS[9002].we; delete APPTS[9004].ws; delete APPTS[9004].we; }")
 
     # ---- Changed since the review, a time that won't take, a lost answer ----
     ev(page, "() => { window.calls = []; window.timePuts = []; }")

@@ -26,8 +26,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.1.6';
+  const VERSION = '2.1.7';
   const WHATS_NEW = {
+    '2.1.7': 'Fixed: 📅 Move a tech\'s day stopped after one job, saying ServiceTitan kept its arrival window on an old day, when the window was already dated that day before the move (the day the job was first booked, as after a drag on the board). It now only stops for a window that was on the job\'s own day and got left behind.',
     '2.1.6': 'New in 🔀 Move Jobs: 📅 Move a tech\'s day to another day. Pick the tech and the day, and every open job of theirs on the day the board shows goes to that day at the same times (same length). Pick another tech in To and the jobs go to them instead. Review first, as always: it warns about anyone already booked on the new day, skills, and jobs another tech shares. One job goes first, and the rest only go once ServiceTitan shows its arrival window on the new day too. ↩ Put back puts the times and techs back.',
     '2.1.5': 'Recalibrated: 🧭 Tech Router\'s ✨ Optimize no longer piles on hours of driving to keep arrival windows (it could suggest an 11-hour day when 5 would do). A late stop now counts for at most about 1½ hours of driving (a little more the later it is), and it\'s still marked ⚠️. Salespeople\'s 5 hr 30 min driving goal counts in Optimize too, and days with more than 8 jobs are checked from more starting orders, with more kinds of changes.',
     '2.1.4': 'Neater still: ➡️ Set this order in Move Jobs (from ✨ Optimize) now stacks the tech\'s jobs back to back, each starting the moment the one before it ends, from their first job\'s time, like a hand-built board. A gap is left only when a job can\'t start yet (a 12-5 job after a morning that ends early, or a customer who asked for later), and then it starts on the half hour.',
@@ -6341,7 +6342,7 @@
       if (p.mode === 'dayMove') {
         if (skipped.length || ready.some(x => Object.keys(x.warn).length)) lines.push('', 'ℹ️ Jobs left alone (or with a warning you don\'t tick) stay on ' + dayText(p.day) + '.');
         lines.push('', 'Each job keeps its time and length on ' + dayText(p.params.day) + '. Its time moves first' + (S(p.params.to) !== S(p.params.tech) ? ', then ' + techName(p.params.to) + ' goes on it and ' + techName(p.params.tech) + ' comes off' : '') + '. Anyone else on a job stays on it, and it moves for them too. These jobs don\'t count as "booked" for each other; anything else on ' + dayText(p.params.day) + ' does.',
-          '', 'The arrival window: one job goes first, and the run only goes on once ServiceTitan shows its arrival window on ' + dayText(p.params.day) + ' too. If the window stayed behind, it stops there (↩ Put back undoes that job).');
+          '', 'The arrival window: a job whose window is on its own day goes first, and the run only goes on once ServiceTitan shows that window on ' + dayText(p.params.day) + ' too. If it stayed behind, it stops there (↩ Put back undoes that job). Windows already dated another day (from when the job was first booked) are left as they are, as a drag on the board leaves them.');
       }
       reviewText.textContent = lines.join('\n');
       reviewOpts.textContent = '';
@@ -6492,9 +6493,12 @@
           else rr = res(tt + 'its techs were left alone: ' + rk.text, rt.kind === 'done' ? 'problem' : rk.kind, { noRetry: true });
         }
       }
-      // A day move: did ServiceTitan move the arrival window to the new day too?
-      const w = rt.win;
-      if (m === 'dayMove' && rt.kind === 'done' && w && w.start && !sd(new Date(w.start), new Date(x.t.to.start))) {
+      // A day move: did ServiceTitan move the arrival window to the new day too? Only asked of a window
+      // that was on the job's own day before the move: many jobs' windows are already dated another day
+      // (the day they were first booked, as after a drag on the board), and the move doesn't change that.
+      const w = rt.win, w0 = now.appointment.windowStart;
+      const onOwnDay = !!w0 && sd(new Date(w0), new Date(now.appointment.start));
+      if (m === 'dayMove' && rt.kind === 'done' && onOwnDay && w && w.start && !sd(new Date(w.start), new Date(x.t.to.start))) {
         rr = Object.assign({}, rr, { windowStuck: true, text: rr.text + '. ⚠️ ServiceTitan kept its arrival window on ' + dayText(new Date(w.start)) + ' (' + tm(w.start) + (w.end ? '–' + tm(w.end) : '') + ')' });
       }
       return rr;
@@ -6670,7 +6674,7 @@
           // once ServiceTitan shows that job's arrival window on the new day too.
           const stuckStop = () => { if (!stop) { stop = true; add('⚠️ Stopped: ServiceTitan kept the arrival window on the old day, so the other jobs weren\'t moved. Fix that job\'s window by hand, or ↩ Put back.'); } };
           if (m === 'dayMove') {
-            const first = todo.find(x => x.t && x.windowStart) || todo[0];
+            const first = todo.find(x => x.t && x.windowStart && sd(new Date(x.windowStart), new Date(x.t.from.start))) || todo[0];
             const rr = await doItem(first, m, okWarn, ctx);
             record(first, rr);
             head = 1; rest = todo.filter(x => x !== first);

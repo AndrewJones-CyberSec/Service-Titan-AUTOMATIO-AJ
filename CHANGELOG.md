@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.7
+
+- **Fixed: 📅 Move a tech's day stopped after the first job.** On Nov 1 2026, moving 70 jobs from Mon, Nov 2 to Mon, Nov 30 stopped after one, saying ServiceTitan *kept its arrival window on Thu, Oct 22*. That window was already dated Oct 22 before the move (the day the job was first booked; a drag on the board leaves it the same way), so the move hadn't changed it. Now the run only stops for a window that was on the job's own day and got left behind, and that kind of job goes first. Windows already dated another day are left as they are.
+- Tests: `tests/test_move_day.py` checks jobs whose windows are already dated another day all move, with no stop.
+
 ## 2.1.6
 
 - **🔀 Move Jobs: new 📅 Move a tech's day to another day.** Pick the tech (**From**), the **Day** to move to (it starts as the day after the board's), and, if the jobs should go to someone else, the tech in **To** (**Same tech** unless picked). Every open job of theirs on the day the board shows goes to that day, at the same time and the same length.
