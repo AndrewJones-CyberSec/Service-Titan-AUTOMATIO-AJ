@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.1.5
+
+- **🧭 Tech Router → ✨ Optimize, recalibrated.** It could suggest a much longer day to keep arrival windows: on Nov 1 2026 it suggested an 11-hour route, and moving one job by hand made it 5. A stop late past Late OK counted 4 minutes of driving for every minute late, so keeping one window was worth hours on the road. At AirSouth windows are suggestions, so:
+  - **A late stop counts for at most about 1½ hours of driving** (90 minutes), and past that an eighth as much, so it still matters how late (a late stop isn't left for last). The same goes for a customer's time request it can't keep. Late stops are still marked ⚠️ on the route.
+  - **The sales rule counts:** a salesperson's driving past 5 hr 30 min counts double, as in 📞 Fill a spot and 🗺️ Plan the day.
+  - **Days with more than 8 jobs** are checked from four starting orders (the board's, the windows', nearest stop next, and nearest stop next within each window), and besides moving one job it also tries swapping two and turning a stretch of the route around. The best wins.
+  - Example: an 8-12 and a 12-5 in Columbia and in Laurel. Keeping every window crossed the map twice (5 hr 8 min of driving suggested); now it does Columbia, then Laurel (3 hr 39 min), with the Laurel 8-12 marked late.
+  - 🗺️ Plan the day and 📞 Fill a spot weigh lateness as before.
+
 ## 2.1.4
 
 - **✨ Optimize → ➡️ Set this order in Move Jobs: jobs touch.** 2.1.3 kept each of the day's slots, so a gap on the board stayed a gap. Now the jobs stack back to back like a hand-built board: the first starts at the day's first job time, and each next one starts the moment the one before it ends (a 12 / 1 / 2:30 day becomes 12 / 1 / 2).

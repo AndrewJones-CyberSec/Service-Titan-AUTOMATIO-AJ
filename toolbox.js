@@ -25,8 +25,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.1.4';
+  const VERSION = '2.1.5';
   const WHATS_NEW = {
+    '2.1.5': 'Recalibrated: 🧭 Tech Router\'s ✨ Optimize no longer piles on hours of driving to keep arrival windows (it could suggest an 11-hour day when 5 would do). A late stop now counts for at most about 1½ hours of driving (a little more the later it is), and it\'s still marked ⚠️. Salespeople\'s 5 hr 30 min driving goal counts in Optimize too, and days with more than 8 jobs are checked from more starting orders, with more kinds of changes.',
     '2.1.4': 'Neater still: ➡️ Set this order in Move Jobs (from ✨ Optimize) now stacks the tech\'s jobs back to back, each starting the moment the one before it ends, from their first job\'s time, like a hand-built board. A gap is left only when a job can\'t start yet (a 12-5 job after a morning that ends early, or a customer who asked for later), and then it starts on the half hour.',
     '2.1.3': 'Neater: ➡️ Set this order in Move Jobs (from 🧭 Tech Router\'s ✨ Optimize) keeps the tech\'s day in its own time slots and just puts the jobs in them in the better order, instead of spreading them out to times like 1:05 and 2:40. A job only goes later than its slot when it has to (the job before it isn\'t done, its window hasn\'t started, or the customer asked for later), and then on the half hour.',
     '2.1.2': 'Fixed: 🧭 Tech Router counted phone calls as stops on a tech\'s route. Phone calls (PHONE CALL ONLY jobs) have nothing to drive to, so ✨ Optimize, 📊 Score every tech and 🗺️ Plan the day leave them out now: they aren\'t scored, moved, sent to Move Jobs or put in Google Maps, and keep their time. ✨ Optimize says how many it left out.',
@@ -8205,13 +8206,18 @@
         if (askA != null && t < askA) t = askA;
         const arrive = t, late = win ? Math.max(0, (arrive - win.end) / 60000) : 0;
         const gr = graceFor(x, grace);
-        cost += !late ? 0 : win.evening ? late * EVENING_WEIGHT : late <= gr ? late * LATE_WEIGHT : gr * LATE_WEIGHT + (late - gr) * VERY_LATE;
+        // R.lateCap (✨ Optimize): past that many minutes of driving, one stop's lateness (or a missed
+        // time request) counts an eighth as much (windows are suggestions, not worth hours on the
+        // road; seen Nov 1 2026: an 11-hour day to keep a window, when 5 hours would do). Still, the
+        // later the worse, so a late stop isn't left for last.
+        const capC = c => R.lateCap && c > R.lateCap ? R.lateCap + (c - R.lateCap) / 8 : c;
+        cost += capC(!late ? 0 : win.evening ? late * EVENING_WEIGHT : late <= gr ? late * LATE_WEIGHT : gr * LATE_WEIGHT + (late - gr) * VERY_LATE);
         if (late > gr + TOO_LATE && !win.evening) tooLate++;
         // Urgent and High: the sooner in their window the better.
         if (win && (x.prio === 'urgent' || x.prio === 'high')) cost += Math.max(0, (arrive - win.start) / 60000) * (x.prio === 'urgent' ? 0.3 : 0.15);
         const askLate = askB != null ? Math.max(0, (arrive - askB) / 60000) : 0;
         const askOrder = !!ask && ((ask.first && i > R.fixedN && !R.doneN) || (ask.last && i < stops.length - 1));
-        cost += askLate * VERY_LATE + (askOrder ? ASK_ORDER : 0);
+        cost += capC(askLate * VERY_LATE + (askOrder ? ASK_ORDER : 0));
         t += x.dur * 60000;
         if (x.pt) pos = x.pt;
         const winBad = late >= 5 && !win.evening && late > gr, askMiss = askLate >= 5 || askOrder;
@@ -8652,16 +8658,19 @@
     //     100 × (1 − saved / (now + 30)), where now is what the board's order costs.
     // It only suggests: the jobs are moved on the board, by you (the Toolbox doesn't change times).
     // 🗺️ Google Maps opens the route shown (suggested, or as it is now) as driving directions.
-    const BRUTE = 8, BOOKED = 120, HOME_WEIGHT = 0.1, MOVE_WEIGHT = 0.3;
+    const BRUTE = 8, BOOKED = 120, HOME_WEIGHT = 0.1, MOVE_WEIGHT = 0.3, LATE_CAP = 90;
+    // Sales rule in ✨ Optimize too: a salesperson's driving past SALES_MAX counts OVER_WEIGHT more.
+    const salesK = (R, sim) => R.sales ? Math.max(0, sim.drive - SALES_MAX) * OVER_WEIGHT : 0;
     // Their route with a window for each job that has none: its booked time.
     const withBooked = (R, grace) => {
+      R.lateCap = LATE_CAP;
       R.stops = R.stops.map(x => x.win || !x.a || !x.a.start ? x : Object.assign({}, x, { win: { start: x.a.start, end: new Date(+x.a.start + BOOKED * 60000), label: 'booked ' + clock(x.a.start), evening: x.a.start.getHours() >= 17, booked: true } }));
       R.base = simulate(R, R.stops, guess, grace);
       return R;
     };
     const bestOrder = (R, leg, grace, cap) => {
       const fixed = R.stops.slice(0, R.fixedN), mov = R.stops.slice(R.fixedN);
-      const K = (sim, o) => sim.cost + HOME_WEIGHT * (sim.home - R.start) / 60000 + MOVE_WEIGHT * o.reduce((n, x, i) => n + (x !== mov[i]), 0);
+      const K = (sim, o) => sim.cost + salesK(R, sim) + HOME_WEIGHT * (sim.home - R.start) / 60000 + MOVE_WEIGHT * o.reduce((n, x, i) => n + (x !== mov[i]), 0);
       const cur = simulate(R, R.stops, leg, grace);
       let best = { stops: R.stops, sim: cur, k: K(cur, mov) };
       const costOf = o => K(simulate(R, fixed.concat(o), leg, grace), o);
@@ -8675,21 +8684,45 @@
           else { c[i] = 0; i++; }
         }
       } else {
-        // Too many to try every order: from the board's order or the windows' order (whichever is
-        // better), move one job at a time to its best place while that makes the day better.
-        const byWin = mov.slice().sort((x, y) => (x.win ? +x.win.start : 0) - (y.win ? +y.win.start : 0));
-        let order = costOf(byWin) < costOf(mov) ? byWin : mov.slice(), cost = costOf(order), improved = true, rounds = 0;
-        while (improved && rounds++ < 40) {
-          improved = false;
-          for (let i = 0; i < order.length; i++) for (let j = 0; j < order.length; j++) {
-            if (i === j) continue;
-            const o = order.slice(), x = o.splice(i, 1)[0];
-            o.splice(j, 0, x);
-            const c2 = costOf(o);
-            if (c2 < cost - 0.01) { order = o; cost = c2; improved = true; }
+        // Too many to try every order: from several starting orders (the board's, the windows', the
+        // nearest stop next, and the nearest stop next within each window), change the order a little
+        // at a time while that makes the day better: move one job to another place, swap two, or turn
+        // a stretch of the route around. The best of them wins.
+        const winStart = x => x.win ? +x.win.start : 0;
+        const nearest = (list, byWin) => {
+          const left = list.slice(), out = [];
+          let pos = fixed.length ? fixed[fixed.length - 1].pt || R.startPt : R.startPt;
+          while (left.length) {
+            const pool = byWin ? left.filter(x => winStart(x) === Math.min.apply(null, left.map(winStart))) : left;
+            let pick = pool[0], d = Infinity;
+            pool.forEach(x => { const m = pos && x.pt ? leg(pos, x.pt) : 0; if (m < d) { d = m; pick = x; } });
+            out.push(pick); left.splice(left.indexOf(pick), 1);
+            if (pick.pt) pos = pick.pt;
           }
-        }
-        tryOrder(order);
+          return out;
+        };
+        const starts = [mov.slice(), mov.slice().sort((x, y) => winStart(x) - winStart(y)), nearest(mov, false), nearest(mov, true)];
+        const polish = start => {
+          let order = start, cost = costOf(order), improved = true, rounds = 0;
+          const take = o => { const c2 = costOf(o); if (c2 < cost - 0.01) { order = o; cost = c2; improved = true; return true; } return false; };
+          while (improved && rounds++ < 40) {
+            improved = false;
+            const n = order.length;
+            for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+              if (i === j) continue;
+              const o = order.slice(), x = o.splice(i, 1)[0];
+              o.splice(j, 0, x);
+              take(o);
+            }
+            for (let i = 0; i < n - 1; i++) for (let j = i + 1; j < n; j++) {
+              const o = order.slice(), x = o[i]; o[i] = o[j]; o[j] = x;
+              if (take(o)) continue;
+              if (j - i > 1) take(order.slice(0, i).concat(order.slice(i, j + 1).reverse(), order.slice(j + 1)));
+            }
+          }
+          return order;
+        };
+        starts.forEach(o => tryOrder(polish(o)));
       }
       // saved: what the best order saves; under a minute and it's as good as the board's order.
       return { cur, best, saved: K(cur, mov) - best.k };

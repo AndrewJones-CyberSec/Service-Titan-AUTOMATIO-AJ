@@ -420,6 +420,28 @@ with sync_playwright() as p:
     check(errors == [], 'phone call: no page errors: %s' % errors)
     page.close()
 
+    # Windows aren't worth hours on the road (Nov 1 2026: Optimize suggested an 11-hour day to keep
+    # windows when moving one job made it 5): Ian has an 8-12 and a 12-5 in Columbia (west) and in
+    # Laurel (east). Keeping every window crosses the map twice; the better day does Columbia, then
+    # Laurel, one stop late (marked), and the late stop isn't left for last.
+    EASTWEST = """() => { ZIPS['39440'] = [31.69, -89.13]; ZIPS['39429'] = [31.25, -89.84];
+      const PM = [{ name: '12-5 AFTERNOON', color: '#ffd6a8' }], AM = [{ name: '8-12 MORNING ', color: '#fff2a8' }], Q = 'Quote - HVAC - Central Home System';
+      APPTS.push({ id: 9401, job: 7401, techs: [206], customer: 'West Am', start: at(8), end: at(10), zip: '39429', city: 'Columbia', jobType: Q, jobTypeId: 11, tags: AM },
+        { id: 9402, job: 7402, techs: [206], customer: 'East Am', start: at(10), end: at(12), zip: '39440', city: 'Laurel', jobType: Q, jobTypeId: 11, tags: AM },
+        { id: 9403, job: 7403, techs: [206], customer: 'West Pm', start: at(12), end: at(14), zip: '39429', city: 'Columbia', jobType: Q, jobTypeId: 11, tags: PM },
+        { id: 9404, job: 7404, techs: [206], customer: 'East Pm', start: at(14), end: at(16), zip: '39440', city: 'Laurel', jobType: Q, jobTypeId: 11, tags: PM });
+      NB.render(); }"""
+    page, errors = start(b, EASTWEST)
+    open_router(page)
+    page.click('#st-toolbox [data-tab=opt]')
+    opt(page, 206)
+    o = page.inner_text('#st-opt-out')
+    dr = re.search(r'Driving (\d+) hr (\d+) min → (\d+) hr (\d+) min', o)
+    check(stops(page) == ['West Am', 'West Pm', 'East Am', 'East Pm'], 'east and west: Columbia, then Laurel, not back and forth to keep windows (%s)' % stops(page))
+    check(dr and int(dr.group(3)) * 60 + int(dr.group(4)) < 4 * 60 and '⚠️' in page.inner_text('#st-opt-out .st-opt-route'), 'under 4 hours of driving (was 7), the late 8-12 marked ⚠️ (%r)' % (dr.group(0) if dr else o[:200]))
+    check(errors == [], 'east and west: no page errors: %s' % errors)
+    page.close()
+
     page, errors = start(b, ZIGZAG)
     open_router(page)
     page.click('#st-toolbox [data-tab=opt]')
