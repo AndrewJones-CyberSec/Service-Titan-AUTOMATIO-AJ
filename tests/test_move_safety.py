@@ -45,7 +45,10 @@ def clear_jobs(page):
 def type_jobs(page, nums):
     page.fill('#st-toolbox input:visible[placeholder^="Or type job"]', nums)
     page.locator('#st-toolbox button:visible', has_text='Add').filter(has_not_text='All').filter(has_not_text='note').first.click()
-REVIEW_DONE = "() => { const b = document.getElementById('st-move-go'); return (b && b.offsetParent) || /Couldn't check|signed you out|Nothing to do|isn't on the board|exactly two|more than one visit|nothing to swap|Stopped checking/.test(document.getElementById('st-toolbox').innerText); }"
+# A review is done when its Stop checking button has gone and it shows Go or says why not. The last
+# run's results stay on screen (its log) while a new review starts, so their words ("signed you
+# out" from the run before, say) are left out: they made checks run mid-review, now and then.
+REVIEW_DONE = "() => { if (Array.from(document.querySelectorAll('#st-toolbox button')).some(b => b.offsetParent && /^Stop checking/.test(b.textContent))) return false; const b = document.getElementById('st-move-go'); if (b && b.offsetParent) return true; let t = document.getElementById('st-toolbox').innerText; document.querySelectorAll('#st-toolbox pre').forEach(p => { if (p.innerText) t = t.split(p.innerText).join(''); }); return /Couldn't check|signed you out|Nothing to do|isn't on the board|exactly two|more than one visit|nothing to swap|Stopped checking/.test(t); }"
 def review(page, timeout=30000, fast=False):
     """fast: skip ahead through the review's deliberate waits (fastclock)."""
     B(page, 'Review').click()
