@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.4
+
+- **✨ Optimize → ➡️ Set this order in Move Jobs: jobs touch.** 2.1.3 kept each of the day's slots, so a gap on the board stayed a gap. Now the jobs stack back to back like a hand-built board: the first starts at the day's first job time, and each next one starts the moment the one before it ends (a 12 / 1 / 2:30 day becomes 12 / 1 / 2).
+  - A gap is left only when a job can't start yet: its arrival window hasn't started (a 12-5 job after a morning that ends at 10 goes to 12), a job with no window would be more than 30 minutes before its booked time, the customer asked for later, or (today) the time has passed. Then it starts on the next half hour.
+  - Each job keeps its length. Jobs underway, and jobs whose time doesn't change, aren't sent.
+
 ## 2.1.3
 
 - **🧭 Tech Router → ✨ Optimize → ➡️ Set this order in Move Jobs is neater.** It used to give each job the minute the route gets there (to the nearest 5 minutes), so a day came out spread out, with times like 1:05 PM and 2:40 PM. Now the day keeps its own time slots (the start times its jobs have on the board) and the jobs fill them in the better order: a 12 / 1 / 2:30 day stays 12 / 1 / 2:30, with only which job is in which slot changing.

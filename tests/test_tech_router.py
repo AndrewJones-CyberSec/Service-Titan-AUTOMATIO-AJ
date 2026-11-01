@@ -469,8 +469,8 @@ with sync_playwright() as p:
     page.click('#st-opt-send')
     page.wait_for_function("() => /Move Jobs/.test(document.querySelector('#st-toolbox .st-head').innerText)", timeout=10000)
     picks = ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox .st-pick-next')).map(e => e.closest('div').parentElement.textContent.replace(/\\s+/g, ' '))")
-    check(len(picks) == 2 and 'Morning Mo' in picks[0] and '→ 8 AM' in picks[0] and 'Afternoon Al' in picks[1] and '→ 12 PM' in picks[1],
-          'Pat in Move Jobs, kept neat: Morning Mo into the 8 AM slot, Afternoon Al to noon (its 12-5 window), Booked Bea left at 3 PM (%s)' % picks)
+    check(len(picks) == 3 and 'Morning Mo' in picks[0] and '→ 8 AM' in picks[0] and 'Afternoon Al' in picks[1] and '→ 12 PM' in picks[1] and 'Booked Bea' in picks[2] and '→ 2:30 PM' in picks[2],
+          'Pat in Move Jobs, kept neat: Morning Mo first at 8 AM, Afternoon Al at noon (not before his 12-5 window), Booked Bea at 2:30 (no window: no more than 30 min before her 3 PM) (%s)' % picks)
     B(page, '← Menu').click()
     open_router(page)
     page.click('#st-toolbox [data-tab=opt]')
@@ -518,9 +518,8 @@ with sync_playwright() as p:
     page.wait_for_function("() => (window.timePuts || []).length >= 2 && !Array.from(document.querySelectorAll('#st-toolbox button')).some(b => b.offsetParent && /^Stop/.test(b.textContent))", timeout=60000)
     after_ = ev(page, "() => Object.fromEntries(APPTS.filter(a => [9301, 9302, 9303].includes(a.id)).map(a => [a.id, [a.start.getTime(), a.end.getTime()]]))")
     one, two, three = after_['9301'], after_['9302'], after_['9303']
-    slots = sorted(ev(page, "() => Object.values(%s).map(x => Date.parse(x[0]))" % json.dumps(before)))
-    check([one[0], three[0], two[0]] == slots and all(x[1] - x[0] == 3600000 for x in (one, two, three)),
-          'Set times, kept neat: the day keeps its own slots (12, 1, 2:30), Zig Three in the 1 PM slot and Zag Two in the 2:30 one, each the same length (%s)' % after_)
+    check(one[1] == three[0] and three[1] == two[0] and all(x[1] - x[0] == 3600000 for x in (one, two, three)) and one[0] == min(one[0], two[0], three[0]),
+          'Set times, kept neat: Zig One, Zig Three, then Zag Two, back to back (each starts as the one before ends), each the same length (%s)' % after_)
     puts = ev(page, 'window.timePuts')
     check(len(puts) == 2 and all(re.match(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:00[+-]\d\d:\d\d$', p_['body']['start']) and p_['body']['technicianIdsToAdd'] == [] and p_['body']['technicianIdsToRemove'] == [] and 'arrivalWindowStart' not in p_['body'] for p_ in puts),
           'the same request as dragging on the board: new start and end, no tech change, the arrival window left alone (%s)' % puts)
