@@ -196,7 +196,7 @@ with sync_playwright() as p:
     review(page)
     rt = review_text(page)
     check('outside its arrival window' not in rt, 'a window compared by time of day on the new day: no false warning')
-    check('goes first' in rt, 'the review says one job goes first for the window')
+    check('keep their times' in rt, 'the review says windows keep their times')
     tick(page, 'shared')
     check(go(page), 'run finished')
     order = [k[1] for k in calls(page) if k[0] == 'time']
@@ -207,16 +207,15 @@ with sync_playwright() as p:
     put_back(page)
     check(snapshot(page) == start_w, 'put back, windows too')
 
-    # ---- Arrival window left on the old day: it stops after the first job ----
+    # ---- Arrival window left on the old day (ServiceTitan, Nov 1 2026): every job still moves ----
     ev(page, "() => { window.calls = []; window.timePuts = []; window.WINDOW_STAYS = true; }")
     review(page)
     tick(page, 'shared')
     check(go(page), 'run finished')
     order = [k[1] for k in calls(page) if k[0] == 'time']
     L = log(page)
-    check(len(order) == 1, 'only the first job was moved: %s' % order)
-    check('kept its arrival window on' in L and 'Stopped' in L and "weren't moved" in L, 'the log says the window stayed and why it stopped')
-    check('Put back (1)' in T(page), 'Put back can undo that one job')
+    check(len(order) == 3, 'windows kept on the old day: all 3 moved, no stop: %s' % order)
+    check('Stopped' not in L and 'still show the old date' in L and '2 jobs' in L, 'the log says once how many windows show the old date')
     put_back(page)
     ev(page, "() => { window.WINDOW_STAYS = false; }")
     check(snapshot(page) == start_w, 'put back exactly')

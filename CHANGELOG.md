@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.8
+
+- **Fixed: 📅 Move a tech's day still stopped after one job.** On Nov 1 2026, a job on Nov 2 with its window dated Nov 2 moved to Nov 30 and ServiceTitan kept the window dated Nov 2. ServiceTitan keeps a window's date for any time change (a drag on the board too; many jobs' windows are dated the day they were first booked), so it's not a reason to stop. Every job moves now, and the run ends with how many windows still show the old date. The window times are the same.
+
 ## 2.1.7
 
 - **Fixed: 📅 Move a tech's day stopped after the first job.** On Nov 1 2026, moving 70 jobs from Mon, Nov 2 to Mon, Nov 30 stopped after one, saying ServiceTitan *kept its arrival window on Thu, Oct 22*. That window was already dated Oct 22 before the move (the day the job was first booked; a drag on the board leaves it the same way), so the move hadn't changed it. Now the run only stops for a window that was on the job's own day and got left behind, and that kind of job goes first. Windows already dated another day are left as they are.
