@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.6
+
+- **🔀 Move Jobs: new 📅 Move a tech's day to another day.** Pick the tech (**From**), the **Day** to move to (it starts as the day after the board's), and, if the jobs should go to someone else, the tech in **To** (**Same tech** unless picked). Every open job of theirs on the day the board shows goes to that day, at the same time and the same length.
+  - **To another tech:** the job's time moves first, then the new tech goes on it and the old one comes off (added first, as always, so a job is never left in Unassigned). Anyone else on a job stays on it, and it moves for them too (a warning to tick).
+  - **Review** checks everyone who'll be on each job on the new day for being **already booked** then (other jobs, time off, meetings, every branch and team); the day's jobs don't count as booked for each other. Also skills (for a new tech), managed techs, jobs that aren't Scheduled, and a new time outside the job's arrival window (by time of day). Done and Canceled appointments are left alone.
+  - **The arrival window:** moving a job to another day uses the same request the board sends when a job is dragged to another time, and it's not yet checked live that ServiceTitan moves the arrival window with it. So one job (one with a window) goes first, and the rest only go once ServiceTitan shows its window on the new day too. If the window stayed on the old day, the run stops there and says so (↩ Put back undoes that job).
+  - The board's own day and a day that has passed are refused. A job changed since the review is left alone, a time that doesn't take leaves the job as it was (its techs too), and a lost answer is checked by reading the job.
+  - **↩ Put back** sets the times back, and the techs too.
+- Tests: new `tests/test_move_day.py`; the Move Jobs fake board now takes new times (and moves arrival windows with them, or not).
+
 ## 2.1.5
 
 - **🧭 Tech Router → ✨ Optimize, recalibrated.** It could suggest a much longer day to keep arrival windows: on Nov 1 2026 it suggested an 11-hour route, and moving one job by hand made it 5. A stop late past Late OK counted 4 minutes of driving for every minute late, so keeping one window was worth hours on the road. At AirSouth windows are suggestions, so:

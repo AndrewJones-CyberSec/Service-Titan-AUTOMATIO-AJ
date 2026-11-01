@@ -54,7 +54,8 @@
   // ASSIGN_IGNORE[appt] (says OK, changes nothing), BOARD_LAG (the board doesn't redraw after a change), NO_REFRESH (no board reload),
   // TECH_API_DOWN (no technician list), API_401 (signed out), API_DELAY (ms).
   window.BOOKED = {}; window.NONJOB = {}; window.ASSIGN_FAIL = {}; window.UNASSIGN_FAIL = {}; window.ASSIGN_IGNORE = {}; window.ASSIGN_LOST = {}; window.UNASSIGN_LOST = {};
-  window.calls = [];   // [kind, appt, techs] for every assign / unassign
+  window.TIME_FAIL = {}; window.TIME_LOST = {}; window.timePuts = [];
+  window.calls = [];   // [kind, appt, techs] for every assign / unassign (and ['time', appt, [start]] for a new time)
   window.apiCalls = 0;
   const failing = (map, a) => { const f = map[a]; if (!f) return false; if (f === 'always') return true; map[a] = f - 1; return true; };
   const pause = (ms, signal) => new Promise((res, rej) => {
@@ -80,7 +81,8 @@
       if (!a) return json({}, 404);
       const visits = Object.keys(APPTS).filter(k => APPTS[k].job === a.job);
       return json({ jobId: a.job, jobNumber: String(a.job), jobStatus: a.status, jobType: { id: 1, name: 'Install' }, businessUnitId: a.bu, jobTotal: a.total,
-        jobAppointments: visits.map(k => ({ id: Number(k), number: APPTS[k].n, start: APPTS[k].s.toISOString(), end: APPTS[k].e.toISOString(), arrivalWindowStart: null, arrivalWindowEnd: null,
+        jobAppointments: visits.map(k => ({ id: Number(k), number: APPTS[k].n, start: APPTS[k].s.toISOString(), end: APPTS[k].e.toISOString(),
+          arrivalWindowStart: APPTS[k].ws ? APPTS[k].ws.toISOString() : null, arrivalWindowEnd: APPTS[k].we ? APPTS[k].we.toISOString() : null,   // ws / we: an arrival window
           technicians: APPTS[k].techs.map(id => ({ id, name: tname(id), assignmentStatus: 'Assigned' })), jobAppointmentStatus: APPTS[k].statusNum != null ? APPTS[k].statusNum : STATUS_NUM[APPTS[k].status], isConfirmed: true })),   // statusNum: a number ServiceTitan might send that isn't one of the six
         hasJobNotificationsEnabled: true });
     }
@@ -127,6 +129,22 @@
       // The new board updates itself a moment after a change (BOARD_LAG: it doesn't, until Refresh).
       if (!window.BOARD_LAG) setTimeout(NB.render, 50);
       if (lost) { if (lost !== 'always') (m[1] === 'Assign' ? ASSIGN_LOST : UNASSIGN_LOST)[body.appointmentId] = 0; throw new TypeError('Failed to fetch'); }
+      return new Response('', { status: 200 });
+    }
+    // A new start and end for an appointment (the new board's drag, and 📅 Move a tech's day).
+    // The arrival window moves with it to the new day (WINDOW_STAYS: it stays on the old day).
+    // TIME_FAIL[appt] = 'always' | number of times: it fails. TIME_LOST[appt]: the change is made but the answer never arrives.
+    if ((m = /^\/dispatch-center\/appointments\/(\d+)$/.exec(u)) && opts && opts.method === 'PUT') {
+      const a = APPTS[m[1]];
+      window.timePuts.push({ id: Number(m[1]), body });
+      window.calls.push(['time', Number(m[1]), [body.start]]);
+      if (!a || failing(TIME_FAIL, m[1])) return json({ Error: { Message: 'nope' } }, 400);
+      const ns = new Date(body.start), mid = d => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+      const days = Math.round((mid(ns) - mid(a.s)) / 86400000);
+      if (a.ws && days && !window.WINDOW_STAYS) { a.ws = new Date(a.ws); a.ws.setDate(a.ws.getDate() + days); a.we = new Date(a.we); a.we.setDate(a.we.getDate() + days); }
+      a.s = ns; a.e = new Date(body.end);
+      if (!window.BOARD_LAG) setTimeout(NB.render, 50);
+      if (TIME_LOST[m[1]]) { TIME_LOST[m[1]] = 0; throw new TypeError('Failed to fetch'); }
       return new Response('', { status: 200 });
     }
     if (u.indexOf('/Dispatch/Data') === 0) {

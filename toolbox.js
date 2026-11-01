@@ -8,7 +8,8 @@
     - Tech Messages: sends a saved message (Good Morning, ETA, ...) to the techs you pick (by team or on the board).
     - Business Unit: switches the jobs you pick to a branch (Mendenhall Branch by default).
     - Customer Texts: texts customers a saved message (holds, tech updates, reschedules, ...).
-    - Move Jobs: moves jobs to a tech, adds or unassigns techs, or swaps jobs or whole days, without dragging.
+    - Move Jobs: moves jobs to a tech, adds or unassigns techs, swaps jobs or whole days, or moves a tech's
+      whole day to another day, without dragging.
     - Tech Router (Beta, still being built): finds jobs to fill a tech's open time (customers to call and
       move up), plans a route and a tech for every Unassigned job (by arrival window: 8-12s, then 12-5s,
       then 5-9s), scores a tech's route 0-100% and suggests a better order for it, and finds the techs
@@ -25,8 +26,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.1.5';
+  const VERSION = '2.1.6';
   const WHATS_NEW = {
+    '2.1.6': 'New in 🔀 Move Jobs: 📅 Move a tech\'s day to another day. Pick the tech and the day, and every open job of theirs on the day the board shows goes to that day at the same times (same length). Pick another tech in To and the jobs go to them instead. Review first, as always: it warns about anyone already booked on the new day, skills, and jobs another tech shares. One job goes first, and the rest only go once ServiceTitan shows its arrival window on the new day too. ↩ Put back puts the times and techs back.',
     '2.1.5': 'Recalibrated: 🧭 Tech Router\'s ✨ Optimize no longer piles on hours of driving to keep arrival windows (it could suggest an 11-hour day when 5 would do). A late stop now counts for at most about 1½ hours of driving (a little more the later it is), and it\'s still marked ⚠️. Salespeople\'s 5 hr 30 min driving goal counts in Optimize too, and days with more than 8 jobs are checked from more starting orders, with more kinds of changes.',
     '2.1.4': 'Neater still: ➡️ Set this order in Move Jobs (from ✨ Optimize) now stacks the tech\'s jobs back to back, each starting the moment the one before it ends, from their first job\'s time, like a hand-built board. A gap is left only when a job can\'t start yet (a 12-5 job after a morning that ends early, or a customer who asked for later), and then it starts on the half hour.',
     '2.1.3': 'Neater: ➡️ Set this order in Move Jobs (from 🧭 Tech Router\'s ✨ Optimize) keeps the tech\'s day in its own time slots and just puts the jobs in them in the better order, instead of spreading them out to times like 1:05 and 2:40. A job only goes later than its slot when it has to (the job before it isn\'t done, its window hasn\'t started, or the customer asked for later), and then on the half hour.',
@@ -5531,7 +5533,8 @@
       ['add', '➕ Add a tech (keeps who\'s on it)'],
       ['unassign', '⬅️ Unassign'],
       ['swapJobs', '🔄 Swap two jobs\' techs'],
-      ['swapDays', '🔁 Swap two techs\' whole day']
+      ['swapDays', '🔁 Swap two techs\' whole day'],
+      ['dayMove', '📅 Move a tech\'s day to another day']
     ];
     const u = v => { try { return window.ko && typeof window.ko.unwrap === 'function' ? window.ko.unwrap(v) : (typeof v === 'function' ? v() : v); } catch (e) { return v; } };
     const S = x => String(x);
@@ -5636,7 +5639,7 @@
       const r = el('input'); r.type = 'radio'; r.name = 'st-move-mode'; r.value = val; r.checked = mode === val;
       r.onchange = () => {
         mode = val; plan = null; order = null; set('stMoveMode', val); clearReview();
-        if (val === 'swapDays') picker.setPicking(false);
+        if (val === 'swapDays' || val === 'dayMove') picker.setPicking(false);
         layout();
         if (val === 'swapJobs' && picker.size() > 2) say('⚠️ Swap uses two jobs, and ' + picker.size() + ' are picked. Take some off (✕) or Clear.');
       };
@@ -5680,6 +5683,7 @@
       unassign: 'Pick the jobs. Everyone (or the tech in From) comes off.',
       swapJobs: 'Pick two jobs. Each one gets the other\'s tech(s).',
       swapDays: 'Pick two techs. Every open job of one goes to the other, on the day the board shows.',
+      dayMove: 'Pick a tech and the day to move to. Every open job of theirs on the day the board shows goes to that day at the same times. Pick another tech in To to give the jobs to them.',
       plan: 'A plan from 🧭 Tech Router: each job goes to the tech shown next to it. Take any off with ✕.',
       order: 'A new order from 🧭 Tech Router (✨ Optimize): each job gets the time shown next to it, on the same tech, in the same arrival window. Take any off with ✕.'
     };
@@ -5688,8 +5692,35 @@
     const fromPick = techPicker('From', 'Anyone on the job', 'stMoveFrom');
     const aPick = techPicker('Tech A', '', 'stMoveA');
     const bPick = techPicker('Tech B', '', 'stMoveB');
+    // 📅 Move a tech's day: whose day, the tech it goes to (Same tech unless picked), and the day.
+    const dFromPick = techPicker('From', '', 'stMoveDayFrom');
+    const dToPick = techPicker('To', 'Same tech', 'stMoveDayTo');
     toPick.sel.id = 'st-move-to'; fromPick.sel.id = 'st-move-from'; aPick.sel.id = 'st-move-a'; bPick.sel.id = 'st-move-b';
-    const pickers3 = [toPick, fromPick, aPick, bPick];
+    dFromPick.sel.id = 'st-move-day-from'; dToPick.sel.id = 'st-move-day-to';
+    const pickers3 = [toPick, fromPick, aPick, bPick, dFromPick, dToPick];
+    // The day to move to. Not remembered (a date goes stale): it starts as the day after the board's.
+    const dayRow = el('div', 'display:flex;gap:6px;align-items:center');
+    const dayInput = el('input', 'flex:1;min-width:0;padding:4px 6px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;font-size:12px;color:var(--st-ink);background:var(--st-bg)');
+    dayInput.type = 'date'; dayInput.id = 'st-move-day';
+    dayRow.append(el('span', 'font-size:12px;font-weight:600;min-width:46px', 'Day'), dayInput);
+    dayInput.onchange = dayInput.oninput = () => { clearReview(); updateButtons(); };
+    const sd = (a, b) => !!(a && b) && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const pickedDay = () => { const m = /^(\d{4})-(\d\d)-(\d\d)$/.exec(dayInput.value || ''); if (!m) return null; const d = new Date(+m[1], +m[2] - 1, +m[3]); return isNaN(d) ? null : d; };
+    const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+    const fillDay = () => {
+      if (pickedDay()) return;
+      const b = boardDay(); if (!b) return;
+      const d = new Date(b.getFullYear(), b.getMonth(), b.getDate() + 1);
+      dayInput.value = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    };
+    // The same clock time on another day, the same length.
+    const sameClockOn = (start, end, day) => {
+      const s = new Date(start), e = new Date(end);
+      const ns = new Date(day.getFullYear(), day.getMonth(), day.getDate(), s.getHours(), s.getMinutes(), s.getSeconds());
+      return { start: ns.toISOString(), end: new Date(ns.getTime() + (e - s)).toISOString() };
+    };
+    // "Jack W's day to Wed, Nov 4 (on Blake W)"
+    const dayMoveText = p => techName(p.tech) + '\'s day to ' + dayText(p.day) + (p.to && S(p.to) !== S(p.tech) ? ' on ' + techName(p.to) : '');
 
     // The jobs: picked on the board, from the Unassigned list, or typed (on the day the board shows).
     const picker = jobPicker({
@@ -5697,7 +5728,7 @@
       // Swap uses exactly two jobs, so a third can't be picked.
       max: () => mode === 'swapJobs' ? 2 : MAX_PER_RUN,
       fullText: max => max === 2 && mode === 'swapJobs' ? '⚠️ Swap uses two jobs. Take one off (✕) to pick a different one.' : '⚠️ The list is full (' + max + ' jobs per run).',
-      shown: () => movesPane.style.display !== 'none' && mode !== 'swapDays',
+      shown: () => movesPane.style.display !== 'none' && mode !== 'swapDays' && mode !== 'dayMove',
       busy: () => busy,
       say: t => say(t),
       changed: () => { clearReview(); updateButtons(); },
@@ -5741,7 +5772,7 @@
     progress.append(log, progRow);
     const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
     navRow.append(smallBtn('← Menu', () => { if (!busy) showView('menu'); }));
-    wrap.append(msg, modeBox, hint, toPick.box, fromPick.box, aPick.box, bPick.box, jobsBox, actions, reviewBox, progress, navRow);
+    wrap.append(msg, modeBox, hint, toPick.box, fromPick.box, aPick.box, bPick.box, dFromPick.box, dayRow, dToPick.box, jobsBox, actions, reviewBox, progress, navRow);
     movesPane.appendChild(wrap);
 
     // Move Jobs is taller than a laptop screen once a review shows, so its area scrolls inside the
@@ -5788,7 +5819,11 @@
       show(fromPick.box, mode === 'move' || mode === 'unassign');
       show(aPick.box, mode === 'swapDays');
       show(bPick.box, mode === 'swapDays');
-      show(jobsBox, mode !== 'swapDays');
+      show(dFromPick.box, mode === 'dayMove');
+      show(dToPick.box, mode === 'dayMove');
+      dayRow.style.display = mode === 'dayMove' ? 'flex' : 'none';
+      if (mode === 'dayMove') fillDay();
+      show(jobsBox, mode !== 'swapDays' && mode !== 'dayMove');
       uaRow.style.display = mode === 'move' || mode === 'add' ? 'flex' : 'none';
       modeRadios.forEach(r => { r.checked = r.value === mode; });
       hint.textContent = HINTS[mode] || '';
@@ -5803,6 +5838,7 @@
       pickers3.forEach(p => p.setEnabled(on));
       picker.setEnabled(on);
       uaBtn.disabled = !on; uaBtn.style.opacity = on ? '1' : '.5';
+      dayInput.disabled = !on; dayInput.style.opacity = on ? '1' : '.5';
       let ready = on && onBoard();
       if (mode === 'move' || mode === 'add') ready = ready && !!toPick.value() && picker.size() > 0;
       if (mode === 'unassign') ready = ready && picker.size() > 0;
@@ -5810,6 +5846,8 @@
       if (mode === 'plan') ready = ready && !!plan && picker.size() > 0;
       if (mode === 'order') ready = ready && !!order && picker.size() > 0;
       if (mode === 'swapDays') ready = ready && !!aPick.value() && !!bPick.value() && S(aPick.value()) !== S(bPick.value());
+      // Review says why when the day is the board's own or has passed.
+      if (mode === 'dayMove') ready = ready && !!dFromPick.value() && !!pickedDay();
       reviewBtn.disabled = !ready; reviewBtn.style.opacity = ready ? '1' : '.5';
       reviewStopBtn.style.display = reviewing ? 'inline-block' : 'none';
       if (!reviewing) reviewStopBtn.disabled = false;
@@ -5972,6 +6010,11 @@
         });
         return { list: out, missing: [] };
       }
+      if (m === 'dayMove') {
+        const F = dFromPick.value(), D = pickedDay();
+        const p = { tech: F, to: dToPick.value() || F, day: D };
+        return { list: rows.filter(r => hasId(r.techs.map(t => t.id), F)).map(r => ({ r, p: Object.assign({}, p) })), missing: [] };
+      }
       const list = [], missing = [];
       if (m === 'order') {
         picker.ids().forEach(j => {
@@ -5990,22 +6033,30 @@
       return { list, missing };
     };
 
-    const TITLE = { move: 'Move to', add: 'Add', unassign: 'Unassign', swapJobs: 'Swap two jobs\' techs', swapDays: 'Swap whole day', putback: 'Put back the last run', plan: 'Planned (each job to its own tech)', order: 'New order for' };
-    const GO = { move: 'Move', add: 'Add to', unassign: 'Unassign', swapJobs: 'Swap', swapDays: 'Swap', putback: 'Put back', plan: 'Assign', order: 'Set times for' };
-    // New times (✨ Optimize's order, or putting one back): "8 AM → 9:15 AM".
+    const TITLE = { move: 'Move to', add: 'Add', unassign: 'Unassign', swapJobs: 'Swap two jobs\' techs', swapDays: 'Swap whole day', putback: 'Put back the last run', plan: 'Planned (each job to its own tech)', order: 'New order for', dayMove: 'Move' };
+    const GO = { move: 'Move', add: 'Add to', unassign: 'Unassign', swapJobs: 'Swap', swapDays: 'Swap', putback: 'Put back', plan: 'Assign', order: 'Set times for', dayMove: 'Move' };
+    // New times (✨ Optimize's order, a day move, or putting one back): "8 AM → 9:15 AM", with the
+    // day when it changes ("Mon, Nov 2 8 AM → Wed, Nov 4 8 AM").
     const tm = d => { d = new Date(d); const h = d.getHours(), mi = d.getMinutes(); return (h % 12 || 12) + (mi ? ':' + String(mi).padStart(2, '0') : '') + (h < 12 ? ' AM' : ' PM'); };
     const sameTime = (a, b) => !!(a && b) && Math.abs(new Date(a) - new Date(b)) < 60000;
-    const timeText = t => 'time ' + tm(t.from.start) + ' → ' + tm(t.to.start);
-    const whatText = x => x.t ? timeText(x.t) : changeText(x.cur, x.d);
+    const tmD = (d, other) => sd(new Date(d), new Date(other)) ? tm(d) : dayText(new Date(d)) + ' ' + tm(d);
+    const timeText = t => 'time ' + tmD(t.from.start, t.to.start) + ' → ' + tmD(t.to.start, t.from.start);
+    const techChange = d => !!(d && (d.add.length || d.remove.length));
+    const whatText = x => !x.t ? changeText(x.cur, x.d) : timeText(x.t) + (techChange(x.d) ? '; ' + changeText(x.cur, x.d) : '');
 
     // A new time's warnings: not Scheduled, other techs on the job (it moves for them too), and a
-    // new start outside its arrival window (the window stays as it is).
+    // new start outside its arrival window. For a new time on the same day the window stays as it
+    // is; for another day the window is compared by its time of day.
     const timeWarns = (out, cur, tech) => {
       if (!isScheduled(out.status)) out.warn.status = 'it\'s ' + out.status + ', not Scheduled';
       const others = tech ? cur.filter(id => S(id) !== S(tech)) : [];
       if (others.length) out.warn.shared = names(others) + (others.length === 1 ? ' is' : ' are') + ' on it too, and it moves for them';
-      const ws = out.windowStart ? new Date(out.windowStart) : null, we = out.windowEnd ? new Date(out.windowEnd) : null, ns = new Date(out.t.to.start);
-      if (ws && we && !isNaN(ws) && !isNaN(we) && (ns < ws || ns >= we)) out.warn.window = 'the new time is outside its arrival window (' + tm(ws) + '–' + tm(we) + '), which stays as it is';
+      let ws = out.windowStart ? new Date(out.windowStart) : null, we = out.windowEnd ? new Date(out.windowEnd) : null;
+      const ns = new Date(out.t.to.start);
+      if (!ws || !we || isNaN(ws) || isNaN(we)) return;
+      const other = !sd(ws, ns);
+      if (other) { const k = new Date(ns.getFullYear(), ns.getMonth(), ns.getDate(), ws.getHours(), ws.getMinutes()); we = new Date(k.getTime() + (we - ws)); ws = k; }
+      if (ns < ws || ns >= we) out.warn.window = 'the new time is outside its arrival window (' + tm(ws) + '–' + tm(we) + ')' + (other ? '' : ', which stays as it is');
     };
     // ---------- Review (reads only) ----------
     // A review is only good for a few minutes: after that, Go asks for a new one.
@@ -6021,7 +6072,7 @@
         say('Reading the board...');
         try {
           const s = await board.load({ fresh: true });
-          if (m !== 'swapDays' && picker.ids().some(j => !board.apptsOf(j).length)) await loadUnassigned();
+          if (m !== 'swapDays' && m !== 'dayMove' && picker.ids().some(j => !board.apptsOf(j).length)) await loadUnassigned();
           day = s.day;
         } catch (e) { return say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t read the board: ' + errText(e))); }
       }
@@ -6039,8 +6090,14 @@
           if (missing.length) return say('#' + missing.join(', #') + ' isn\'t on the board for ' + dayText(day) + '. Open its day first.');
           if (list.length !== 2) return say('One of those jobs has more than one visit on ' + dayText(day) + '. Swap needs one visit each.');
         }
+        if (m === 'dayMove') {
+          const D = pickedDay();
+          if (!D) return say('Pick the day to move to.');
+          if (sd(D, day)) return say('That\'s the day the board shows. Pick another day (to give the jobs to another tech on the same day, use ➡️ Move to a tech).');
+          if (D < startOfToday()) return say('⚠️ ' + dayText(D) + ' has passed. Pick today or a later day.');
+        }
       }
-      if (!list.length && !missing.length) return say(m === 'swapDays' ? 'Neither tech has jobs on ' + dayText(day) + '.' : 'Nothing to do.');
+      if (!list.length && !missing.length) return say(m === 'swapDays' ? 'Neither tech has jobs on ' + dayText(day) + '.' : m === 'dayMove' ? techName(dFromPick.value()) + ' has no jobs on ' + dayText(day) + '.' : 'Nothing to do.');
       if (list.length > MAX_PER_RUN) return say('⚠️ ' + MAX_PER_RUN + ' jobs per run at most.');
       busy = reviewing = true; reviewStop = false; clearReview(); picker.setPicking(false); updateButtons();
       freshSchedule();
@@ -6071,31 +6128,83 @@
         // A new order: every job in it is moving, so where they are now doesn't count as "booked"
         // for the others' new times.
         if (m === 'order') list.forEach(it => leave(it.p.tech, { apptId: it.r.apptId, start: it.r.start, end: it.r.end }));
+        // A day move: where this run's jobs are going (on the new day, for the tech they go to and
+        // anyone else on them) doesn't count as "booked" for each other. Anything else on that day does.
+        if (m === 'dayMove') list.forEach(it => {
+          if (!it.r.start || !it.r.end) return;
+          const tt = sameClockOn(it.r.start, it.r.end, it.p.day);
+          it.r.techs.map(t => t.id).filter(id => S(id) !== S(it.p.tech) && S(id) !== S(it.p.to)).concat([it.p.to])
+            .forEach(id => leave(id, { apptId: it.r.apptId, start: tt.start, end: tt.end }));
+        });
         const skillCache = new Map();
+        // Skills, as the job panel checks them before assigning.
+        const checkSkills = async (out, add) => {
+          if (!skillsOn()) return;
+          const unknown = add.filter(id => { const t = techById(id); return !t || !Array.isArray(t.skillIds); });
+          if (unknown.length) { out.warn.skills = 'skills couldn\'t be checked for ' + names(unknown) + (techsNote ? ' (' + techsNote + ')' : ''); return; }
+          if (!skillCache.has(out.jobId)) skillCache.set(out.jobId, st.jobSkills(out.jobId));
+          const need = await skillCache.get(out.jobId);
+          const gaps = add.map(id => { const t = techById(id); const miss = need.filter(s => !hasId(t.skillIds, s.id)); return miss.length ? t.name + ' doesn\'t have ' + miss.map(s => s.name).join(', ') : ''; }).filter(Boolean);
+          if (gaps.length) out.warn.skills = gaps.join('; ');
+        };
         const results = await st.pool(list, 4, async (it, i, alive) => {
           const now = await st.appointment(it.r.apptId);
           if (!alive()) return null;
           const a = now.appointment, cur = a.techIds;
           const status = statusName(a.status), stopWhy = statusStop(a.status);
           const out = { it, cur, total: now.jobTotal, bu: now.businessUnitId, jobId: S(now.jobId), start: a.start, end: a.end, status, warn: {} };
-          // A new time (✨ Optimize's order, or putting one back).
+          // 📅 A tech's day to another day: the same clock time on that day (the same length), and the
+          // tech it goes to in place of them (anyone else on the job stays, and their day moves too).
+          if (m === 'dayMove') {
+            if (!hasId(cur, it.p.tech)) return Object.assign(out, { skip: 'isn\'t on ' + techName(it.p.tech) + ' any more (now ' + nowText(cur) + '), left alone', kind: 'skipped' });
+            if (stopWhy) return Object.assign(out, { skip: stopWhy, kind: 'skipped' });
+            const to = sameClockOn(a.start, a.end, it.p.day);
+            const want = cur.filter(id => S(id) !== S(it.p.tech) && S(id) !== S(it.p.to)).concat([it.p.to]);
+            it.p.want = want;
+            const moving = !sameTime(a.start, to.start);
+            if (!moving && sameSet(cur, want)) return Object.assign(out, { skip: 'already on ' + dayText(it.p.day) + ' at ' + tm(a.start) + (S(it.p.to) !== S(it.p.tech) ? ' with ' + techName(it.p.to) : ''), kind: 'already' });
+            const mp = managedProblem(out.total, want);
+            if (mp) return Object.assign(out, { skip: mp, kind: 'skipped' });
+            const d = decide('exact', cur, it.p);
+            out.d = d.skip ? { add: [], remove: [] } : d;
+            if (moving) {
+              out.t = { from: { start: a.start, end: a.end }, to };
+              out.windowStart = a.windowStart; out.windowEnd = a.windowEnd;
+              timeWarns(out, cur, it.p.tech);
+            } else if (!isScheduled(status)) out.warn.status = 'it\'s ' + status + ', not Scheduled';
+            if (out.d.add.length) await checkSkills(out, out.d.add);
+            // Booked on the new day: everyone who'll be on the job then.
+            const booked = await bookedAt(want, { apptId: it.r.apptId, start: to.start, end: to.end }, id => leaving.get(S(id)) || []);
+            if (booked.length) out.warn.booked = bookedText(booked);
+            return out;
+          }
+          // A new time (✨ Optimize's order, or putting one back). Putting back a day move puts its
+          // techs back too.
           if (it.p.time) {
             const want = m === 'putback' ? it.p.time.want : it.p.time;
+            const techsMoved = m === 'putback' && !(Array.isArray(it.p.expect) && sameSet(it.p.want, it.p.expect));
             if (m === 'putback') {
-              if (!it.p.time.expect) return Object.assign(out, { skip: 'the earlier run couldn\'t confirm its new time, so it\'s left for you to check (it was ' + tm(want.start) + ', now ' + tm(a.start) + ')', kind: 'skipped' });
-              if (!sameTime(a.start, it.p.time.expect.start)) return Object.assign(out, { skip: 'its time changed since (now ' + tm(a.start) + '), left alone', kind: 'skipped' });
+              if (!it.p.time.expect) return Object.assign(out, { skip: 'the earlier run couldn\'t confirm its new time, so it\'s left for you to check (it was ' + tmD(want.start, a.start) + ', now ' + tmD(a.start, want.start) + ')', kind: 'skipped' });
+              if (!sameTime(a.start, it.p.time.expect.start)) return Object.assign(out, { skip: 'its time changed since (now ' + tmD(a.start, want.start) + '), left alone', kind: 'skipped' });
+              if (techsMoved && !it.p.expect) return Object.assign(out, { skip: 'the earlier run couldn\'t confirm what it did to this job\'s techs, so it\'s left for you to check (it started as ' + nowText(it.p.want) + ', now ' + nowText(cur) + ')', kind: 'skipped' });
+              if (techsMoved && !sameSet(cur, it.p.expect)) return Object.assign(out, { skip: 'changed since the move (now ' + nowText(cur) + '), left alone', kind: 'skipped' });
             } else if (!hasId(cur, it.p.tech)) return Object.assign(out, { skip: 'isn\'t on ' + techName(it.p.tech) + ' any more (now ' + nowText(cur) + '), left alone', kind: 'skipped' });
             if (stopWhy) return Object.assign(out, { skip: stopWhy, kind: 'skipped' });
-            if (sameTime(a.start, want.start)) return Object.assign(out, { skip: 'already at ' + tm(want.start), kind: 'already' });
-            out.t = { from: { start: a.start, end: a.end }, to: { start: new Date(want.start).toISOString(), end: new Date(want.end).toISOString() } };
-            out.d = { add: [], remove: [] };
-            out.windowStart = a.windowStart; out.windowEnd = a.windowEnd;
-            timeWarns(out, cur, it.p.tech);
-            if (m !== 'putback') {
-              const booked = await bookedAt(cur, { apptId: it.r.apptId, start: out.t.to.start, end: out.t.to.end }, id => leaving.get(S(id)) || []);
-              if (booked.length) out.warn.booked = bookedText(booked);
+            const td = techsMoved ? decide('exact', cur, it.p) : { add: [], remove: [] };
+            if (td.skip) { td.add = []; td.remove = []; }
+            if (!sameTime(a.start, want.start)) {
+              out.t = { from: { start: a.start, end: a.end }, to: { start: new Date(want.start).toISOString(), end: new Date(want.end).toISOString() } };
+              out.d = { add: td.add || [], remove: td.remove || [] };
+              out.windowStart = a.windowStart; out.windowEnd = a.windowEnd;
+              timeWarns(out, cur, it.p.tech);
+              if (m !== 'putback') {
+                const booked = await bookedAt(cur, { apptId: it.r.apptId, start: out.t.to.start, end: out.t.to.end }, id => leaving.get(S(id)) || []);
+                if (booked.length) out.warn.booked = bookedText(booked);
+              }
+              return out;
             }
-            return out;
+            if (!techChange(td)) return Object.assign(out, { skip: 'already at ' + tm(want.start), kind: 'already' });
+            // Only its techs to put back: the same as any other job below.
           }
           if (m === 'putback') {
             if (!it.p.expect) return Object.assign(out, { skip: 'the earlier run couldn\'t confirm what it did to this job, so it\'s left for you to check (it started as ' + (it.p.want.length ? names(it.p.want) : 'unassigned') + ', now ' + (cur.length ? names(cur) : 'unassigned') + ')', kind: 'skipped' });
@@ -6117,17 +6226,7 @@
           if (!isScheduled(status)) out.warn.status = 'it\'s ' + status + ', not Scheduled';
           if (!fin.length && m !== 'putback' && otherBranch(out.bu)) out.warn.branch = 'goes to ' + buName(out.bu) + '\'s Unassigned list, not yours';
           if (d.add.length && m !== 'putback') {
-            // Skills, as the job panel checks them before assigning.
-            if (skillsOn()) {
-              const unknown = d.add.filter(id => { const t = techById(id); return !t || !Array.isArray(t.skillIds); });
-              if (unknown.length) out.warn.skills = 'skills couldn\'t be checked for ' + names(unknown) + (techsNote ? ' (' + techsNote + ')' : '');
-              else {
-                if (!skillCache.has(out.jobId)) skillCache.set(out.jobId, st.jobSkills(out.jobId));
-                const need = await skillCache.get(out.jobId);
-                const gaps = d.add.map(id => { const t = techById(id); const miss = need.filter(s => !hasId(t.skillIds, s.id)); return miss.length ? t.name + ' doesn\'t have ' + miss.map(s => s.name).join(', ') : ''; }).filter(Boolean);
-                if (gaps.length) out.warn.skills = gaps.join('; ');
-              }
-            }
+            await checkSkills(out, d.add);
             // Already booked at that time? For swaps, not counting the job each tech is leaving.
             const booked = await bookedAt(d.add, { apptId: it.r.apptId, start: a.start, end: a.end }, id => leaving.get(S(id)) || []);
             if (booked.length) out.warn.booked = bookedText(booked);
@@ -6156,7 +6255,9 @@
             if (reviewStop) { say('Stopped checking. Nothing changed.'); return; }
             const x = times[n];
             try {
-              const booked = await bookedAt(x.cur, { apptId: x.it.r.apptId, start: x.t.to.start, end: x.t.to.end }, id => leaving.get(S(id)) || []);
+              // Everyone who'll be on it at the time it goes back to (a day move's techs go back too).
+              const who = techChange(x.d) ? after(x.cur, x.d) : x.cur;
+              const booked = await bookedAt(who, { apptId: x.it.r.apptId, start: x.t.to.start, end: x.t.to.end }, id => leaving.get(S(id)) || []);
               if (booked.length) x.warn.booked = bookedText(booked);
             } catch (e) {
               if (st.isSignedOut(e)) throw e;
@@ -6164,7 +6265,7 @@
               Object.assign(x, { skip: 'couldn\'t check if the tech is booked then (' + errText(e) + ')', kind: 'problem' });
             }
           }
-          const check = items.filter(x => x.d && !x.skip && x.d.add.length);
+          const check = items.filter(x => x.d && !x.skip && !x.t && x.d.add.length);   // a new time's techs were checked above
           for (let n = 0; n < check.length; n++) {
             if (reviewStop) { say('Stopped checking. Nothing changed.'); return; }
             say('Checking bookings... ' + (n + 1) + ' of ' + check.length);
@@ -6179,7 +6280,8 @@
             }
           }
         }
-        planned = { mode: m, items, at: Date.now(), day, leaving, params: m === 'move' || m === 'add' ? { to: toPick.value(), from: fromPick.value() } : m === 'unassign' ? { from: fromPick.value() } : m === 'swapDays' ? { a: aPick.value(), b: bPick.value() } : m === 'order' ? { tech: order && order.tech } : {} };
+        planned = { mode: m, items, at: Date.now(), day, leaving, params: m === 'move' || m === 'add' ? { to: toPick.value(), from: fromPick.value() } : m === 'unassign' ? { from: fromPick.value() } : m === 'swapDays' ? { a: aPick.value(), b: bPick.value() } : m === 'order' ? { tech: order && order.tech } :
+          m === 'dayMove' ? { tech: dFromPick.value(), to: dToPick.value() || dFromPick.value(), day: pickedDay() } : {} };
         showReview();
       } catch (e) {
         noteBad(e);
@@ -6208,8 +6310,9 @@
     const showReview = () => {
       const p = planned, ready = p.items.filter(x => x.d && !x.skip), skipped = p.items.filter(x => !x.d || x.skip);
       const head = TITLE[p.mode] + (p.mode === 'move' || p.mode === 'add' ? ' ' + techName(p.params.to) + (p.params.from ? ' (from ' + techName(p.params.from) + ')' : '') :
-        p.mode === 'unassign' ? (p.params.from ? ' ' + techName(p.params.from) : ' everyone') : p.mode === 'swapDays' ? ': ' + techName(p.params.a) + ' ⇄ ' + techName(p.params.b) : p.mode === 'order' ? ' ' + techName(p.params.tech) : '');
-      const lines = [head + '   ·   ' + dayText(p.day), ''];
+        p.mode === 'unassign' ? (p.params.from ? ' ' + techName(p.params.from) : ' everyone') : p.mode === 'swapDays' ? ': ' + techName(p.params.a) + ' ⇄ ' + techName(p.params.b) : p.mode === 'order' ? ' ' + techName(p.params.tech) :
+        p.mode === 'dayMove' ? ' ' + dayMoveText(p.params) : '');
+      const lines = [head + '   ·   ' + (p.mode === 'dayMove' ? 'from ' : '') + dayText(p.day), ''];
       if (p.mode === 'swapJobs' && ready.length !== 2) lines.push('⚠️ A swap needs both jobs, and one is left alone (below), so nothing will be swapped.', '');
       const clean = ready.filter(x => !Object.keys(x.warn).length);
       lines.push('✅ Ready: ' + plural(clean.length, 'job'));
@@ -6235,6 +6338,11 @@
       if (p.mode === 'swapDays' && (skipped.length || ready.some(x => Object.keys(x.warn).length))) lines.push('', 'ℹ️ Jobs left alone (or with a warning you don\'t tick) stay where they are, so it won\'t be a full swap.');
       if (p.mode === 'swapJobs' || p.mode === 'swapDays') lines.push('', 'Swaps don\'t count the job each tech is leaving as "booked". Anything else at that time does.');
       if (p.mode === 'order') lines.push('', 'Only the start and end times change (same length): the tech and the arrival window stay as they are. The jobs in this order don\'t count as "booked" for each other; anything else at the new time does.');
+      if (p.mode === 'dayMove') {
+        if (skipped.length || ready.some(x => Object.keys(x.warn).length)) lines.push('', 'ℹ️ Jobs left alone (or with a warning you don\'t tick) stay on ' + dayText(p.day) + '.');
+        lines.push('', 'Each job keeps its time and length on ' + dayText(p.params.day) + '. Its time moves first' + (S(p.params.to) !== S(p.params.tech) ? ', then ' + techName(p.params.to) + ' goes on it and ' + techName(p.params.tech) + ' comes off' : '') + '. Anyone else on a job stays on it, and it moves for them too. These jobs don\'t count as "booked" for each other; anything else on ' + dayText(p.params.day) + ' does.',
+          '', 'The arrival window: one job goes first, and the run only goes on once ServiceTitan shows its arrival window on ' + dayText(p.params.day) + ' too. If the window stayed behind, it stops there (↩ Put back undoes that job).');
+      }
       reviewText.textContent = lines.join('\n');
       reviewOpts.textContent = '';
       WARNS.forEach(([k, , text]) => {
@@ -6317,15 +6425,16 @@
       if (stopWhy) return res(stopWhy, 'skipped');
       if (sameTime(a.start, to.start)) return res('already at ' + tm(to.start), 'already');
       const o = { status, t: x.t, windowStart: a.windowStart, windowEnd: a.windowEnd, warn: {} };
-      timeWarns(o, cur, m === 'order' ? x.it.p.tech : null);
+      timeWarns(o, cur, m === 'order' || m === 'dayMove' ? x.it.p.tech : null);
       if (o.warn.status && !okWarn.status) return res('is ' + status + ' now, not Scheduled (not ticked), left alone', 'skipped');
       if (o.warn.shared && !okWarn.shared) return res(o.warn.shared + ' (not ticked), left alone', 'skipped');
       if (o.warn.window && !okWarn.window) return res(o.warn.window + ' (not ticked), left alone', 'skipped');
       // Booked at the new time, checked again right before. This run's other jobs (where they were,
-      // and where they're going) don't count.
+      // and where they're going) don't count. A day move checks whoever will be on it then.
       if (!okWarn.booked && m !== 'putback') {
         try {
-          const since = await bookedAt(cur, { apptId: r.apptId, start: to.start, end: to.end }, id => (ctx.leaving.get(S(id)) || []).concat(ctx.given.filter(g => hasId(g.ids, id))));
+          const who = m === 'dayMove' && Array.isArray(x.it.p.want) ? x.it.p.want : cur;
+          const since = await bookedAt(who, { apptId: r.apptId, start: to.start, end: to.end }, id => (ctx.leaving.get(S(id)) || []).concat(ctx.given.filter(g => hasId(g.ids, id))));
           if (since.length) return res(bookedText(since) + ' (since the review), left alone. Review again to see it', 'skipped');
         } catch (e) { if (st.isSignedOut(e)) throw e; noteBad(e); return res('couldn\'t check if the tech is booked then (' + errText(e) + '). Nothing changed', 'problem'); }
       }
@@ -6349,7 +6458,7 @@
         if (x.tLast && sameTime(x.tLast.start, a.start)) return res(why + '. Nothing changed', 'problem');
         return res(why + ', and couldn\'t confirm what it did (now ' + (x.tLast ? tm(x.tLast.start) : 'unknown') + '). Review again', 'problem');
       }
-      return res((sent ? 'ServiceTitan\'s answer got lost, but the change went through. ' : '') + timeText({ from: { start: a.start }, to }), 'done');
+      return res((sent ? 'ServiceTitan\'s answer got lost, but the change went through. ' : '') + timeText({ from: { start: a.start }, to }), 'done', { win: { start: got.windowStart, end: got.windowEnd } });
     };
     // One appointment: a fresh look, the change worked out again from who's on it now (in case the
     // board changed since the review), the checks again, then add first and remove second.
@@ -6363,7 +6472,37 @@
       const cur = now.appointment.techIds;
       x.lastSeen = cur.slice();
       if (!x.origin) x.origin = cur.slice();
-      if (x.t) return doTime(x, m, okWarn, ctx, now);
+      if (!x.t) return doTechs(x, m, okWarn, ctx, now);
+      // A new time. For a day move to another tech (or putting one back), the time goes first, then
+      // the techs, read fresh: the new tech is checked for being booked where the job now is.
+      const rt = await doTime(x, m, okWarn, ctx, now);
+      let rr = rt;
+      if (techChange(x.d) && (rt.kind === 'done' || rt.kind === 'already')) {
+        let now2;
+        try { now2 = await st.appointment(r.apptId); }
+        catch (e) { if (st.isSignedOut(e)) throw e; noteBad(e); now2 = null; }
+        const tt = rt.kind === 'done' ? rt.text + '; ' : '';
+        if (!now2) rr = res(tt + 'couldn\'t read the job again to change its techs. Try again', 'problem');
+        else {
+          x.lastSeen = now2.appointment.techIds.slice();
+          const rk = await doTechs(x, m, okWarn, ctx, now2);
+          if (rk.kind === 'already') rr = Object.assign({}, rk, { kind: rt.kind, text: rt.kind === 'done' ? rt.text : rk.text });
+          else if (rk.kind === 'done' || rk.kind === 'problem') rr = Object.assign({}, rk, { text: tt + rk.text });
+          // Its time moved but its techs were left alone (a warning since the review): half done.
+          else rr = res(tt + 'its techs were left alone: ' + rk.text, rt.kind === 'done' ? 'problem' : rk.kind, { noRetry: true });
+        }
+      }
+      // A day move: did ServiceTitan move the arrival window to the new day too?
+      const w = rt.win;
+      if (m === 'dayMove' && rt.kind === 'done' && w && w.start && !sd(new Date(w.start), new Date(x.t.to.start))) {
+        rr = Object.assign({}, rr, { windowStuck: true, text: rr.text + '. ⚠️ ServiceTitan kept its arrival window on ' + dayText(new Date(w.start)) + ' (' + tm(w.start) + (w.end ? '–' + tm(w.end) : '') + ')' });
+      }
+      return rr;
+    };
+    // The techs on one appointment (now: its fresh look): the change worked out again from who's on
+    // it, the checks again, then add first and remove second.
+    const doTechs = async (x, m, okWarn, ctx, now) => {
+      const r = x.it.r, cur = now.appointment.techIds;
       // Exactly the techs the review saw, or it's left alone. (On a retry after this run already
       // changed part of it, the check below, against what the review planned, is the one that applies.)
       if (!x.touched && x.cur && !sameSet(cur, x.cur)) return res('changed since the review (now ' + nowText(cur) + '). Review again', 'problem', { noRetry: true });
@@ -6483,22 +6622,24 @@
       freshSchedule();
       const results = new Map();   // apptId -> result
       const ctx = { given: [], leaving: p.leaving || new Map() };
-      todo.forEach(x => { if (x.d && x.d.add.length) give(ctx, x.it.r.apptId, x.d.add, x.start, x.end); });
-      // New times: where each job in the run is going doesn't count as "booked" for the others.
-      todo.forEach(x => { if (x.t) ctx.given.push({ apptId: x.it.r.apptId, ids: x.cur.slice(), start: x.t.to.start, end: x.t.to.end }); });
+      todo.forEach(x => { if (x.d && x.d.add.length && !x.t) give(ctx, x.it.r.apptId, x.d.add, x.start, x.end); });
+      // New times: where each job in the run is going (with whoever will be on it) doesn't count as
+      // "booked" for the others.
+      todo.forEach(x => { if (x.t) ctx.given.push({ apptId: x.it.r.apptId, ids: techChange(x.d) ? after(x.cur, x.d) : x.cur.slice(), start: x.t.to.start, end: x.t.to.end }); });
       const record = (x, rr, retry) => { results.set(S(x.it.r.apptId), { x, rr }); add(label(x.it.r) + ': ' + (retry ? 'retry: ' : '') + rr.text); };
-      const verb = m === 'putback' ? 'Putting back' : m === 'unassign' ? 'Unassigning' : m === 'add' ? 'Adding' : m === 'move' ? 'Moving' : m === 'plan' ? 'Assigning' : m === 'order' ? 'Setting times' : 'Swapping';
+      const verb = m === 'putback' ? 'Putting back' : m === 'unassign' ? 'Unassigning' : m === 'add' ? 'Adding' : m === 'move' || m === 'dayMove' ? 'Moving' : m === 'plan' ? 'Assigning' : m === 'order' ? 'Setting times' : 'Swapping';
       const needsRetry = rr => rr.kind === 'problem' && !rr.noRetry;
       // What the run changed, worked out from each job's first and latest reading.
-      const changes = () => todo.filter(x => !x.t && x.origin && (x.lastSeen === null || !sameSet(x.origin, x.lastSeen)))
+      const techsChanged = x => !!x.origin && (x.lastSeen === null || !sameSet(x.origin, x.lastSeen));
+      const changes = () => todo.filter(x => !x.t && techsChanged(x))
         .map(x => ({ apptId: x.it.r.apptId, jobId: x.it.r.jobId, number: x.it.r.number, customer: x.it.r.customer, before: x.origin.slice(), after: x.lastSeen ? x.lastSeen.slice() : null }))
-        // New times: the techs stay the same; the time goes back.
-        .concat(todo.filter(x => x.t && x.tOrigin && (x.tLast === null || !sameTime(x.tOrigin.start, x.tLast.start)))
-          .map(x => ({ apptId: x.it.r.apptId, jobId: x.it.r.jobId, number: x.it.r.number, customer: x.it.r.customer, before: x.origin.slice(), after: x.origin.slice(),
+        // New times: the time goes back (and the techs, for a day move to another tech).
+        .concat(todo.filter(x => x.t && x.tOrigin && (x.tLast === null || !sameTime(x.tOrigin.start, x.tLast.start) || techsChanged(x)))
+          .map(x => ({ apptId: x.it.r.apptId, jobId: x.it.r.jobId, number: x.it.r.number, customer: x.it.r.customer, before: x.origin.slice(), after: x.lastSeen ? x.lastSeen.slice() : null,
             time: { before: x.tOrigin, after: x.tLast } })));
       let finished = false, lastRun = [];
       try {
-        add(TITLE[m] + (m === 'move' || m === 'add' ? ' ' + techName(p.params.to) : m === 'order' ? ' ' + techName(p.params.tech) : '') + ' · ' + dayText(p.day) + ' (' + plural(todo.length, 'job') + ')');
+        add(TITLE[m] + (m === 'move' || m === 'add' ? ' ' + techName(p.params.to) : m === 'order' ? ' ' + techName(p.params.tech) : m === 'dayMove' ? ' ' + dayMoveText(p.params) : '') + ' · ' + (m === 'dayMove' ? 'from ' : '') + dayText(p.day) + ' (' + plural(todo.length, 'job') + ')');
         if (m === 'swapJobs') {
           // Both jobs are read again first: nothing is done unless both are as the review saw them.
           let ok = true;
@@ -6524,7 +6665,19 @@
           }
         } else {
           say(verb + '... 0 of ' + todo.length + ' done');
-          const notStarted = await doMany(todo, m, okWarn, ctx, (x, rr) => record(x, rr), n => say(verb + '... ' + n + ' of ' + todo.length + ' done'));
+          let rest = todo, head = 0;
+          // A day move: one job first (one with an arrival window, if any has one). The rest only go
+          // once ServiceTitan shows that job's arrival window on the new day too.
+          const stuckStop = () => { if (!stop) { stop = true; add('⚠️ Stopped: ServiceTitan kept the arrival window on the old day, so the other jobs weren\'t moved. Fix that job\'s window by hand, or ↩ Put back.'); } };
+          if (m === 'dayMove') {
+            const first = todo.find(x => x.t && x.windowStart) || todo[0];
+            const rr = await doItem(first, m, okWarn, ctx);
+            record(first, rr);
+            head = 1; rest = todo.filter(x => x !== first);
+            say(verb + '... 1 of ' + todo.length + ' done');
+            if (rr.windowStuck) stuckStop();
+          }
+          const notStarted = await doMany(rest, m, okWarn, ctx, (x, rr) => { record(x, rr); if (rr.windowStuck && m === 'dayMove') stuckStop(); }, n => say(verb + '... ' + (n + head) + ' of ' + todo.length + ' done'));
           if (notStarted) add('Stopped. ' + plural(notStarted, 'job') + ' not done.');
           // One more try for jobs that had a problem (a fresh look decides what's still left to do).
           const failed = todo.filter(x => { const y = results.get(S(x.it.r.apptId)); return y && needsRetry(y.rr); });
@@ -6552,7 +6705,7 @@
           undoDay = p.day || null;
           movedJobs = Array.from(new Set(lastRun.map(z => z.jobId)));
           // Done jobs come off the picked list; anything with a problem stays so you can try again.
-          if (m !== 'swapDays') {
+          if (m !== 'swapDays' && m !== 'dayMove') {
             const problemJobs = new Set();
             results.forEach(({ x, rr }) => { if (rr.kind === 'problem') problemJobs.add(x.it.r.jobId); });
             results.forEach(({ x, rr }) => { if ((rr.kind === 'done' || rr.kind === 'already') && !problemJobs.has(x.it.r.jobId)) picker.remove(x.it.r.jobId); });
