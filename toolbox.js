@@ -7278,9 +7278,9 @@
     // thing (or a day with no jobs); last: the end of the day (or a day with no jobs).
     const askFits = (a, g, x) => {
       const d0 = new Date(g.start); d0.setHours(0, 0, 0, 0);
-      const from = Math.max(+g.start + (x.a || 0) * 60000, a.after != null ? +d0 + a.after * 60000 : 0);
+      const from = Math.max(+g.start + (x.a || 0) * 60000, a.after != null ? wallAt(d0, a.after) : 0);
       if (from + (x.c.dur + (g.next ? x.b || 0 : 0)) * 60000 > +g.end + SLACK * 60000) return false;
-      if (a.before != null && +g.start + (x.a || 0) * 60000 > +d0 + a.before * 60000) return false;
+      if (a.before != null && +g.start + (x.a || 0) * 60000 > wallAt(d0, a.before)) return false;
       if (a.first && g.kind !== 'first' && g.kind !== 'open') return false;
       if (a.last && g.kind !== 'last' && g.kind !== 'open') return false;
       return true;
@@ -7902,6 +7902,8 @@
     // followed by years, tons, days and the like aren't times.
     const ASK_HR = '(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?(?![\\d:])';
     const NOT_TIME = /^\s*(?:years?|yrs?|months?|mos?|weeks?|wks?|days?|hours?|hrs?|minutes?|mins?|tons?|units?|times?|people|techs?|men|guys|ft|feet|foot|inch|inches|stor(?:y|ies)|zones?|systems?|dogs?|kids?|%|x\b|\$|\/)/i;
+    // The time on the clock that day, from minutes after midnight (right on the days the clocks change).
+    const wallAt = (day, min) => { const d = new Date(day); d.setHours(0, min, 0, 0); return +d; };
     const askMin = (h, m, ap, strict) => {
       h = Number(h); m = Number(m || 0); ap = ap ? ap.toLowerCase() : '';
       if (m > 59) return null;
@@ -7994,7 +7996,9 @@
         t += d * 60000; drive += d;
         // When the customer asked for a time outside the window (before it starts, or after it ends),
         // what they asked for is what counts.
-        const ask = x.ask, askA = ask && ask.after != null ? day0 + ask.after * 60000 : null, askB = ask && ask.before != null ? day0 + ask.before * 60000 : null;
+        const ask = x.ask;
+        if (ask && ask.day0 !== day0) { ask.day0 = day0; ask.at = ask.after != null ? wallAt(day0, ask.after) : null; ask.by = ask.before != null ? wallAt(day0, ask.before) : null; }
+        const askA = ask ? ask.at : null, askB = ask ? ask.by : null;
         const win = x.win && !(askB != null && askB <= +x.win.start) && !(askA != null && askA >= +x.win.end - EARLY * 60000) ? x.win : null;
         if (win && t < +win.start - EARLY * 60000) t = +win.start - EARLY * 60000;
         if (x.notBefore && t < +x.notBefore) t = +x.notBefore;
