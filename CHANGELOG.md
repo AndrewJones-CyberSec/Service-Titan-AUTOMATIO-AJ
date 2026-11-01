@@ -12,6 +12,18 @@
   - **🗺️ Google Maps:** opens the route shown (✨ Suggested or As it is now) as driving directions: from where their day starts (home, or today the job they're working or last finished), through each job's address in order, and back home. **📋 Maps link** copies it, to send to the tech. Only the addresses go in the link (no names). Google takes 9 stops at a time in a link (3 in a phone's web browser), so a longer route comes as Part 1, Part 2…, each starting where the one before ends.
   - It only suggests. Nothing changes; to use it, move the jobs on the board (the Toolbox doesn't change appointment times).
 - **🧭 Tech Router → 🗺️ Plan the day: ＋ Fit in holds too.** Off unless ticked (remembered). After the Unassigned jobs are planned, jobs from the Hold list (your board's branches) are fitted into the room left in each route: up to 2 per tech, within 15 miles of their route and no more than 30 minutes of extra driving, without making any stop late or their day longer, and only kinds of jobs they do. Best fit first across every route; Urgent and High holds and ones waiting longest a little sooner. A hold's window is its arrival-window tag, if it has one.
+- **Customers' time requests, from the job summary** (all of 🧭 Tech Router). A time the customer asked for in a job's summary (or the appointment's special instructions) is kept to, like its window. On Oct 29 2026, 78 of 1,342 Unassigned and Hold jobs had one. What counts:
+  - after a time: *after 2pm*, *anytime after 1:30*, *not home until 3*, *works until 3*, *gets off at 4*, *after lunch*;
+  - before a time: *before 11*, *no later than 3*, *leaves at 11am*, *must be done by noon*;
+  - a range: *between 1 and 3*, *1-3pm*, *wants us at 2pm*, *morning only*, *afternoon only*;
+  - first or last: *first call*, *1st appointment*, *last stop*.
+
+  An hour with no am/pm is a working hour (7–11 morning, 12 noon, 1–6 afternoon). Not counted: numbers that aren't times (*15 years*, *3 ton*), calling (*call before 10am*), and a sentence with a date or weekday that isn't the day (*requested Aug 15th at 8am*). The request shows as a 🕑 chip whose tip quotes the summary; it's a red **⚠️ asked:** when the route doesn't keep it.
+  - **✨ Optimize** and **📊 Score every tech** read the summaries of the tech's jobs (4 at a time, kept 10 minutes). The tech waits rather than arrive before *after*; arriving after *before*, or a *first*/*last* stop elsewhere, counts heavily, and the better order keeps it (*A better order keeps a customer's time request*). When the request is outside the window, the request counts.
+  - **🗺️ Plan the day:** an Unassigned or Hold job's request is kept to while planning. The board's jobs keep their order; for the routes that change, their summaries are read, each new job is put in its best place again with them counted (a job asked to be the first call stays first), and a request the board's own order breaks is marked.
+  - **📞 Fill a spot:** a job whose request the open time can't give (*after 3pm* for a 10–1 opening) is marked ⚠️ and ranks an hour lower. **📍 Next job** shows it.
+- **Arrival windows: the appointment's first.** On Oct 29 2026, about a third of the board's jobs had a window tag that didn't match the appointment's arrival window, nearly always because the job had been moved (an *8-12* tag on a job now in the 12–5 window); on the Unassigned list they nearly always match. The appointment's window moves with the job and is what ServiceTitan tells the customer, so it's the window now, with the tag beside it when it differs (*12-5 · tag 8-12*). With no window on the appointment (or one that can't be a window), the tag's.
+- **Jobs measured to their street address.** Jobs on the board (and Unassigned or Hold jobs without a map point) are looked up by street address with Mapbox's geocoding, 100 at a time in one request, instead of the middle of their zip code (which can be miles off in the country). Only the address is sent (street, town, state, zip), and the answers are kept only while the page is open. An answer Mapbox isn't sure of, or one more than 25 miles from the zip code's middle, isn't used; the zip code's middle is. Points go to Mapbox to about 10 meters now (they were rounded to about half a mile).
 - **🗺️ Plan the day: 🗺️ Google Maps** on each route when it's open (▾), the same as in ✨ Optimize, with the new jobs and holds in their places.
 - The board's jobs now carry their street address and state (for Google Maps), and the Unassigned and Hold lists theirs (*Street*, *State*); techs' homes their address from their tech profile.
 - Holds show on the routes as ⏸️ stops (an orange chip on the tech's card, and in the route with the customer's phone number, *call to book it*), and the summary says how many holds there are to call. They aren't sent to Move Jobs: a hold needs a call and a new time first. 📋 Copy routes lists them with their numbers.
@@ -25,6 +37,9 @@
   - a 10-job day (one job at a time);
   - 🗺️ Google Maps (addresses in the order shown, as it is now, in parts past 9 stops, and on Plan the day's routes);
   - Score every tech from one Mapbox request with the same score as checking one tech, and marked ~ when Mapbox is down;
+  - customers' time requests (*not home until 11am* waited for, *last stop* and *first call* kept, a request for another day not counted, in Plan the day and Fill a spot too);
+  - the appointment's window over a tag that differs, shown with the tag;
+  - jobs looked up by street address in one request with no names, measured to it, and no address or summary read twice;
   - nothing changed.
 
 ## 2.1

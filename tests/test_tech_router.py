@@ -86,7 +86,7 @@ def score(page):
     return int(s.inner_text().rstrip('%')) if s.count() else -1
 def stops(page):
     """The customers on the route shown, in order."""
-    return ev(page, "() => Array.from(document.querySelectorAll('#st-opt-out .st-opt-stop')).map(r => r.querySelector('.st-tl-what').textContent.replace(/^(\\d+-\\d+|booked [^A-Z]*[AP]M)/, '').split(' #')[0].trim())")
+    return ev(page, "() => Array.from(document.querySelectorAll('#st-opt-out .st-opt-stop')).map(r => r.querySelector('.st-tl-what').textContent.replace(/^(\\d+(?::\\d+)?-\\d+(?::\\d+)?(?: · tag \\d+-\\d+)?|booked [^A-Z]*[AP]M)/, '').split(' #')[0].trim())")
 
 with sync_playwright() as p:
     b = p.chromium.launch()
@@ -147,7 +147,7 @@ with sync_playwright() as p:
     check(ev(page, 'NB.pastCalls') == 4, 'the last 4 weeks were read in 4 parts (%s)' % ev(page, 'NB.pastCalls'))
     check(ev(page, "() => window.mapboxCookies") is None, 'Mapbox is asked without cookies')
     coords = ev(page, 'window.mapboxCoords')
-    check(all(abs(x * 100 - round(x * 100)) < 1e-6 for pt in coords for x in pt), 'every point sent to Mapbox is rounded to about half a mile (%d points)' % len(coords))
+    check(all(abs(x * 1e4 - round(x * 1e4)) < 1e-6 for pt in coords for x in pt), 'every point sent to Mapbox for drive times is to 4 decimal places (%d points)' % len(coords))
     check(ev(page, 'window.WRITES') == [], 'nothing was changed in ServiceTitan (%s)' % ev(page, 'window.WRITES'))
     hl = ev(page, "() => Array.from(NB.host.shadowRoot.querySelectorAll('style')).map(s => s.textContent).join('')")
     check('data-technician-id="201"' in hl, 'Dustin\'s name is highlighted on the board')
@@ -503,6 +503,70 @@ with sync_playwright() as p:
     o = page.inner_text('#st-opt-out')
     check('~' in o and 'straight-line miles' in o, 'Mapbox down: scores from straight-line miles, marked ~ (%r)' % o[:200])
     check(errors == [], 'long day: no page errors: %s' % errors)
+    page.close()
+
+    # ================= Customers' time requests (job summaries), arrival windows, addresses =================
+    # Ian: Nate's summary says not home until 11am; Tia's asks for a time on another day (not counted);
+    # Ed's appointment was moved to the afternoon (window 12-5) but still has the 8-12 tag, and he asks
+    # to be the last stop. Pam: Fran asks to be the first call (and is). Unassigned: Late Quote isn't home until 3:30pm, Gen Later (in 3 days) wants after 3pm.
+    ASKS = """() => { const AM = [{ name: '8-12 MORNING ', color: '#fff2a8' }], Q = 'Quote - HVAC - Central Home System', I = 'Install - HVAC - Standard - Residential';
+      APPTS.push({ id: 9501, job: 7501, techs: [206], customer: 'Not Home Nate', start: at(8), end: at(9), zip: '39401', city: 'Hattiesburg', jobType: I, jobTypeId: 41, tags: AM },
+        { id: 9502, job: 7502, techs: [206], customer: 'Early Ed', start: at(9), end: at(10), zip: '39465', city: 'Petal', jobType: I, jobTypeId: 41, tags: AM, windowStart: at(12), windowEnd: at(17) },
+        { id: 9503, job: 7503, techs: [206], customer: 'Third Tia', start: at(10), end: at(11), zip: '39401', city: 'Hattiesburg', jobType: I, jobTypeId: 41, tags: AM },
+        { id: 9511, job: 7511, techs: [204], customer: 'Second Sue', start: at(10), end: at(11), zip: '39475', city: 'Purvis', jobType: 'Plumbing - Clogged Drain', jobTypeId: 31, tags: AM },
+        { id: 9512, job: 7512, techs: [204], customer: 'First Fran', start: at(8), end: at(9), zip: '39475', city: 'Purvis', jobType: 'Plumbing - Clogged Drain', jobTypeId: 31, tags: AM });
+      window.SUMMARIES = { 7501: '<p>AC blowing warm.</p><p>Customer not home until 11am.</p>', 7502: 'Please make this the last stop', 7503: '<p>Customer requested Aug 15th at 8am.</p>', 7512: '<div>Please make this the first call of the day</div>' };
+      window.ROW_NOTES = { 9108: '<p>Quote for new system. Customer is not home until 3:30pm</p>', 9106: 'Customer wants us after 3pm' };
+      NB.render(); }"""
+    page, errors = start(b, ASKS)
+    open_router(page)
+    page.click('#st-toolbox [data-tab=opt]')
+    opt(page, 206)
+    rt = page.inner_text('#st-opt-out .st-opt-route')
+    check(stops(page) == ['Third Tia', 'Not Home Nate', 'Early Ed'], 'Ian: Nate (not home until 11) after Tia, Ed (moved to the afternoon) last (%s)' % stops(page))
+    nate = ev(page, "() => { const r = document.querySelector('#st-opt-out .st-opt-stop[data-job=\"7501\"]'); return r ? r.innerText.replace(/\\s+/g, ' ') : ''; }")
+    check(nate.startswith('11 AM') and '🕑 after 11 AM' in nate, 'Nate arrives at 11, with the summary\'s request as a chip (%r)' % nate)
+    tip = ev(page, "() => { const c = document.querySelector('#st-opt-out .st-opt-stop[data-job=\"7501\"] .st-ask'); return c ? c.title : ''; }")
+    check('not home until 11am' in tip, 'its tip quotes the summary (%r)' % tip)
+    check('12-5 · tag 8-12' in rt, 'Ed\'s window is the appointment\'s (12-5), with the tag it still has beside it (%r)' % rt[:300])
+    tia = ev(page, "() => { const r = document.querySelector('#st-opt-out .st-opt-stop[data-job=\"7503\"]'); return r ? r.innerText : ''; }")
+    check('🕑' not in tia, 'a time asked for on another day (Aug 15th) isn\'t counted')
+    page.click('#st-opt-out .st-opt-view[data-view=now]')
+    now_ = page.inner_text('#st-opt-out .st-opt-route')
+    check('⚠️' in now_ and 'late' in now_ and '⚠️ asked: last stop' in now_, 'As it is now: Tia ends up late, waiting on Nate, and Ed isn\'t last (%r)' % now_[:400])
+    o = page.inner_text('#st-opt-out')
+    check(score(page) < 100 and 'A better order keeps a customer\'s time request' in o, 'so the board\'s order scores under 100%%, and the better order keeps the request (%s%%, %r)' % (score(page), o[:200]))
+    # The addresses: looked up once (addresses only), the summaries read once.
+    q = ev(page, 'window.geoQueries') or []
+    check(ev(page, 'window.geoCalls') == 1 and '9501 Main St, Hattiesburg, MS 39401' in q and not any('Nate' in x or 'Tia' in x for x in q), 'the jobs\' street addresses are looked up with Mapbox, in one request, with no names (%s)' % q)
+    coords = ev(page, 'window.mapboxCoords')
+    check(any(abs(c[0] - (31.33 + 9501 % 7 * 0.003)) < 1e-6 and abs(c[1] - (-89.29 + 9501 % 5 * 0.003)) < 1e-6 for c in coords), 'and drive times are measured to the address (not the middle of the zip code)')
+    calls = (ev(page, 'window.geoCalls'), ev(page, 'window.summaryCalls'))
+    opt(page, 201)
+    opt(page, 206)
+    check((ev(page, 'window.geoCalls'), ev(page, 'window.summaryCalls')) == (calls[0] + 1, calls[1] + 2), 'Dustin, then Ian again: only Dustin\'s addresses and summaries are new, none read twice (%s → %s)' % (calls, (ev(page, 'window.geoCalls'), ev(page, 'window.summaryCalls'))))
+    # First call.
+    opt(page, 204)
+    check(score(page) == 100 and stops(page) == ['First Fran', 'Second Sue'] and '🕑 first stop' in page.inner_text('#st-opt-out .st-opt-route'), 'Pam: Fran asked to be the first call, and is: 100%% (%s)' % stops(page))
+    # 🗺️ Plan the day: an Unassigned job's summary counts too.
+    page.click('#st-toolbox [data-tab=plan]')
+    plan(page)
+    rts = routes(page)
+    lq = [x for stops_ in rts.values() for x in stops_ if 'Late Quote' in x]
+    m = re.match(r'(\d+):(\d+) PM', lq[0]) if lq else None
+    check(lq and m and (int(m.group(1)) % 12 + 12) * 60 + int(m.group(2)) >= 15 * 60 + 30 and '🕑 after 3:30 PM' in lq[0], 'Plan the day: Late Quote (not home until 3:30pm) is planned after 3:30 (%s)' % lq)
+    pam = rts.get('Pam P', [])
+    check(pam and 'First Fran' in pam[0] and '🕑 first stop' in pam[0] and any('Pipe Burst' in x for x in pam), 'and a job on the board asked to be the first call stays first when new jobs are added, even an Urgent one (%s)' % pam[:2])
+    # 📞 Fill a spot: Gen Later wants after 3pm: not mid-day, fine at the end of the day.
+    page.click('#st-toolbox [data-tab=fill]')
+    find(page, 201)
+    show_gap(page, 'mid')
+    mid = card(page, 'Gen Later')
+    show_gap(page, 'last')
+    end = card(page, 'Gen Later')
+    check('⚠️ asked: after 3 PM' in mid and '🕑 after 3 PM' in end and '⚠️ asked' not in end, 'Fill a spot: Gen Later (after 3pm) is ⚠️ mid-day and fine at the end of the day (%r / %r)' % (mid[:200], end[:200]))
+    check(ev(page, 'window.WRITES') == [], 'nothing changed')
+    check(errors == [], 'time requests: no page errors: %s' % errors)
     page.close()
 
     # ================= Nothing scrolls sideways; leaving and closing tidy up =================

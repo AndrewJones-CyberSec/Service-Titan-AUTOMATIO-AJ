@@ -72,8 +72,12 @@
   const rowOf = x => {
     const [day, id, job, customer, type, pt, h, hrs, prio, phone, created, tag] = x;
     const s = day === 'hold' ? ago(-h, 9) : on(day, Math.floor(h), (h % 1) * 60), e = new Date(+s + hrs * 3600000);
+    // Its arrival window: the tag's (as it nearly always is in ServiceTitan), else the appointment's time.
+    const tw = tag && /^(\d+)-(\d+) (MORNING|AFTERNOON|EVENING)/.exec(tag), tw0 = tw ? +tw[1] + (tw[3] !== 'MORNING' && +tw[1] < 12 ? 12 : 0) : 0, tw1 = tw ? +tw[2] + (tw[3] !== 'MORNING' && +tw[2] < 12 ? 12 : 0) : 0;
+    const ws = tw && day !== 'hold' ? on(day, tw0) : s, we = tw && day !== 'hold' ? on(day, tw1) : e;
     return { Id: id, JobId: job, AppointmentNumber: 1, Customer: customer, CustomerPhone: '(' + phone.slice(0, 3) + ') ' + phone.slice(3, 6) + '-' + phone.slice(6), Type: T[type], TypeId: type, JobTypeId: 0,
-      Priority: prio, Duration: hrs * 3600, Start: s.toISOString(), End: e.toISOString(), ArrivalWindowStart: s.toISOString(), ArrivalWindowEnd: e.toISOString(), CreatedOn: ago(created).toISOString(),
+      Priority: prio, Duration: hrs * 3600, Start: s.toISOString(), End: e.toISOString(), ArrivalWindowStart: ws.toISOString(), ArrivalWindowEnd: we.toISOString(),
+      Summary: (window.ROW_NOTES || {})[id] || '<p>Customer called about the system.</p>', AppointmentSpecialInstructions: '', CreatedOn: ago(created).toISOString(),
       // Like ServiceTitan on Oct 29 2026: the map point in Latitude / Longitude, JobLatitude / JobLongitude empty.
       Latitude: pt ? pt[0] : 0, Longitude: pt ? pt[1] : 0, JobLatitude: null, JobLongitude: null, Street: id + ' Oak Ave', Zip: '', City: 'Somewhere', State: 'MS', Tags: tag ? [{ Id: 1, TypeId: 1, TypeName: tag, Color: '#ffe8a8', TextColor: null }] : [], Technicians: (window.ASSIGNED[id] || []).map(t => ({ Id: t, Name: (TECHS.find(x => x.id === t) || {}).name })), AppointmentStatus: day === 'hold' ? 'Hold' : 'Scheduled', JobStatus: day === 'hold' ? 'Hold' : 'Scheduled', BusinessUnitId: 1 };
   };
@@ -108,8 +112,18 @@
     const json = (o, st) => new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
     const body = opts && opts.body ? JSON.parse(opts.body) : null;
     await new Promise(r => setTimeout(r, window.API_DELAY || 10));
-    if (opts && opts.method === 'POST' && !/GetJobs|\/Dispatch\/Data|daily-assignments|technicians\/resources|activity-history|TechniciansAreBooked/.test(u)) window.WRITES.push(u);
+    if (opts && opts.method === 'POST' && !/GetJobs|\/Dispatch\/Data|daily-assignments|technicians\/resources|activity-history|TechniciansAreBooked|^https:\/\/api\.mapbox\.com\//.test(u)) window.WRITES.push(u);
     if (/\/(Assign|Unassign)Technicians|UpdateJobAppointment/.test(u)) window.WRITES.push(u);
+    // Mapbox geocoding (a batch of addresses): the middle of the address's zip code, moved a little by
+    // its street number; an address with no zip code isn't found.
+    if (u.indexOf('https://api.mapbox.com/search/geocode/v6/batch') === 0) {
+      window.geoCalls = (window.geoCalls || 0) + 1;
+      if (opts && opts.credentials !== 'omit') window.mapboxCookies = true;
+      if (window.GEO_DOWN) return json({ message: 'down' }, 500);
+      window.geoQueries = (window.geoQueries || []).concat(body.map(q => q.q));
+      return json({ batch: body.map(q => { const z = /\b(\d{5})\b/.exec(q.q), n = parseInt(q.q, 10) || 0, p = z && ZIPS[z[1]];
+        return { type: 'FeatureCollection', features: p ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: [p[1] + (n % 5) * 0.003, p[0] + (n % 7) * 0.003] }, properties: { match_code: { confidence: 'exact' } } }] : [] }; }) });
+    }
     if (u.indexOf('https://api.mapbox.com/') === 0) {
       window.mapboxCalls++;
       if (opts && opts.credentials !== 'omit') window.mapboxCookies = true;
@@ -159,7 +173,7 @@
       window.ASSIGNED[id] = m[1] === 'Assign' ? cur.concat(body.technicianIds.filter(t => cur.indexOf(t) < 0)) : cur.filter(t => body.technicianIds.indexOf(t) < 0);
       return new Response('', { status: 200 });
     }
-    if ((m = /GetJobOverviewData\?jobId=(\d+)/.exec(u))) { window.skillCalls = (window.skillCalls || 0) + 1; return json({ jobTags: [], skills: (JOB_SKILLS[m[1]] || []).map(id => ({ id, name: SKILLS[id], active: true })) }); }
+    if ((m = /GetJobOverviewData\?jobId=(\d+)/.exec(u))) { window.skillCalls = (window.skillCalls || 0) + 1; window.summaryCalls = (window.summaryCalls || 0) + 1; return json({ jobTags: [], jobSummary: (window.SUMMARIES || {})[m[1]] || '<p>Job summary.</p>', skills: (JOB_SKILLS[m[1]] || []).map(id => ({ id, name: SKILLS[id], active: true })) }); }
     return realFetch(url, opts);
   };
   NB.setup({
