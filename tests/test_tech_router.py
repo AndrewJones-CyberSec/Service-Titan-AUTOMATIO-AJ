@@ -472,11 +472,42 @@ with sync_playwright() as p:
     check(page.input_value('#st-opt-tech') == '201' and 'Dustin J' in page.inner_text('#st-opt-out'), 'clicking Dustin\'s name on the board checks his route')
     check(ev(page, "() => (window.opened || []).indexOf('tech201')") == -1, 'the board itself didn\'t get the click')
     check(ev(page, 'window.WRITES') == [], 'Optimize changed nothing')
+    # ➡️ Set this order in Move Jobs: Ian's jobs get new times (same length, same tech); ↩ Put back undoes it.
+    before = ev(page, "() => Object.fromEntries(APPTS.filter(a => [9301, 9302, 9303].includes(a.id)).map(a => [a.id, [a.start.toISOString(), a.end.toISOString()]]))")
+    opt(page, 206)
+    check(page.locator('#st-opt-send').count() == 1, 'a better order can be sent to Move Jobs')
+    page.click('#st-opt-send')
+    page.wait_for_function("() => /Move Jobs/.test(document.querySelector('#st-toolbox .st-head').innerText)", timeout=10000)
+    tb = page.inner_text('#st-toolbox')
+    k = tb.find('A new order')
+    nexts = ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox .st-pick-next')).map(e => e.textContent)")
+    check(k > -1 and 'Zig Three' in tb and 'Zag Two' in tb and 'Zig One' not in tb and len(nexts) == 2 and all(re.match(r'^→ \d+(:\d\d)? PM$', n) for n in nexts), 'Move Jobs has the new order: the jobs whose time changes, each with its new time beside it (%s)' % nexts)
+    B(page, 'Review').click()
+    page.wait_for_function("() => { const g = document.getElementById('st-move-go'); return g && g.offsetParent && !g.disabled; }", timeout=30000)
+    rv = page.inner_text('#st-toolbox')
+    check('New order for Ian I' in rv and 'time 2:30 PM → ' in rv and 'time 1 PM → ' in rv and page.inner_text('#st-move-go') == 'Set times for 2 jobs', 'the review shows each new time (%r)' % rv[rv.find('New order'):rv.find('New order') + 400])
+    check(ev(page, 'window.WRITES') == [], 'the review changed nothing')
+    page.click('#st-move-go')
+    page.wait_for_function("() => (window.timePuts || []).length >= 2 && !Array.from(document.querySelectorAll('#st-toolbox button')).some(b => b.offsetParent && /^Stop/.test(b.textContent))", timeout=60000)
+    after_ = ev(page, "() => Object.fromEntries(APPTS.filter(a => [9301, 9302, 9303].includes(a.id)).map(a => [a.id, [a.start.getTime(), a.end.getTime()]]))")
+    one, two, three = after_['9301'], after_['9302'], after_['9303']
+    check(one[0] < three[0] < two[0] and all(x[1] - x[0] == 3600000 for x in (one, two, three)) and three[0] >= one[1] and two[0] >= three[1] + 25 * 60000,
+          'Set times: Zig One, Zig Three, then Zag Two, each the same length, no overlap, time to drive to Petal (%s)' % after_)
+    puts = ev(page, 'window.timePuts')
+    check(len(puts) == 2 and all(re.match(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:00[+-]\d\d:\d\d$', p_['body']['start']) and p_['body']['technicianIdsToAdd'] == [] and p_['body']['technicianIdsToRemove'] == [] and 'arrivalWindowStart' not in p_['body'] for p_ in puts),
+          'the same request as dragging on the board: new start and end, no tech change, the arrival window left alone (%s)' % puts)
+    check('Put back can undo 2 jobs' in page.inner_text('#st-toolbox'), 'and ↩ Put back can undo it')
+    B(page, 'Put back').click()
+    page.wait_for_function("() => { const g = document.getElementById('st-move-go'); return g && g.offsetParent && !g.disabled; }", timeout=30000)
+    page.click('#st-move-go')
+    page.wait_for_function("() => (window.timePuts || []).length >= 4 && !Array.from(document.querySelectorAll('#st-toolbox button')).some(b => b.offsetParent && /^Stop/.test(b.textContent))", timeout=60000)
+    back = ev(page, "() => Object.fromEntries(APPTS.filter(a => [9301, 9302, 9303].includes(a.id)).map(a => [a.id, [a.start.toISOString(), a.end.toISOString()]]))")
+    check(back == before, '↩ Put back: every time back exactly as it was (%s)' % back)
     page.reload()
     page.wait_for_selector('.technician')
     page.evaluate(TOOLBOX)
     open_router(page)
-    check(ev(page, "() => document.querySelector('#st-toolbox [data-tab=opt]').classList.contains('on')") and page.input_value('#st-opt-tech') == '201', 'opened again: back on ✨ Optimize with the same tech')
+    check(ev(page, "() => document.querySelector('#st-toolbox [data-tab=opt]').classList.contains('on')") and page.input_value('#st-opt-tech') == '206', 'opened again: back on ✨ Optimize with the same tech')
     check(errors == [], 'optimize: no page errors: %s' % errors)
     page.close()
     # A long day (10 jobs): too many to try every order, so it moves one job at a time.
@@ -513,10 +544,15 @@ with sync_playwright() as p:
       APPTS.push({ id: 9501, job: 7501, techs: [206], customer: 'Not Home Nate', start: at(8), end: at(9), zip: '39401', city: 'Hattiesburg', jobType: I, jobTypeId: 41, tags: AM },
         { id: 9502, job: 7502, techs: [206], customer: 'Early Ed', start: at(9), end: at(10), zip: '39465', city: 'Petal', jobType: I, jobTypeId: 41, tags: AM, windowStart: at(12), windowEnd: at(17) },
         { id: 9503, job: 7503, techs: [206], customer: 'Third Tia', start: at(10), end: at(11), zip: '39401', city: 'Hattiesburg', jobType: I, jobTypeId: 41, tags: AM },
-        { id: 9511, job: 7511, techs: [204], customer: 'Second Sue', start: at(10), end: at(11), zip: '39475', city: 'Purvis', jobType: 'Plumbing - Clogged Drain', jobTypeId: 31, tags: AM },
+        { id: 9511, job: 7511, techs: [204], customer: 'Second Sue', customerId: 8511, start: at(10), end: at(11), zip: '39475', city: 'Purvis', jobType: 'Plumbing - Clogged Drain', jobTypeId: 31, tags: AM },
         { id: 9512, job: 7512, techs: [204], customer: 'First Fran', start: at(8), end: at(9), zip: '39475', city: 'Purvis', jobType: 'Plumbing - Clogged Drain', jobTypeId: 31, tags: AM });
       window.SUMMARIES = { 7501: '<p>AC blowing warm.</p><p>Customer not home until 11am.</p>', 7502: 'Please make this the last stop', 7503: '<p>Customer requested Aug 15th at 8am.</p>', 7512: '<div>Please make this the first call of the day</div>' };
       window.ROW_NOTES = { 9108: '<p>Quote for new system. Customer is not home until 3:30pm</p>', 9106: 'Customer wants us after 3pm' };
+      // Notes: Sue's job has a pinned note from months ago (it counts), her customer an old one (it doesn't);
+      // Near Quote's customer called yesterday.
+      const ago_ = d => new Date(Date.now() - d * 86400000).toISOString();
+      window.NOTES = { 7511: [{ text: 'Customer is home after 10:30am only', isPinned: true, createdOn: ago_(90) }], 8511: [{ text: 'customer wants after 4pm', createdOn: ago_(60) }],
+        59101: [{ text: 'Spoke w/ customer, asked for after 1pm', createdOn: ago_(1) }] };
       NB.render(); }"""
     page, errors = start(b, ASKS)
     open_router(page)
@@ -548,6 +584,8 @@ with sync_playwright() as p:
     # First call.
     opt(page, 204)
     check(score(page) == 100 and stops(page) == ['First Fran', 'Second Sue'] and '🕑 first stop' in page.inner_text('#st-opt-out .st-opt-route'), 'Pam: Fran asked to be the first call, and is: 100%% (%s)' % stops(page))
+    sue = ev(page, "() => { const r = document.querySelector('#st-opt-out .st-opt-stop[data-job=\"7511\"]'); const c = r && r.querySelector('.st-ask'); return r ? [r.innerText.replace(/\\s+/g, ' '), c ? c.title : ''] : ['', '']; }")
+    check('🕑 after 10:30 AM' in sue[0] and sue[1].startswith('A job note') and 'after 4 PM' not in sue[0], 'notes count too: Sue\'s pinned job note (after 10:30am), not her customer\'s 2-month-old note (%s)' % sue)
     # 🗺️ Plan the day: an Unassigned job's summary counts too.
     page.click('#st-toolbox [data-tab=plan]')
     plan(page)
@@ -555,6 +593,8 @@ with sync_playwright() as p:
     lq = [x for stops_ in rts.values() for x in stops_ if 'Late Quote' in x]
     m = re.match(r'(\d+):(\d+) PM', lq[0]) if lq else None
     check(lq and m and (int(m.group(1)) % 12 + 12) * 60 + int(m.group(2)) >= 15 * 60 + 30 and '🕑 after 3:30 PM' in lq[0], 'Plan the day: Late Quote (not home until 3:30pm) is planned after 3:30 (%s)' % lq)
+    nq = [x for stops_ in rts.values() for x in stops_ if 'Near Quote' in x]
+    check(nq and '🕑 after 1 PM' in nq[0] and re.match(r'([1-4])(:\d\d)? PM', nq[0]), 'Plan the day: an Unassigned job\'s customer note from yesterday (after 1pm) counts (%s)' % nq)
     pam = rts.get('Pam P', [])
     check(pam and 'First Fran' in pam[0] and '🕑 first stop' in pam[0] and any('Pipe Burst' in x for x in pam), 'and a job on the board asked to be the first call stays first when new jobs are added, even an Urgent one (%s)' % pam[:2])
     # 📞 Fill a spot: Gen Later wants after 3pm: not mid-day, fine at the end of the day.

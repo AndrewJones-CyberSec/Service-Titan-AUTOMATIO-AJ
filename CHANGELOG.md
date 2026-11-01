@@ -10,13 +10,25 @@
   - **What it shows:** the score, then what the better order changes, late stops first (*1 fewer late stop, saves 58 min of driving, gets them home at 3:07 PM instead of 4:05 PM*, and what it costs, if anything). Then *What changes*: each job that moves, ⬆️ or ⬇️, from its place to its new one (👥 when the job has another tech too). Last is the route, ✨ Suggested or As it is now: arrival times, windows, drives, late stops and when they're home, with the moved jobs in purple. 📋 Copy suggested order copies it.
   - **📊 Score every tech:** every field tech with two or more jobs, lowest score first, with Mapbox drive times, the same way as checking one tech, so the scores match. To keep it to a few requests, the routes' places are packed together, up to 25 places per Mapbox request (about one request for every 3 or 4 techs). Click a tech for the details; their drive times are already had, so Mapbox isn't asked again. If Mapbox can't be reached, those scores use straight-line miles and are marked ~.
   - **🗺️ Google Maps:** opens the route shown (✨ Suggested or As it is now) as driving directions: from where their day starts (home, or today the job they're working or last finished), through each job's address in order, and back home. **📋 Maps link** copies it, to send to the tech. Only the addresses go in the link (no names). Google takes 9 stops at a time in a link (3 in a phone's web browser), so a longer route comes as Part 1, Part 2…, each starting where the one before ends.
-  - It only suggests. Nothing changes; to use it, move the jobs on the board (the Toolbox doesn't change appointment times).
+  - **➡️ Set this order in Move Jobs** opens 🔀 Move Jobs with each job's new time. Each job starts at its suggested arrival, but not before its arrival window starts, nor before the job before it ends plus the drive between them. Times go to the nearest 5 minutes, and each job keeps its length. Only the jobs whose time changes are sent; jobs underway aren't. Nothing changes until you Review and press **Set times**.
 - **🧭 Tech Router → 🗺️ Plan the day: ＋ Fit in holds too.** Off unless ticked (remembered). After the Unassigned jobs are planned, jobs from the Hold list (your board's branches) are fitted into the room left in each route: up to 2 per tech, within 15 miles of their route and no more than 30 minutes of extra driving, without making any stop late or their day longer, and only kinds of jobs they do. Best fit first across every route; Urgent and High holds and ones waiting longest a little sooner. A hold's window is its arrival-window tag, if it has one.
-- **Customers' time requests, from the job summary** (all of 🧭 Tech Router). A time the customer asked for in a job's summary (or the appointment's special instructions) is kept to, like its window. On Oct 29 2026, 78 of 1,342 Unassigned and Hold jobs had one. What counts:
+- **🔀 Move Jobs: new times (a better order from ✨ Optimize).** A new kind of run, opened from ✨ Optimize. Each picked job shows its new time beside it (*→ 1:05 PM*).
+  - It sends the same request the new board sends when you drag a job to another time on the same tech: a new start and end, with the techs and the arrival window left as they are. It was checked live on Oct 31 2026, on a quote job 3 days out, and put back exactly. Moving a time doesn't text the customer.
+  - **Review** reads each job fresh. A job left alone: it's no longer on that tech, it's Done or Canceled, or it's already at that time. A warning to tick: it isn't Scheduled; other techs are on it (it moves for them too); the new time is outside its arrival window; or the tech is already booked then. The order's own jobs don't count as booked for each other.
+  - **Set times** reads each job again right before (left alone if its time or techs changed since the review), sends the new time, and reads it back until ServiceTitan has it. The usual one more try applies for a problem.
+  - **↩ Put back** sets the times back, unless a job's time changed since.
+- **Customers' time requests, from the job summary and notes** (all of 🧭 Tech Router). A time the customer asked for in a job's summary (or the appointment's special instructions) is kept to, like its window. On Oct 29 2026, 78 of 1,342 Unassigned and Hold jobs had one. What counts:
   - after a time: *after 2pm*, *anytime after 1:30*, *not home until 3*, *works until 3*, *gets off at 4*, *after lunch*;
   - before a time: *before 11*, *no later than 3*, *leaves at 11am*, *must be done by noon*;
   - a range: *between 1 and 3*, *1-3pm*, *wants us at 2pm*, *morning only*, *afternoon only*;
   - first or last: *first call*, *1st appointment*, *last stop*.
+
+  Where it's read:
+  - the job's summary and the appointment's special instructions;
+  - the job's own notes;
+  - the customer's and the location's notes, from the last 30 days, or pinned.
+
+  The newest note with a request wins, then the summary; the chip's tip says which one it came from (*A customer note from Oct 30 says: "…"*). Notes are read 6 at a time and kept 10 minutes. 📞 Fill a spot reads the notes of the jobs it lists, and 🗺️ Plan the day those of the Unassigned jobs, the holds near a route and the jobs on the routes that change.
 
   An hour with no am/pm is a working hour (7–11 morning, 12 noon, 1–6 afternoon). Not counted: numbers that aren't times (*15 years*, *3 ton*), calling (*call before 10am*), and a sentence with a date or weekday that isn't the day (*requested Aug 15th at 8am*). The request shows as a 🕑 chip whose tip quotes the summary; it's a red **⚠️ asked:** when the route doesn't keep it.
   - **✨ Optimize** and **📊 Score every tech** read the summaries of the tech's jobs (4 at a time, kept 10 minutes). The tech waits rather than arrive before *after*; arriving after *before*, or a *first*/*last* stop elsewhere, counts heavily, and the better order keeps it (*A better order keeps a customer's time request*). When the request is outside the window, the request counts.
@@ -40,7 +52,11 @@
   - customers' time requests (*not home until 11am* waited for, *last stop* and *first call* kept, a request for another day not counted, in Plan the day and Fill a spot too);
   - the appointment's window over a tag that differs, shown with the tag;
   - jobs looked up by street address in one request with no names, measured to it, and no address or summary read twice;
+  - notes: a pinned job note from months ago counts, a customer's 2-month-old note doesn't, and an Unassigned job's customer note from yesterday counts in Plan the day;
+  - ➡️ Set this order in Move Jobs: each job's new time beside it, the review, Set times (same length, no overlap, time to drive, the same request as the board's drag), then ↩ Put back to exactly as it was;
   - nothing changed.
+
+- Tests: `tests/test_move_safety.py` waited for words that can still be on screen from the run before ("signed you out"), so now and then it checked a review before the review was done. It now waits for the review itself (its Stop checking button gone).
 
 ## 2.1
 

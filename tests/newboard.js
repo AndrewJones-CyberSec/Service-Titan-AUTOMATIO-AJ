@@ -74,6 +74,8 @@
         return window.API_401 ? new Response('', { status: 401 }) : json({ Id: window.App.Notifications.store.userId });
       }
       if (u.indexOf('/dispatch-center/') !== 0) return prev(url, opts);
+      // A new time for an appointment (the board's drag): left to the page that uses this board.
+      if (/^\/dispatch-center\/appointments\/\d+$/.test(u) && opts && opts.method === 'PUT') return prev(url, opts);
       NB.calls.push(u.split('?')[0]);
       await new Promise(r => setTimeout(r, window.BOARD_DELAY || 20));
       if (window.API_401) return new Response('', { status: 401 });
@@ -108,7 +110,7 @@
             appointmentStart: a.start ? new Date(a.start).toISOString() : null, appointmentEnd: a.end ? new Date(a.end).toISOString() : null,
             arrivalWindowStart: a.windowStart ? new Date(a.windowStart).toISOString() : null, arrivalWindowEnd: a.windowEnd ? new Date(a.windowEnd).toISOString() : null,
             appointmentStatus: a.status || 'Scheduled', isConfirmed: !!a.confirmed, jobId: a.job, jobStatus: a.jobStatus || 'Scheduled', jobTypeName: a.jobType || 'Service', jobTypeId: a.jobTypeId || null,
-            businessUnitId: a.bu || 621842244, businessUnitName: a.buName || 'Mendenhall Branch', customerId: a.customerId, customerName: a.customer, street: a.street == null ? a.id + ' Main St' : a.street, city: a.city || 'Magee', state: 'MS', zip: a.zip || '39111',
+            businessUnitId: a.bu || 621842244, businessUnitName: a.buName || 'Mendenhall Branch', customerId: a.customerId, locationId: a.locationId || null, customerName: a.customer, street: a.street == null ? a.id + ' Main St' : a.street, city: a.city || 'Magee', state: 'MS', zip: a.zip || '39111',
             tags: (a.tags || []).map((t, i) => ({ tagTypeId: i + 1, name: t.name, color: t.color || '#cccccc', importance: 0 })), tagCount: (a.tags || []).length
           })) }] })), page: 1, pageSize: body.pageSize, totalCount: body.technicianIds.length });
       }

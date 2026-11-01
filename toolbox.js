@@ -12,7 +12,8 @@
     - Tech Router (Beta, still being built): finds jobs to fill a tech's open time (customers to call and
       move up), plans a route and a tech for every Unassigned job (by arrival window: 8-12s, then 12-5s,
       then 5-9s), scores a tech's route 0-100% and suggests a better order for it, and finds the techs
-      closest to a job. It only reads; Move Jobs makes any change.
+      closest to a job, keeping to times customers asked for in job summaries and notes. It only
+      reads; Move Jobs makes any change (assigning a plan, or setting a better order's times).
 
   HOW TO RELEASE AN UPDATE
     1. Edit this file on GitHub.
@@ -26,7 +27,7 @@
 (() => {
   const VERSION = '2.1.1';
   const WHATS_NEW = {
-    '2.1.1': 'New in 🧭 Tech Router: ✨ Optimize. Pick a tech (or 🖱️ and their name) for a 0–100% score of their route\'s order (100% is already the best), the better order and what it saves. 📊 Score every tech lists everyone, lowest first. 🗺️ Google Maps opens a route as directions, and 📋 Maps link copies it to send to the tech. The routes now read job summaries for a time the customer asked for ("not home until 11am", "first call"), go by the appointment\'s arrival window (the tag shows beside it when it differs), and measure jobs to their street address. And 🗺️ Plan the day can ＋ Fit in holds, to call and book.',
+    '2.1.1': 'New in 🧭 Tech Router: ✨ Optimize. Pick a tech (or 🖱️ and their name) for a 0–100% score of their route\'s order (100% is already the best), the better order and what it saves; ➡️ Set this order in Move Jobs gives each job its new time (Review, then Set times; ↩ Put back undoes it). 📊 Score every tech lists everyone, lowest first. 🗺️ Google Maps opens a route as directions. The routes now keep to times customers asked for in job summaries and notes ("not home until 11am", "first call"), go by the appointment\'s arrival window, and measure jobs to their street address. And 🗺️ Plan the day can ＋ Fit in holds, to call and book.',
     '2.1': 'New: 🧭 Tech Router (Beta). 📞 Fill a spot: pick a tech whose day is already planned, and it finds their open time (first thing, mid-day or the end of the day) and the jobs that would fit there from the Unassigned list (this day and the next 14) and the Hold list, with the customer\'s phone number to call and move them up. 🗺️ Plan the day: a tech and a route for every Unassigned job, 8-12s first, then 12-5s, then 5-9s (a little late is OK), sent to Move Jobs to assign. It learns which jobs each department does from the last 4 weeks of schedules, so a project coordinator only gets quotes, not electrical or plumbing ones. 🔎 Closest techs is back too. It\'s still being built, so check before you call; it only reads, and changes nothing on its own.',
     '2.0.2': 'Fixed: 💬 Tech Messages skipped every tech with "their name on the board has no menu". When the board scrolls to a tech it shows their name first and their menu about a second later; the Toolbox now waits for the menu, then opens it the way you would (a right-click or a left click on their name).',
     '2.0.1': 'Nothing inside the Toolbox scrolls sideways any more, and you can make it wider or narrower by dragging its left edge or bottom-right corner (it remembers; double-click for the usual width). Plus a few quick animations: it fades in and out, tools slide in, – folds it smoothly, and loading buttons show a spinner.',
@@ -158,15 +159,15 @@
       } finally { if (timer) clearTimeout(timer); asking = null; }
     })());
     // post: when given, sends it as JSON with a POST (the way ServiceTitan's own pages do) instead
-    // of a plain read. A POST with an empty answer gives null.
-    const getJSON = async (url, ms, post) => {
+    // of a plain read; method: another verb for it ('PUT'). A POST with an empty answer gives null.
+    const getJSON = async (url, ms, post, method) => {
       const ctl = typeof AbortController === 'function' ? new AbortController() : null;
       const timer = ctl ? setTimeout(() => ctl.abort(), ms || 15000) : null;
       const isPost = post !== undefined;
       let r, text;
       try {
         r = isPost
-          ? await fetch(url, { method: 'POST', credentials: 'include', headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, HEADERS), body: JSON.stringify(post), signal: ctl ? ctl.signal : undefined })
+          ? await fetch(url, { method: method || 'POST', credentials: 'include', headers: Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, HEADERS), body: JSON.stringify(post), signal: ctl ? ctl.signal : undefined })
           : await fetch(url + (url.indexOf('?') < 0 ? '?' : '&') + '_=' + Date.now(), { credentials: 'include', headers: HEADERS, signal: ctl ? ctl.signal : undefined });
         if (r.status === 401 || r.status === 403) {
           const signedIn = await stillSignedIn();
@@ -294,7 +295,8 @@
       if (!a.start || !a.end || isNaN(new Date(a.start)) || isNaN(new Date(a.end))) throw shape('no start or end time');
       return {
         jobId: d.jobId, jobTotal: d.jobTotal, businessUnitId: d.businessUnitId,
-        appointment: { id: a.id, number: a.number, start: a.start, end: a.end, status: a.jobAppointmentStatus, techIds: a.technicians.map(t => t.id) }
+        appointment: { id: a.id, number: a.number, start: a.start, end: a.end, status: a.jobAppointmentStatus, techIds: a.technicians.map(t => t.id),
+          windowStart: a.arrivalWindowStart || null, windowEnd: a.arrivalWindowEnd || null }
       };
     };
     // The skills a job needs: [{ id, name }] (active ones only).
@@ -309,6 +311,15 @@
       const d = await getJSON('/dispatch/job-edit-flyout/GetJobOverviewData?jobId=' + encodeURIComponent(jobId));
       if (!d || typeof d !== 'object' || Array.isArray(d)) throw fail('bad', 'the job overview came back in a shape the Toolbox doesn\'t know');
       return typeof d.jobSummary === 'string' ? d.jobSummary : '';
+    };
+    // The notes on a customer, location or job (ownerId), as the notes panel lists them (seen Oct 31
+    // 2026: { pinnedNotes, notes, count }): [{ text, at (Date or null), pinned }], archived ones left out.
+    const ownerNotes = async ownerId => {
+      const d = await getJSON('/app/api/notes/Find?ownerId=' + encodeURIComponent(ownerId));
+      if (!d || typeof d !== 'object' || (d.notes != null && !Array.isArray(d.notes)) || (d.pinnedNotes != null && !Array.isArray(d.pinnedNotes))) throw fail('bad', 'the notes came back in a shape the Toolbox doesn\'t know');
+      const seen = new Set();
+      return (d.pinnedNotes || []).map(n => Object.assign({}, n, { isPinned: true })).concat(d.notes || []).filter(n => n && typeof n.text === 'string' && !n.archived && n.active !== false && !(n.id != null && seen.has(n.id)) && (n.id == null || !!seen.add(n.id)))
+        .map(n => { const at = n.createdOn ? new Date(n.createdOn) : null; return { text: n.text, at: at && !isNaN(at) ? at : null, pinned: !!n.isPinned }; });
     };
     // Every tech: [{ id, name, active, managed, skillIds, home }]. home (🧭 Tech Router): where the
     // tech's profile says they live, { lat, lon, town, address }, or null when it has no map point.
@@ -391,6 +402,15 @@
       const z = /\b(\d{5})/.exec(String(la.zip == null ? '' : la.zip));
       return { zip: z ? z[1] : '', street: norm(la.street), city: norm(la.city), state: norm(la.state), techIds, apptId: a.id, customer: d.customer && typeof d.customer === 'object' ? norm(d.customer.name) : '' };
     };
+    // A new start and end for an appointment, the same request the new Dispatch board sends when a job
+    // is dragged to another time on the same tech (seen Oct 31 2026, dispatch-center 29.0.3): its
+    // techs and its arrival window stay as they are. Times as the board sends them: local, with the offset.
+    const isoLocal = d => {
+      d = new Date(d);
+      const z = -d.getTimezoneOffset(), p = n => String(Math.floor(Math.abs(n))).padStart(2, '0');
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + (z < 0 ? '-' : '+') + p(z / 60) + ':' + p(z % 60);
+    };
+    const setTimes = (apptId, start, end) => getJSON('/dispatch-center/appointments/' + encodeURIComponent(apptId), 20000, { technicianIdsToAdd: [], technicianIdsToRemove: [], start: isoLocal(start), end: isoLocal(end) }, 'PUT');
     const assignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/AssignTechnicians', 20000, { appointmentId: idNum(apptId), technicianIds: techIds.map(idNum) });
     const unassignTechs = (apptId, techIds) => getJSON('/dispatch/job-edit-flyout/UnassignTechnicians', 20000, { appointmentId: idNum(apptId), technicianIds: techIds.map(idNum) });
     // ---- Confirming appointments (Customer Texts → 📥 Check replies). The same request the job
@@ -412,7 +432,7 @@
     };
     const setConfirmed = (apptId, on) => getJSON('/dispatch/job-edit-flyout/UpdateJobAppointmentIsConfirmed', 20000, { jobAppointmentId: idNum(apptId), isConfirmed: !!on });
     return { getJSON, pool, NOT_RUN, haltNote, SIGNED_OUT, isSignedOut, isNoPermission, job, jobEdit, chatThread, chatMessages, customerPhones, code,
-      appointment, jobSkills, jobSummary, technicians, techsBooked, daySchedule, assignTechs, unassignTechs, apptConfirmed, setConfirmed, jobAppointments, getJobs, jobPlace };
+      appointment, setTimes, jobSkills, jobSummary, ownerNotes, technicians, techsBooked, daySchedule, assignTechs, unassignTechs, apptConfirmed, setConfirmed, jobAppointments, getJobs, jobPlace };
   })();
 
   // ===================================================================
@@ -580,7 +600,7 @@
             let x = appts.get(k);
             if (!x) {
               const num = norm(a.appointmentNumber);
-              x = { apptId: k, jobId: String(a.jobId), number: num.indexOf('-') > -1 ? num.split('-').pop() : num, customer: norm(a.customerName), customerId: a.customerId || null,
+              x = { apptId: k, jobId: String(a.jobId), number: num.indexOf('-') > -1 ? num.split('-').pop() : num, customer: norm(a.customerName), customerId: a.customerId || null, locationId: a.locationId || null,
                 start: toDate(a.appointmentStart), end: toDate(a.appointmentEnd), windowStart: toDate(a.arrivalWindowStart), windowEnd: toDate(a.arrivalWindowEnd),
                 status: norm(a.appointmentStatus), jobStatus: norm(a.jobStatus), confirmed: a.isConfirmed === true, bu: a.businessUnitId, buName: norm(a.businessUnitName),
                 jobType: norm(a.jobTypeName), jobTypeId: a.jobTypeId != null ? String(a.jobTypeId) : '', street: norm(a.street), city: norm(a.city), state: norm(a.state), zip: norm(a.zip), tags: (Array.isArray(a.tags) ? a.tags : []).map(tagOf).filter(Boolean), techs: [], techStatus: {} };
@@ -1266,9 +1286,11 @@
       top.append(el('b', 'color:var(--st-ink)', '#' + j), document.createTextNode(lab ? '  ' + lab : ''));
       top.title = lab;
       body.appendChild(top);
-      if (now || tags.length) {
+      const next = opts.next ? opts.next(j) : '';   // what it's going to be (a new time, say)
+      if (now || tags.length || next) {
         const sub = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px');
         if (now) { const n = el('span', 'font-size:11px;color:var(--st-ink-2);white-space:nowrap', now.text); if (now.title) n.title = now.title; sub.appendChild(n); }
+        if (next) { const n = el('span', 'font-size:11px;font-weight:800;color:#5b1784;white-space:nowrap', next); n.className = 'st-pick-next'; sub.appendChild(n); }
         if (tags.length) sub.appendChild(tagChips(tags, 2));
         body.appendChild(sub);
       }
@@ -5492,6 +5514,10 @@
   // Unassign warns about those. Each change is confirmed from ServiceTitan's data, problem jobs
   // get one more try, and ↩ Put back undoes the last run. Up to three jobs are worked on at once
   // (a two-job swap goes one job after the other, as both jobs or neither).
+  // From 🧭 Tech Router it also takes a plan (each job to its own tech) and a new order for a tech's
+  // day (✨ Optimize): new start and end times, the same request the board sends when a job is
+  // dragged to another time on the same tech (its techs and arrival window stay as they are;
+  // checked live on Oct 31 2026 on a quote job 3 days out, and put back). Put back undoes times too.
   // ===================================================================
   const moves = (() => {
     const TOOL = 'Move Jobs';
@@ -5596,12 +5622,16 @@
     // A plan from 🧭 Tech Router (🗺️ Plan the day): each job goes to its own tech. Mode 'plan' works
     // like ➡️ Move to a tech, one job at a time, with that job's tech. job number -> { id, name }.
     let plan = null;
+    // A new order for one tech's day from 🧭 Tech Router (✨ Optimize): each appointment gets a new
+    // start and end (same length, same tech, same arrival window). { tech, times: Map(apptId -> { start,
+    // end }), byJob: Map(jobId -> new start) }.
+    let order = null;
     const modeBox = el('div', 'display:grid;gap:1px;font-size:12px');
     const modeRadios = MODES.map(([val, text]) => {
       const l = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer');
       const r = el('input'); r.type = 'radio'; r.name = 'st-move-mode'; r.value = val; r.checked = mode === val;
       r.onchange = () => {
-        mode = val; plan = null; set('stMoveMode', val); clearReview();
+        mode = val; plan = null; order = null; set('stMoveMode', val); clearReview();
         if (val === 'swapDays') picker.setPicking(false);
         layout();
         if (val === 'swapJobs' && picker.size() > 2) say('⚠️ Swap uses two jobs, and ' + picker.size() + ' are picked. Take some off (✕) or Clear.');
@@ -5646,7 +5676,8 @@
       unassign: 'Pick the jobs. Everyone (or the tech in From) comes off.',
       swapJobs: 'Pick two jobs. Each one gets the other\'s tech(s).',
       swapDays: 'Pick two techs. Every open job of one goes to the other, on the day the board shows.',
-      plan: 'A plan from 🧭 Tech Router: each job goes to the tech shown next to it. Take any off with ✕.'
+      plan: 'A plan from 🧭 Tech Router: each job goes to the tech shown next to it. Take any off with ✕.',
+      order: 'A new order from 🧭 Tech Router (✨ Optimize): each job gets the time shown next to it, on the same tech, in the same arrival window. Take any off with ✕.'
     };
     const hint = el('div', 'font-size:12px;color:var(--st-ink-2);background:var(--st-purple-s);border-radius:6px;padding:4px 7px');
     const toPick = techPicker('To', '', 'stMoveTo');
@@ -5666,6 +5697,8 @@
       busy: () => busy,
       say: t => say(t),
       changed: () => { clearReview(); updateButtons(); },
+      // A new order: each job's new time beside it.
+      next: j => mode === 'order' && order && order.byJob.has(S(j)) ? '→ ' + tm(order.byJob.get(S(j))) : '',
       tool: TOOL
     });
     const uaBtn = smallBtn('＋ All Unassigned', () => addUnassigned());
@@ -5721,7 +5754,8 @@
     let busy = false, running = false, stop = false;
     let reviewing = false, reviewStop = false;   // a review in progress, and Stop checking pressed
     let planned = null;   // the last review: { mode, items, at }
-    let undo = [];        // [{ apptId, jobId, number, customer, before, after }] from the last run
+    let undo = [];        // [{ apptId, jobId, number, customer, before, after, time }] from the last run
+                          // (time: { before: { start, end }, after: { start, end } or null } for a new time)
     let undoDay = null;   // the day the last run was on (Put back works from any day)
     let movedJobs = [];   // job numbers the last run changed (for Notifications)
     // ↩ Put back is saved in this browser, so it still works after the Toolbox is closed, the page
@@ -5770,6 +5804,7 @@
       if (mode === 'unassign') ready = ready && picker.size() > 0;
       if (mode === 'swapJobs') ready = ready && picker.size() === 2;
       if (mode === 'plan') ready = ready && !!plan && picker.size() > 0;
+      if (mode === 'order') ready = ready && !!order && picker.size() > 0;
       if (mode === 'swapDays') ready = ready && !!aPick.value() && !!bPick.value() && S(aPick.value()) !== S(bPick.value());
       reviewBtn.disabled = !ready; reviewBtn.style.opacity = ready ? '1' : '.5';
       reviewStopBtn.style.display = reviewing ? 'inline-block' : 'none';
@@ -5934,6 +5969,14 @@
         return { list: out, missing: [] };
       }
       const list = [], missing = [];
+      if (m === 'order') {
+        picker.ids().forEach(j => {
+          const appts = rows.filter(r => r.jobId === S(j) && order && order.times.has(S(r.apptId)));
+          if (!appts.length) { missing.push(j); return; }
+          appts.forEach(r => list.push({ r, p: { tech: order.tech, time: order.times.get(S(r.apptId)) } }));
+        });
+        return { list, missing };
+      }
       picker.ids().forEach(j => {
         const appts = rows.filter(r => r.jobId === S(j));
         if (!appts.length) { missing.push(j); return; }
@@ -5943,9 +5986,23 @@
       return { list, missing };
     };
 
-    const TITLE = { move: 'Move to', add: 'Add', unassign: 'Unassign', swapJobs: 'Swap two jobs\' techs', swapDays: 'Swap whole day', putback: 'Put back the last run', plan: 'Planned (each job to its own tech)' };
-    const GO = { move: 'Move', add: 'Add to', unassign: 'Unassign', swapJobs: 'Swap', swapDays: 'Swap', putback: 'Put back', plan: 'Assign' };
+    const TITLE = { move: 'Move to', add: 'Add', unassign: 'Unassign', swapJobs: 'Swap two jobs\' techs', swapDays: 'Swap whole day', putback: 'Put back the last run', plan: 'Planned (each job to its own tech)', order: 'New order for' };
+    const GO = { move: 'Move', add: 'Add to', unassign: 'Unassign', swapJobs: 'Swap', swapDays: 'Swap', putback: 'Put back', plan: 'Assign', order: 'Set times for' };
+    // New times (✨ Optimize's order, or putting one back): "8 AM → 9:15 AM".
+    const tm = d => { d = new Date(d); const h = d.getHours(), mi = d.getMinutes(); return (h % 12 || 12) + (mi ? ':' + String(mi).padStart(2, '0') : '') + (h < 12 ? ' AM' : ' PM'); };
+    const sameTime = (a, b) => !!(a && b) && Math.abs(new Date(a) - new Date(b)) < 60000;
+    const timeText = t => 'time ' + tm(t.from.start) + ' → ' + tm(t.to.start);
+    const whatText = x => x.t ? timeText(x.t) : changeText(x.cur, x.d);
 
+    // A new time's warnings: not Scheduled, other techs on the job (it moves for them too), and a
+    // new start outside its arrival window (the window stays as it is).
+    const timeWarns = (out, cur, tech) => {
+      if (!isScheduled(out.status)) out.warn.status = 'it\'s ' + out.status + ', not Scheduled';
+      const others = tech ? cur.filter(id => S(id) !== S(tech)) : [];
+      if (others.length) out.warn.shared = names(others) + (others.length === 1 ? ' is' : ' are') + ' on it too, and it moves for them';
+      const ws = out.windowStart ? new Date(out.windowStart) : null, we = out.windowEnd ? new Date(out.windowEnd) : null, ns = new Date(out.t.to.start);
+      if (ws && we && !isNaN(ws) && !isNaN(we) && (ns < ws || ns >= we)) out.warn.window = 'the new time is outside its arrival window (' + tm(ws) + '–' + tm(we) + '), which stays as it is';
+    };
     // ---------- Review (reads only) ----------
     // A review is only good for a few minutes: after that, Go asks for a new one.
     const REVIEW_MAX_MS = 5 * 60 * 1000;
@@ -5969,7 +6026,8 @@
         loadUndo(); updateButtons();
         if (!undo.length) return say('There\'s nothing to put back (it\'s kept for a day).');
         if (undoDay) day = undoDay;
-        list = undo.map(x => ({ r: { apptId: x.apptId, jobId: x.jobId, number: x.number, customer: x.customer, start: null, end: null, bu: null, techs: [] }, p: { want: x.before, expect: x.after } }));
+        list = undo.map(x => ({ r: { apptId: x.apptId, jobId: x.jobId, number: x.number, customer: x.customer, start: null, end: null, bu: null, techs: [] },
+          p: x.time ? { want: x.before, expect: x.after, time: { want: x.time.before, expect: x.time.after } } : { want: x.before, expect: x.after } }));
       } else {
         ({ list, missing } = targets(m));
         if (m === 'swapJobs') {
@@ -6006,6 +6064,9 @@
           ty.filter(id => !hasId(tx, id)).forEach(id => leave(id, { apptId: y.r.apptId, start: ay.appointment.start, end: ay.appointment.end }));
         }
         if (m === 'swapDays') list.forEach(it => { const ids = it.r.techs.map(t => t.id); [it.p.a, it.p.b].forEach(id => { if (hasId(ids, id)) leave(id, { apptId: it.r.apptId, start: it.r.start, end: it.r.end }); }); });
+        // A new order: every job in it is moving, so where they are now doesn't count as "booked"
+        // for the others' new times.
+        if (m === 'order') list.forEach(it => leave(it.p.tech, { apptId: it.r.apptId, start: it.r.start, end: it.r.end }));
         const skillCache = new Map();
         const results = await st.pool(list, 4, async (it, i, alive) => {
           const now = await st.appointment(it.r.apptId);
@@ -6013,6 +6074,25 @@
           const a = now.appointment, cur = a.techIds;
           const status = statusName(a.status), stopWhy = statusStop(a.status);
           const out = { it, cur, total: now.jobTotal, bu: now.businessUnitId, jobId: S(now.jobId), start: a.start, end: a.end, status, warn: {} };
+          // A new time (✨ Optimize's order, or putting one back).
+          if (it.p.time) {
+            const want = m === 'putback' ? it.p.time.want : it.p.time;
+            if (m === 'putback') {
+              if (!it.p.time.expect) return Object.assign(out, { skip: 'the earlier run couldn\'t confirm its new time, so it\'s left for you to check (it was ' + tm(want.start) + ', now ' + tm(a.start) + ')', kind: 'skipped' });
+              if (!sameTime(a.start, it.p.time.expect.start)) return Object.assign(out, { skip: 'its time changed since (now ' + tm(a.start) + '), left alone', kind: 'skipped' });
+            } else if (!hasId(cur, it.p.tech)) return Object.assign(out, { skip: 'isn\'t on ' + techName(it.p.tech) + ' any more (now ' + nowText(cur) + '), left alone', kind: 'skipped' });
+            if (stopWhy) return Object.assign(out, { skip: stopWhy, kind: 'skipped' });
+            if (sameTime(a.start, want.start)) return Object.assign(out, { skip: 'already at ' + tm(want.start), kind: 'already' });
+            out.t = { from: { start: a.start, end: a.end }, to: { start: new Date(want.start).toISOString(), end: new Date(want.end).toISOString() } };
+            out.d = { add: [], remove: [] };
+            out.windowStart = a.windowStart; out.windowEnd = a.windowEnd;
+            timeWarns(out, cur, it.p.tech);
+            if (m !== 'putback') {
+              const booked = await bookedAt(cur, { apptId: it.r.apptId, start: out.t.to.start, end: out.t.to.end }, id => leaving.get(S(id)) || []);
+              if (booked.length) out.warn.booked = bookedText(booked);
+            }
+            return out;
+          }
           if (m === 'putback') {
             if (!it.p.expect) return Object.assign(out, { skip: 'the earlier run couldn\'t confirm what it did to this job, so it\'s left for you to check (it started as ' + (it.p.want.length ? names(it.p.want) : 'unassigned') + ', now ' + (cur.length ? names(cur) : 'unassigned') + ')', kind: 'skipped' });
             if (!sameSet(cur, it.p.expect)) return Object.assign(out, { skip: 'changed since the move (now ' + (cur.length ? names(cur) : 'unassigned') + '), left alone', kind: 'skipped' });
@@ -6065,6 +6145,21 @@
         // onto, and that one doesn't count.
         if (m === 'putback') {
           items.forEach(x => { if (x.d && !x.skip) x.d.remove.forEach(id => leave(id, { apptId: x.it.r.apptId, start: x.start, end: x.end })); });
+          // Times put back: the jobs being put back don't count as "booked" where they are now.
+          items.forEach(x => { if (x.t && !x.skip) x.cur.forEach(id => leave(id, { apptId: x.it.r.apptId, start: x.start, end: x.end })); });
+          const times = items.filter(x => x.t && !x.skip);
+          for (let n = 0; n < times.length; n++) {
+            if (reviewStop) { say('Stopped checking. Nothing changed.'); return; }
+            const x = times[n];
+            try {
+              const booked = await bookedAt(x.cur, { apptId: x.it.r.apptId, start: x.t.to.start, end: x.t.to.end }, id => leaving.get(S(id)) || []);
+              if (booked.length) x.warn.booked = bookedText(booked);
+            } catch (e) {
+              if (st.isSignedOut(e)) throw e;
+              noteBad(e);
+              Object.assign(x, { skip: 'couldn\'t check if the tech is booked then (' + errText(e) + ')', kind: 'problem' });
+            }
+          }
           const check = items.filter(x => x.d && !x.skip && x.d.add.length);
           for (let n = 0; n < check.length; n++) {
             if (reviewStop) { say('Stopped checking. Nothing changed.'); return; }
@@ -6080,7 +6175,7 @@
             }
           }
         }
-        planned = { mode: m, items, at: Date.now(), day, leaving, params: m === 'move' || m === 'add' ? { to: toPick.value(), from: fromPick.value() } : m === 'unassign' ? { from: fromPick.value() } : m === 'swapDays' ? { a: aPick.value(), b: bPick.value() } : {} };
+        planned = { mode: m, items, at: Date.now(), day, leaving, params: m === 'move' || m === 'add' ? { to: toPick.value(), from: fromPick.value() } : m === 'unassign' ? { from: fromPick.value() } : m === 'swapDays' ? { a: aPick.value(), b: bPick.value() } : m === 'order' ? { tech: order && order.tech } : {} };
         showReview();
       } catch (e) {
         noteBad(e);
@@ -6092,7 +6187,9 @@
       ['status', '⚠️ Not Scheduled (on the way, working or on hold)', 'Also do the jobs that aren\'t Scheduled'],
       ['skills', '⚠️ Skill warning', 'Also do the jobs with a skill warning'],
       ['booked', '⚠️ Already booked at that time', 'Also do the jobs where the tech is already booked'],
-      ['branch', '⚠️ Would drop off your board (another branch)', 'Also unassign the jobs from another branch']
+      ['branch', '⚠️ Would drop off your board (another branch)', 'Also unassign the jobs from another branch'],
+      ['window', '⚠️ New time outside its arrival window', 'Also set the times outside their arrival window'],
+      ['shared', '⚠️ Other techs on the job (its time moves for them too)', 'Also set the times of jobs other techs are on']
     ];
     const ticks = {};
     const allTicked = x => Object.keys(x.warn).every(k => ticks[k] && ticks[k].checked);
@@ -6107,18 +6204,18 @@
     const showReview = () => {
       const p = planned, ready = p.items.filter(x => x.d && !x.skip), skipped = p.items.filter(x => !x.d || x.skip);
       const head = TITLE[p.mode] + (p.mode === 'move' || p.mode === 'add' ? ' ' + techName(p.params.to) + (p.params.from ? ' (from ' + techName(p.params.from) + ')' : '') :
-        p.mode === 'unassign' ? (p.params.from ? ' ' + techName(p.params.from) : ' everyone') : p.mode === 'swapDays' ? ': ' + techName(p.params.a) + ' ⇄ ' + techName(p.params.b) : '');
+        p.mode === 'unassign' ? (p.params.from ? ' ' + techName(p.params.from) : ' everyone') : p.mode === 'swapDays' ? ': ' + techName(p.params.a) + ' ⇄ ' + techName(p.params.b) : p.mode === 'order' ? ' ' + techName(p.params.tech) : '');
       const lines = [head + '   ·   ' + dayText(p.day), ''];
       if (p.mode === 'swapJobs' && ready.length !== 2) lines.push('⚠️ A swap needs both jobs, and one is left alone (below), so nothing will be swapped.', '');
       const clean = ready.filter(x => !Object.keys(x.warn).length);
       lines.push('✅ Ready: ' + plural(clean.length, 'job'));
-      clean.slice(0, 60).forEach(x => lines.push('• ' + label(x.it.r) + ': ' + changeText(x.cur, x.d)));
+      clean.slice(0, 60).forEach(x => lines.push('• ' + label(x.it.r) + ': ' + whatText(x)));
       if (clean.length > 60) lines.push('…and ' + (clean.length - 60) + ' more');
       WARNS.forEach(([k, title]) => {
         const w = ready.filter(x => x.warn[k]);
         if (!w.length) return;
         lines.push('', title + ' (' + w.length + '):');
-        w.slice(0, 40).forEach(x => lines.push('• ' + label(x.it.r) + ': ' + changeText(x.cur, x.d) + '. ' + x.warn[k]));
+        w.slice(0, 40).forEach(x => lines.push('• ' + label(x.it.r) + ': ' + whatText(x) + '. ' + x.warn[k]));
         if (w.length > 40) lines.push('…and ' + (w.length - 40) + ' more');
       });
       if (skipped.length) {
@@ -6133,6 +6230,7 @@
       }
       if (p.mode === 'swapDays' && (skipped.length || ready.some(x => Object.keys(x.warn).length))) lines.push('', 'ℹ️ Jobs left alone (or with a warning you don\'t tick) stay where they are, so it won\'t be a full swap.');
       if (p.mode === 'swapJobs' || p.mode === 'swapDays') lines.push('', 'Swaps don\'t count the job each tech is leaving as "booked". Anything else at that time does.');
+      if (p.mode === 'order') lines.push('', 'Only the start and end times change (same length): the tech and the arrival window stay as they are. The jobs in this order don\'t count as "booked" for each other; anything else at the new time does.');
       reviewText.textContent = lines.join('\n');
       reviewOpts.textContent = '';
       WARNS.forEach(([k, , text]) => {
@@ -6196,6 +6294,59 @@
       ids.forEach(id => { if (!hasId(g.ids, id)) g.ids.push(id); });
       g.start = start; g.end = end;
     };
+    // A new time for one appointment (✨ Optimize's order, or putting one back): a fresh look (the
+    // time and techs the review saw, or it's left alone), the checks again, then the new time, read
+    // back until ServiceTitan has it. x.tOrigin: its time at the run's first look; x.tLast: at the
+    // latest reading (null right after the change is sent, until one comes back). Put back is
+    // worked out from those two, as for techs.
+    const readTime = async (apptId, x, ms) => {
+      const a = (await st.appointment(apptId, ms)).appointment;
+      if (x) x.tLast = { start: a.start, end: a.end };
+      return a;
+    };
+    const doTime = async (x, m, okWarn, ctx, now) => {
+      const r = x.it.r, a = now.appointment, cur = a.techIds, to = x.t.to;
+      x.tLast = { start: a.start, end: a.end };
+      if (!x.tOrigin) x.tOrigin = { start: a.start, end: a.end };
+      if (!x.touched && (!sameTime(a.start, x.t.from.start) || !sameSet(cur, x.cur))) return res('changed since the review (now ' + tm(a.start) + ', ' + nowText(cur) + '). Review again', 'problem', { noRetry: true });
+      const status = statusName(a.status), stopWhy = statusStop(a.status);
+      if (stopWhy) return res(stopWhy, 'skipped');
+      if (sameTime(a.start, to.start)) return res('already at ' + tm(to.start), 'already');
+      const o = { status, t: x.t, windowStart: a.windowStart, windowEnd: a.windowEnd, warn: {} };
+      timeWarns(o, cur, m === 'order' ? x.it.p.tech : null);
+      if (o.warn.status && !okWarn.status) return res('is ' + status + ' now, not Scheduled (not ticked), left alone', 'skipped');
+      if (o.warn.shared && !okWarn.shared) return res(o.warn.shared + ' (not ticked), left alone', 'skipped');
+      if (o.warn.window && !okWarn.window) return res(o.warn.window + ' (not ticked), left alone', 'skipped');
+      // Booked at the new time, checked again right before. This run's other jobs (where they were,
+      // and where they're going) don't count.
+      if (!okWarn.booked && m !== 'putback') {
+        try {
+          const since = await bookedAt(cur, { apptId: r.apptId, start: to.start, end: to.end }, id => (ctx.leaving.get(S(id)) || []).concat(ctx.given.filter(g => hasId(g.ids, id))));
+          if (since.length) return res(bookedText(since) + ' (since the review), left alone. Review again to see it', 'skipped');
+        } catch (e) { if (st.isSignedOut(e)) throw e; noteBad(e); return res('couldn\'t check if the tech is booked then (' + errText(e) + '). Nothing changed', 'problem'); }
+      }
+      let sent = null;
+      const pre = x.tLast;
+      x.tLast = null; x.touched = true;
+      try { await st.setTimes(r.apptId, to.start, to.end); }
+      catch (e) { if (st.isSignedOut(e)) { x.tLast = pre; throw e; } sent = e; }
+      // If the request failed, ServiceTitan may still have made the change: look before saying anything.
+      const end = Date.now() + (sent ? 2000 : 6000);
+      let got = null;
+      await wait(150);
+      for (;;) {
+        try { const b = await readTime(r.apptId, x, Math.max(2000, end - Date.now())); if (sameTime(b.start, to.start)) { got = b; break; } }
+        catch (e) { if (st.isSignedOut(e)) throw e; }
+        if (Date.now() >= end) break;
+        await wait(400);
+      }
+      if (!got) {
+        const why = sent ? 'couldn\'t set the time (' + errText(sent) + ')' : 'ServiceTitan didn\'t take the new time';
+        if (x.tLast && sameTime(x.tLast.start, a.start)) return res(why + '. Nothing changed', 'problem');
+        return res(why + ', and couldn\'t confirm what it did (now ' + (x.tLast ? tm(x.tLast.start) : 'unknown') + '). Review again', 'problem');
+      }
+      return res((sent ? 'ServiceTitan\'s answer got lost, but the change went through. ' : '') + timeText({ from: { start: a.start }, to }), 'done');
+    };
     // One appointment: a fresh look, the change worked out again from who's on it now (in case the
     // board changed since the review), the checks again, then add first and remove second.
     // ctx.given: what this run puts on whom (above), and ctx.leaving: the jobs a swap takes each
@@ -6208,6 +6359,7 @@
       const cur = now.appointment.techIds;
       x.lastSeen = cur.slice();
       if (!x.origin) x.origin = cur.slice();
+      if (x.t) return doTime(x, m, okWarn, ctx, now);
       // Exactly the techs the review saw, or it's left alone. (On a retry after this run already
       // changed part of it, the check below, against what the review planned, is the one that applies.)
       if (!x.touched && x.cur && !sameSet(cur, x.cur)) return res('changed since the review (now ' + nowText(cur) + '). Review again', 'problem', { noRetry: true });
@@ -6323,20 +6475,26 @@
       copyBtn.textContent = 'Copy results';
       updateButtons();
       fit(); progress.scrollIntoView({ block: 'nearest' });
-      todo.forEach(x => { x.origin = null; x.lastSeen = null; x.touched = false; });
+      todo.forEach(x => { x.origin = null; x.lastSeen = null; x.touched = false; x.tOrigin = null; x.tLast = null; });
       freshSchedule();
       const results = new Map();   // apptId -> result
       const ctx = { given: [], leaving: p.leaving || new Map() };
       todo.forEach(x => { if (x.d && x.d.add.length) give(ctx, x.it.r.apptId, x.d.add, x.start, x.end); });
+      // New times: where each job in the run is going doesn't count as "booked" for the others.
+      todo.forEach(x => { if (x.t) ctx.given.push({ apptId: x.it.r.apptId, ids: x.cur.slice(), start: x.t.to.start, end: x.t.to.end }); });
       const record = (x, rr, retry) => { results.set(S(x.it.r.apptId), { x, rr }); add(label(x.it.r) + ': ' + (retry ? 'retry: ' : '') + rr.text); };
-      const verb = m === 'putback' ? 'Putting back' : m === 'unassign' ? 'Unassigning' : m === 'add' ? 'Adding' : m === 'move' ? 'Moving' : m === 'plan' ? 'Assigning' : 'Swapping';
+      const verb = m === 'putback' ? 'Putting back' : m === 'unassign' ? 'Unassigning' : m === 'add' ? 'Adding' : m === 'move' ? 'Moving' : m === 'plan' ? 'Assigning' : m === 'order' ? 'Setting times' : 'Swapping';
       const needsRetry = rr => rr.kind === 'problem' && !rr.noRetry;
       // What the run changed, worked out from each job's first and latest reading.
-      const changes = () => todo.filter(x => x.origin && (x.lastSeen === null || !sameSet(x.origin, x.lastSeen)))
-        .map(x => ({ apptId: x.it.r.apptId, jobId: x.it.r.jobId, number: x.it.r.number, customer: x.it.r.customer, before: x.origin.slice(), after: x.lastSeen ? x.lastSeen.slice() : null }));
+      const changes = () => todo.filter(x => !x.t && x.origin && (x.lastSeen === null || !sameSet(x.origin, x.lastSeen)))
+        .map(x => ({ apptId: x.it.r.apptId, jobId: x.it.r.jobId, number: x.it.r.number, customer: x.it.r.customer, before: x.origin.slice(), after: x.lastSeen ? x.lastSeen.slice() : null }))
+        // New times: the techs stay the same; the time goes back.
+        .concat(todo.filter(x => x.t && x.tOrigin && (x.tLast === null || !sameTime(x.tOrigin.start, x.tLast.start)))
+          .map(x => ({ apptId: x.it.r.apptId, jobId: x.it.r.jobId, number: x.it.r.number, customer: x.it.r.customer, before: x.origin.slice(), after: x.origin.slice(),
+            time: { before: x.tOrigin, after: x.tLast } })));
       let finished = false, lastRun = [];
       try {
-        add(TITLE[m] + (m === 'move' || m === 'add' ? ' ' + techName(p.params.to) : '') + ' · ' + dayText(p.day) + ' (' + plural(todo.length, 'job') + ')');
+        add(TITLE[m] + (m === 'move' || m === 'add' ? ' ' + techName(p.params.to) : m === 'order' ? ' ' + techName(p.params.tech) : '') + ' · ' + dayText(p.day) + ' (' + plural(todo.length, 'job') + ')');
         if (m === 'swapJobs') {
           // Both jobs are read again first: nothing is done unless both are as the review saw them.
           let ok = true;
@@ -6402,7 +6560,7 @@
         const summary = Object.keys(tally).map(k => tally[k] + ' ' + k).join(', ') || 'nothing done';
         const left = []; results.forEach(({ x, rr }) => { if (rr.kind === 'problem') left.push('#' + x.it.r.jobId); });
         if (left.length) add('Needs a look: ' + left.join(', '));
-        const unsure = lastRun.filter(z => !z.after);
+        const unsure = lastRun.filter(z => !z.after || (z.time && !z.time.after));
         if (unsure.length) add('⚠️ Couldn\'t confirm what ServiceTitan did on ' + unsure.map(z => '#' + z.jobId).join(', ') + '. Check ' + (unsure.length === 1 ? 'it' : 'them') + ' on the board.');
         if (undo.length && m !== 'putback') add('↩ Put back can undo ' + plural(undo.length, 'job') + '.');
         if (lastRun.length) {
@@ -6476,6 +6634,25 @@
       say('From 🧭 Tech Router: a plan for ' + plural(n, 'job') + '. Press Review to check it; nothing changes until you press Assign.');
       return n;
     };
+    // A new order for one tech's day from 🧭 Tech Router (✨ Optimize): [{ apptId, jobId, customer,
+    // start, end }]. Only these jobs are picked (anything picked before is taken off), each with its
+    // new time. Nothing changes until Review and Set times. Returns how many jobs are picked, or -1
+    // if Move Jobs is busy.
+    const takeOrder = (items, techId, techName) => {
+      if (busy) return -1;
+      order = { tech: techId, times: new Map(items.map(x => [S(x.apptId), { start: new Date(x.start).toISOString(), end: new Date(x.end).toISOString() }])), byJob: new Map(items.map(x => [S(x.jobId), new Date(x.start)])) };
+      if (techName && !seenNames.has(S(techId))) seenNames.set(S(techId), techName);
+      const labels = {};
+      items.forEach(x => { labels[S(x.jobId)] = (x.customer ? x.customer + ' ' : '') + '→ ' + tm(x.start); });
+      plan = null; mode = 'order';
+      picker.setPicking(false);
+      clearReview();
+      picker.removeMany(picker.ids());
+      const n = picker.addMany(items.map(x => S(x.jobId)), labels);
+      layout();
+      say('From ✨ Optimize: a new order for ' + techName + ', ' + plural(n, 'job') + '. Press Review to check it; nothing changes until you press Set times.');
+      return n;
+    };
     // Hands the jobs the last run changed to Job Notifications.
     const handOff = () => {
       if (busy || !movedJobs.length) return;
@@ -6504,6 +6681,7 @@
       refresh,
       take,
       takePlan,
+      takeOrder,
       leave: () => picker.setPicking(false),
       isRunning: () => running,
       stop: requestStop,
@@ -6874,7 +7052,7 @@
       // The job's map point (seen Oct 29 2026 in Latitude / Longitude; JobLatitude / JobLongitude empty).
       const num = v => (typeof v === 'number' && isFinite(v) && v !== 0 ? v : null);
       const lat = num(x.JobLatitude) != null ? num(x.JobLatitude) : num(x.Latitude), lon = num(x.JobLongitude) != null ? num(x.JobLongitude) : num(x.Longitude);
-      return { apptId: S(x.Id), jobId, customer: norm(x.Customer), customerId: x.CustomerId || null, phone: last10(x.CustomerPhone),
+      return { apptId: S(x.Id), jobId, customer: norm(x.Customer), customerId: x.CustomerId || null, locationId: x.LocationId || null, phone: last10(x.CustomerPhone),
         typeId: x.TypeId != null ? S(x.TypeId) : '', type: norm(x.Type), priority: norm(x.Priority), start: s0, end: e0,
         dur: Math.max(15, Math.min(dur, 12 * 60)), created: toDate(x.CreatedOn), pt: lat != null && lon != null && okPt([lat, lon]) ? { lat, lon } : null,
         street: norm(x.Street), state: norm(x.State), zip: zip5(x.Zip), city: tidy(x.City), note: [x.Summary, x.AppointmentSpecialInstructions].filter(v => typeof v === 'string' && norm(v)).join('<br>'), tags: (Array.isArray(x.Tags) ? x.Tags : []).map(board.tagOf).filter(Boolean), source, day: day || null };
@@ -7418,6 +7596,24 @@
               const miss = (need.get(x.c.jobId) || []).filter(k => !have.has(String(k.id)));
               x.missing = miss.map(k => k.name || 'skill #' + k.id);
               if (miss.length) x.score += SKILL_MISS;
+            });
+            g.list.sort((x, y) => x.score - y.score || x.extra - y.extra);
+          });
+        }
+        // Customers' time requests in the suggested jobs' notes too (their summaries came with them):
+        // read for the jobs it lists, then each one's request is checked against its open time again.
+        const listed = [];
+        gaps.forEach(g => g.list.forEach(x => { if (!listed.some(c => c.jobId === x.c.jobId)) listed.push(x.c); }));
+        if (listed.length) {
+          say('Reading the notes of ' + plural(listed.length, 'job') + ' (for customers\' time requests)…');
+          const asks = await readAsks(listed.map(askCand), stale);
+          if (stale()) return;
+          listed.forEach(c => { if (asks.has(S(c.jobId))) c.ask = asksFrom(asks.get(S(c.jobId)), s.day); });
+          gaps.forEach(g => {
+            g.list.forEach(x => {
+              const was = x.askMiss;
+              x.askMiss = !!x.c.ask && !askFits(x.c.ask, g, x);
+              x.score += (x.askMiss ? ASK_MISS : 0) - (was ? ASK_MISS : 0);
             });
             g.list.sort((x, y) => x.score - y.score || x.extra - y.extra);
           });
@@ -8064,8 +8260,8 @@
     // A tech's day as a route, from the board as it stands: { t, D, start, end, startPt, startWords,
     // startAddr, homePt, homeAddr (for 🗺️ Google Maps), home, stops, fixedN (stops being worked or driven to now, which stay first), n0, added,
     // sales, base (simulated with straight-line guesses) }, or null (time off, nowhere to measure
-    // from, or their day is over). Today: from now, without the jobs they've finished. notes: Map(jobId
-    // -> job summary), for customers' time requests (stop.ask); without it, none.
+    // from, or their day is over). Today: from now, without the jobs they've finished. notes: what
+    // readAsks gives, for customers' time requests (stop.ask); without it, none.
     const routeOf = (s, t, loc, now, grace, notes) => {
       const day = s.day, today = board.sameDay(day, now);
       const D = dayOf(s, t.id);
@@ -8077,7 +8273,7 @@
       const stops = jobs.map(a => {
         const busyNow = today && /^(working|dispatched)$/i.test(a.techStatus[t.id] || a.status);
         return { kind: 'board', a, jobId: a.jobId, customer: a.customer, city: a.city, addr: addrOf(a.street, a.city, a.state, a.zip), pt: loc.ptOf(a), win: windowOf(a.tags, a.windowStart, a.windowEnd, day),
-          ask: notes ? askOf(notes.get(a.jobId), day) : null,
+          ask: notes ? asksFrom(notes.get(S(a.jobId)), day) : null,
           dur: Math.max(15, busyNow && a.end > now ? (a.end - now) / 60000 : (a.end - a.start) / 60000), busyNow };
       }).sort((x, y) => (y.busyNow - x.busyNow) || (x.a.start - y.a.start));
       const start = today ? new Date(Math.max(+D.start, Math.ceil(now / 900000) * 900000)) : D.start;
@@ -8123,6 +8319,10 @@
         s.techs.forEach(t => { if (inPick(pick, t.team)) (s.byTech.get(t.id) || []).forEach(a => appts.push(a)); });
         const loc = await locate(appts, jobs0, [], stale), zipError = loc.error;
         if (stale()) return;
+        // Customers' time requests on the Unassigned jobs: their summaries, and their notes.
+        say('Reading the Unassigned jobs\' notes (for customers\' time requests)…');
+        const uaNotes = await readAsks(jobs0.map(askCand), stale, (n, of) => say('Reading the Unassigned jobs\' notes (for customers\' time requests): ' + n + ' of ' + of + '…'));
+        if (stale()) return;
         // Each tech's route as it stands.
         const usable = t => { if (!homes) return true; const h = homes.get(S(t.id)); return h ? h.active && (!fieldOnly || h.managed) : !fieldOnly; };
         const routes = [];
@@ -8145,7 +8345,7 @@
           if (pick && !fits.length) { otherDept++; return; }
           if (PHONE_ONLY.test(c.type)) { left.push({ c, why: 'a phone call only, not a visit' }); return; }
           if (!c.pt) { left.push({ c, why: 'no location in ServiceTitan to measure to' }); return; }
-          const x = { kind: 'new', c, jobId: c.jobId, customer: c.customer, city: c.city, addr: addrOf(c.street, c.city, c.state, c.zip, c.pt), pt: c.pt, win: c.win, ask: askOf(c.note, day), dur: c.dur, prio: norm(c.priority).toLowerCase() };
+          const x = { kind: 'new', c, jobId: c.jobId, customer: c.customer, city: c.city, addr: addrOf(c.street, c.city, c.state, c.zip, c.pt), pt: c.pt, win: c.win, ask: asksFrom(uaNotes.get(S(c.jobId)), day), dur: c.dur, prio: norm(c.priority).toLowerCase() };
           let best = null, why = null, closest = null;
           if (!fits.length) {
             const f = routes.length ? fitFor(routes[0], c) : null, by = f && f.by;
@@ -8192,9 +8392,13 @@
           await locate([], pool0, [], stale);
           if (stale()) return;
           const pool = pool0.filter(c => c.pt);
+          // Their notes: only for the holds close to someone's route (the only ones that can be fitted in).
+          const nearAny = h => routes.some(R => [R.startPt, R.homePt].concat(R.stops.map(x => x.pt)).some(p => p && miles(p, h.pt) <= HOLD_NEAR));
+          const holdNotes = await readAsks(pool.filter(nearAny).map(askCand), stale);
+          if (stale()) return;
           const near = (R, h) => [R.startPt, R.homePt].concat(R.stops.map(x => x.pt)).some(p => p && miles(p, h.pt) <= HOLD_NEAR);
           const bestFor = (R, h) => {
-            const x = { kind: 'hold', c: h, jobId: h.jobId, customer: h.customer, city: h.city, addr: addrOf(h.street, h.city, h.state, h.zip, h.pt), pt: h.pt, win: h.win, ask: askOf(h.note, day), dur: h.dur, prio: norm(h.priority).toLowerCase(), phone: h.phone };
+            const x = { kind: 'hold', c: h, jobId: h.jobId, customer: h.customer, city: h.city, addr: addrOf(h.street, h.city, h.state, h.zip, h.pt), pt: h.pt, win: h.win, ask: holdNotes.has(S(h.jobId)) ? asksFrom(holdNotes.get(S(h.jobId)), day) : askOf(h.note, day), dur: h.dur, prio: norm(h.priority).toLowerCase(), phone: h.phone };
             const badBase = R.base.out.filter(o => o.bad).length;
             let best = null;
             for (let p = R.fixedN; p <= R.stops.length; p++) {
@@ -8233,11 +8437,11 @@
         // marked on it.
         const changed = routes.filter(R => R.added.length);
         if (changed.length) {
-          say('Reading the summaries of the jobs on ' + plural(changed.length, 'route') + ' (for customers\' time requests)…');
-          const notes = await readNotes([].concat.apply([], changed.map(R => R.stops.filter(x => x.kind === 'board').map(x => x.jobId))), stale);
+          say('Reading the summaries and notes of the jobs on ' + plural(changed.length, 'route') + ' (for customers\' time requests)…');
+          const notes = await readAsks([].concat.apply([], changed.map(R => R.stops.filter(x => x.kind === 'board').map(x => askJob(x.a)))), stale);
           if (stale()) return;
           changed.forEach(R => {
-            R.stops.forEach(x => { if (x.kind === 'board') x.ask = askOf(notes.get(x.jobId), day); });
+            R.stops.forEach(x => { if (x.kind === 'board') x.ask = asksFrom(notes.get(S(x.jobId)), day); });
             if (!R.stops.some(x => x.kind === 'board' && x.ask)) return;
             R.added.forEach(x => {
               const rest = R.stops.filter(y => y !== x);
@@ -8343,7 +8547,7 @@
     const hmMin = m => { const h = Math.floor(m / 60), mm = m % 60; return (h % 12 || 12) + (mm ? ':' + pad(mm) : '') + (h < 12 ? ' AM' : ' PM'); };
     const askWords = a => [a.after != null && a.before != null ? hmMin(a.after) + '–' + hmMin(a.before) : a.after != null ? 'after ' + hmMin(a.after) : a.before != null ? 'before ' + hmMin(a.before) : '', a.first ? 'first stop' : '', a.last ? 'last stop' : ''].filter(Boolean).join(', ');
     const askChip = (a, miss) => {
-      const c = chip((miss ? '⚠️ asked: ' : '🕑 ') + askWords(a), miss ? 'r' : 'b', 'The job summary says: "' + a.text + '"' + (miss ? ' This route doesn\'t keep to it.' : ''));
+      const c = chip((miss ? '⚠️ asked: ' : '🕑 ') + askWords(a), miss ? 'r' : 'b', (a.src || 'The job summary') + ' says: "' + a.text + '"' + (miss ? ' This route doesn\'t keep to it.' : ''));
       c.style.marginLeft = '4px'; c.classList.add('st-ask');
       return c;
     };
@@ -8504,27 +8708,57 @@
     // Every place on a route: where it starts, home, and each stop.
     const routePts = R => [R.startPt, R.homePt].concat(R.stops.map(x => x.pt));
     const sharedWith = (x, t) => x.a && Array.isArray(x.a.techs) ? x.a.techs.filter(id => S(id) !== S(t.id)).length : 0;
-    // Jobs' summaries, for customers' time requests (Unassigned and Hold jobs come with theirs; jobs on
-    // the board are read one at a time, NOTES_AT_ONCE at once, and kept NOTE_TTL). Map(jobId -> text);
-    // a job whose summary couldn't be read isn't in it (out.missed says how many).
-    const NOTE_TTL = 10 * 60000, NOTES_AT_ONCE = 4;
-    const noteCache = new Map();
-    const readNotes = async (jobIds, stale, progress) => {
-      const ids = Array.from(new Set(jobIds.map(S))), out = new Map(), fresh = j => { const c = noteCache.get(j); return c && Date.now() - c.at < NOTE_TTL; };
-      const need = ids.filter(j => !fresh(j));
-      if (need.length) {
-        const got = await st.pool(need, NOTES_AT_ONCE, j => st.jobSummary(j), progress ? n => progress(n, need.length) : null, { stop: stale });
+    // Where a customer's time request can be written, for each job: its summary (and the
+    // appointment's special instructions), its own notes, and the customer's and location's notes
+    // from the last NOTE_DAYS days (or pinned). Unassigned and Hold jobs come with their summary; a
+    // job on the board's is read. Notes are read per job, customer and location. NOTES_AT_ONCE reads at
+    // a time, each kept NOTE_TTL. jobs: [{ jobId, customerId, locationId, summary (when known) }].
+    // Map(jobId -> [{ text, src }]): the newest note first, then the summary. out.missed: how many
+    // jobs had something that couldn't be read.
+    const NOTE_TTL = 10 * 60000, NOTES_AT_ONCE = 6, NOTE_DAYS = 30;
+    const sumCache = new Map(), ownerCache = new Map();
+    const fresh = c => !!c && Date.now() - c.at < NOTE_TTL;
+    const owners = j => [['j', j.jobId, 'job'], ['c', j.customerId, 'customer'], ['l', j.locationId, 'location']].filter(x => x[1] != null && x[1] !== '');
+    const readAsks = async (jobs, stale, progress) => {
+      const want = [], seen = new Set();
+      jobs.forEach(j => {
+        if (j.summary == null && !fresh(sumCache.get(S(j.jobId))) && !seen.has('s' + j.jobId)) { seen.add('s' + j.jobId); want.push({ k: 's', id: S(j.jobId) }); }
+        owners(j).forEach(([k, id]) => { if (!fresh(ownerCache.get(k + id)) && !seen.has(k + id)) { seen.add(k + id); want.push({ k, id: S(id) }); } });
+      });
+      if (want.length) {
+        const got = await st.pool(want, NOTES_AT_ONCE, w => w.k === 's' ? st.jobSummary(w.id) : st.ownerNotes(w.id), progress ? n => progress(n, want.length) : null, { stop: stale });
         if (got.halted === 'signedOut') throw got.haltError;
-        need.forEach((j, i) => {
+        want.forEach((w, i) => {
           const v = got[i];
-          if (typeof v === 'string') noteCache.set(j, { text: v, at: Date.now() });
-          else if (v && v.error && v.error.kind === 'bad') health.flag(TOOL, 'can\'t read job summaries (for customers\' time requests)', '/dispatch/job-edit-flyout/GetJobOverviewData');
+          if (v && v.error) { if (v.error.kind === 'bad') health.flag(TOOL, w.k === 's' ? 'can\'t read job summaries (for customers\' time requests)' : 'can\'t read notes (for customers\' time requests)', w.k === 's' ? '/dispatch/job-edit-flyout/GetJobOverviewData' : '/app/api/notes/Find'); return; }
+          if (v == null || v === st.NOT_RUN) return;
+          if (w.k === 's') sumCache.set(w.id, { text: v, at: Date.now() }); else ownerCache.set(w.k + w.id, { notes: v, at: Date.now() });
         });
       }
-      ids.forEach(j => { if (fresh(j)) out.set(j, noteCache.get(j).text); });
-      out.missed = ids.length - out.size;
+      const out = new Map(), cutoff = Date.now() - NOTE_DAYS * 86400000;
+      let missed = 0;
+      jobs.forEach(j => {
+        const src = [];
+        let miss = false;
+        owners(j).forEach(([k, id, word]) => {
+          const c = ownerCache.get(k + id);
+          if (!fresh(c)) { miss = true; return; }
+          c.notes.filter(n => n.pinned || (n.at && +n.at >= cutoff)).forEach(n => src.push({ text: n.text, src: 'A ' + word + ' note' + (n.at ? ' from ' + n.at.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''), at: n.at ? +n.at : 0 }));
+        });
+        src.sort((a, b) => b.at - a.at);
+        const sc = sumCache.get(S(j.jobId)), sum = j.summary != null ? j.summary : fresh(sc) ? sc.text : null;
+        if (sum == null) miss = true; else if (norm(sum)) src.push({ text: sum, src: 'The job summary' });
+        if (miss) missed++;
+        out.set(S(j.jobId), src);
+      });
+      out.missed = missed;
       return out;
     };
+    // A job's time request: the first one in its sources (the newest note first, then the summary),
+    // with where it's from (a.src).
+    const asksFrom = (src, day) => { for (const x of src || []) { const a = askOf(x.text, day); if (a) { a.src = x.src; return a; } } return null; };
+    const askJob = a => ({ jobId: a.jobId, customerId: a.customerId, locationId: a.locationId });
+    const askCand = c => ({ jobId: c.jobId, customerId: c.customerId, locationId: c.locationId, summary: c.note || '' });
     let optRun = 0, lastOpt = null, optView = 'best';
     const optimize = async () => {
       const run = ++optRun;
@@ -8544,8 +8778,8 @@
         if (!t) return say('⚠️ That tech isn\'t on the board for ' + dayText(s.day) + ' (its filter may hide them).');
         await loadHomes();
         const mine = s.byTech.get(S(t.id)) || [];
-        say('Reading their jobs\' summaries and where they are…');
-        const [loc, notes] = await Promise.all([locate(mine, [], [], stale), readNotes(dayOf(s, t.id).jobs.map(a => a.jobId), stale)]);
+        say('Reading their jobs\' summaries and notes, and where they are…');
+        const [loc, notes] = await Promise.all([locate(mine, [], [], stale), readAsks(dayOf(s, t.id).jobs.map(askJob), stale)]);
         const error = loc.error;
         if (stale()) return;
         const grace = Number(graceSel.value) || 60, now = new Date(), today = board.sameDay(s.day, now);
@@ -8653,13 +8887,27 @@
       });
       row(clock(show.home), '🏠 Home' + (show.over >= 5 ? ' · ' + mins(show.over) + ' past their shift' : ''), show.back ? '🚗 ' + g + mins(show.back) : '', 'edge');
       optOut.appendChild(tl);
+      // ➡️ The suggested order, to 🔀 Move Jobs: each job's new time (nothing changes until Set times there).
+      if (!same) {
+        const rows = orderRows(O);
+        const send = smallBtn('➡️ Set this order in Move Jobs (' + plural(rows.length, 'job') + ')', () => {
+          if (lock) return say('Wait for ' + lock + ' to finish first.');
+          const k = moves.takeOrder(rows, O.t.id, O.t.name);
+          if (k < 0) return say('🔀 Move Jobs is busy. Wait for it to finish, then try again.');
+          showView('moves');
+        }, FULL + 'background:#6a1b9a;border-color:#6a1b9a;color:#fff;padding:6px 9px;font-size:12.5px');
+        send.id = 'st-opt-send';
+        send.title = 'Opens 🔀 Move Jobs with each job\'s new time (the suggested arrival, to the nearest 5 minutes, same length). The tech and the arrival windows stay as they are. Nothing changes until you review it and press Set times.';
+        send.disabled = !rows.length;
+        optOut.appendChild(send);
+      }
       // 🗺️ The route shown, in Google Maps.
       const foot = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
       foot.className = 'st-opt-foot';
       mapsPills(O.R, show.out.map(o => o.x)).forEach(b => foot.appendChild(b));
       if (!same) foot.appendChild(copyPill('📋 Copy suggested order', optText(O), 'Copies the suggested order as text'));
       optOut.appendChild(foot);
-      if (O.notesMissed) optOut.appendChild(small('⚠️ ' + plural(O.notesMissed, 'job\'s summary', 'jobs\' summaries') + ' couldn\'t be read, so any time a customer asked for there isn\'t counted.', 'color:var(--st-amber)'));
+      if (O.notesMissed) optOut.appendChild(small('⚠️ The summary or notes of ' + plural(O.notesMissed, 'job') + ' couldn\'t be read, so a time the customer asked for there may not be counted.', 'color:var(--st-amber)'));
       if (O.noPt) optOut.appendChild(small('⚠️ ' + plural(O.noPt, 'job has', 'jobs have') + ' no zip code to measure to, so ' + (O.noPt === 1 ? 'its' : 'their') + ' driving isn\'t counted.', 'color:var(--st-amber)'));
       if (O.zipError) optOut.appendChild(small('⚠️ Some zip codes couldn\'t be looked up: ' + O.zipError + '.', 'color:var(--st-amber)'));
       optOut.appendChild(small((O.guess ? '⚠️ Some drive times aren\'t available right now, so those are guesses from straight-line miles (marked ~). ' : 'Drive times © Mapbox © OpenStreetMap. ') +
@@ -8667,6 +8915,30 @@
       optOut.style.display = 'grid';
       say(same ? 'Already the best order for these jobs.' : 'A better order is below. Nothing changes unless you move the jobs on the board.');
       fit();
+    };
+    // The suggested order as new appointment times, for 🔀 Move Jobs. Each job starts at its suggested
+    // arrival, but not before its arrival window starts (the route may get there a little before it),
+    // nor before the job before it ends plus the drive between them; to the nearest ORDER_ROUND
+    // minutes (rounded up when it has to wait on the job before). Each keeps its length. Jobs underway,
+    // and jobs whose time doesn't change, aren't in it.
+    const ORDER_ROUND = 5;
+    const orderRows = O => {
+      const out = [], q = ORDER_ROUND * 60000;
+      let prevEnd = null;
+      O.best.sim.out.forEach(o => {
+        const a = o.x.a;
+        if (!a) return;
+        if (o.x.busyNow) { prevEnd = +o.arrive + o.x.dur * 60000; return; }
+        const len = a.end - a.start;
+        let base = +o.arrive;
+        if (o.x.win && !o.x.win.booked && base < +o.x.win.start) base = +o.x.win.start;
+        const need = prevEnd == null ? 0 : prevEnd + (o.drive || 0) * 60000;
+        let start = Math.round(base / q) * q;
+        if (start < need) start = Math.ceil(need / q) * q;
+        prevEnd = start + len;
+        if (Math.abs(start - a.start) >= 60000) out.push({ apptId: a.apptId, jobId: a.jobId, customer: a.customer, start: new Date(start), end: new Date(start + len) });
+      });
+      return out;
     };
     const optText = O => {
       const lines = [O.t.name + ' · ' + dayText(O.s.day) + ': suggested order (route score ' + O.score + '%)'];
@@ -8700,8 +8972,8 @@
         const grace = Number(graceSel.value) || 60, now = new Date(), rows = [];
         // The routes to score, then their jobs' summaries (customers' time requests), then the routes again with them.
         const toScore = field.map(t => routeOf(s, t, loc, now, grace)).filter(R => R && R.stops.length - R.fixedN >= 2);
-        const ids = [].concat.apply([], toScore.map(R => R.stops.map(x => x.jobId)));
-        const notes = await readNotes(ids, stale, (n, of) => say('Reading job summaries (for customers\' time requests): ' + n + ' of ' + of + '…'));
+        const jobs = [].concat.apply([], toScore.map(R => R.stops.map(x => askJob(x.a))));
+        const notes = await readAsks(jobs, stale, (n, of) => say('Reading job summaries and notes (for customers\' time requests): ' + n + ' of ' + of + '…'));
         if (stale()) return;
         const routes = toScore.map(R => withBooked(routeOf(s, R.t, loc, now, grace, notes), grace));
         if (routes.length) say('Getting drive times for ' + plural(routes.length, 'route') + '…');
@@ -8735,7 +9007,7 @@
         });
         if (rows.length) optOut.appendChild(list);
         if (guessed) optOut.appendChild(small('⚠️ Some drive times for ' + plural(guessed, 'route') + ' aren\'t available right now, so those scores use straight-line miles (marked ~).', 'color:var(--st-amber)'));
-        if (notes.missed) optOut.appendChild(small('⚠️ ' + plural(notes.missed, 'job\'s summary', 'jobs\' summaries') + ' couldn\'t be read, so any time a customer asked for there isn\'t counted.', 'color:var(--st-amber)'));
+        if (notes.missed) optOut.appendChild(small('⚠️ The summary or notes of ' + plural(notes.missed, 'job') + ' couldn\'t be read, so a time the customer asked for there may not be counted.', 'color:var(--st-amber)'));
         optOut.appendChild(small('Lowest first; click a tech for the details. Drive times © Mapbox © OpenStreetMap.'));
         optOut.style.display = 'grid';
         say(rows.length ? 'Route scores for every field tech with two or more jobs. Click one for the details.' : 'Nothing to score.');

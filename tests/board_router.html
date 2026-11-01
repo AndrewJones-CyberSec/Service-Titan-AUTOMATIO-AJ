@@ -79,7 +79,7 @@
       Priority: prio, Duration: hrs * 3600, Start: s.toISOString(), End: e.toISOString(), ArrivalWindowStart: ws.toISOString(), ArrivalWindowEnd: we.toISOString(),
       Summary: (window.ROW_NOTES || {})[id] || '<p>Customer called about the system.</p>', AppointmentSpecialInstructions: '', CreatedOn: ago(created).toISOString(),
       // Like ServiceTitan on Oct 29 2026: the map point in Latitude / Longitude, JobLatitude / JobLongitude empty.
-      Latitude: pt ? pt[0] : 0, Longitude: pt ? pt[1] : 0, JobLatitude: null, JobLongitude: null, Street: id + ' Oak Ave', Zip: '', City: 'Somewhere', State: 'MS', Tags: tag ? [{ Id: 1, TypeId: 1, TypeName: tag, Color: '#ffe8a8', TextColor: null }] : [], Technicians: (window.ASSIGNED[id] || []).map(t => ({ Id: t, Name: (TECHS.find(x => x.id === t) || {}).name })), AppointmentStatus: day === 'hold' ? 'Hold' : 'Scheduled', JobStatus: day === 'hold' ? 'Hold' : 'Scheduled', BusinessUnitId: 1 };
+      Latitude: pt ? pt[0] : 0, Longitude: pt ? pt[1] : 0, JobLatitude: null, JobLongitude: null, Street: id + ' Oak Ave', Zip: '', City: 'Somewhere', State: 'MS', CustomerId: 50000 + id, LocationId: 60000 + id, Tags: tag ? [{ Id: 1, TypeId: 1, TypeName: tag, Color: '#ffe8a8', TextColor: null }] : [], Technicians: (window.ASSIGNED[id] || []).map(t => ({ Id: t, Name: (TECHS.find(x => x.id === t) || {}).name })), AppointmentStatus: day === 'hold' ? 'Hold' : 'Scheduled', JobStatus: day === 'hold' ? 'Hold' : 'Scheduled', BusinessUnitId: 1 };
   };
   // The last 4 weeks: who did which job types (Dustin and Pat split the coordinators' jobs).
   const past = [];
@@ -101,7 +101,7 @@
     const x = LISTS.find(r => r[1] === id);
     if (x) { const r = rowOf(x); return { job: r.JobId, start: r.Start, end: r.End, techs: [] }; }
     const a = APPTS.find(a => a.id === id);
-    return a ? { job: a.job, start: a.start.toISOString(), end: a.end.toISOString(), techs: a.techs } : null;
+    return a ? { job: a.job, start: a.start.toISOString(), end: a.end.toISOString(), techs: a.techs, ws: a.windowStart ? new Date(a.windowStart).toISOString() : null, we: a.windowEnd ? new Date(a.windowEnd).toISOString() : null } : null;
   };
   // Switches: MAPBOX_DOWN, CENSUS_DOWN, HOLD_DOWN, PAST_BAD (in newboard.js), API_DELAY (ms).
   window.WRITES = []; window.mapboxCalls = 0; window.censusCalls = 0; window.getJobsCalls = 0; window.mapboxCoords = [];
@@ -165,7 +165,21 @@
       if (!a) return json({}, 404);
       const techs = window.ASSIGNED[id] || a.techs;
       return json({ jobId: a.job, jobNumber: String(a.job), jobStatus: 'Scheduled', businessUnitId: 1, jobTotal: 0, locationAddress: { zip: '39401', city: 'Hattiesburg' }, customer: { name: 'Someone' },
-        jobAppointments: [{ id, number: 1, start: a.start, end: a.end, technicians: techs.map(t => ({ id: t, name: (TECHS.find(x => x.id === t) || {}).name })), jobAppointmentStatus: 0, isConfirmed: false }] });
+        jobAppointments: [{ id, number: 1, start: a.start, end: a.end, arrivalWindowStart: a.ws || null, arrivalWindowEnd: a.we || null, technicians: techs.map(t => ({ id: t, name: (TECHS.find(x => x.id === t) || {}).name })), jobAppointmentStatus: 0, isConfirmed: false }] });
+    }
+    // A new time for an appointment on the board (the board's drag): its start and end change.
+    if ((m = /^\/dispatch-center\/appointments\/(\d+)$/.exec(u)) && opts && opts.method === 'PUT') {
+      window.WRITES.push('PUT ' + u); window.timePuts = (window.timePuts || []).concat([{ id: Number(m[1]), body }]);
+      const a = APPTS.find(x => x.id === Number(m[1]));
+      if (!a || window.TIME_FAIL) return json({ Error: { Message: 'nope' } }, 400);
+      a.start = new Date(body.start); a.end = new Date(body.end);
+      return new Response('', { status: 200 });
+    }
+    // Notes on a job, customer or location: window.NOTES[ownerId] = [{ text, createdOn, isPinned }].
+    if ((m = /^\/app\/api\/notes\/Find\?ownerId=(\d+)/.exec(u))) {
+      window.noteCalls = (window.noteCalls || 0) + 1;
+      const list = ((window.NOTES || {})[m[1]] || []).map((n, i) => Object.assign({ id: Number(m[1]) * 100 + i, noteType: 0, isNewNote: false, archived: false, active: true, isPinned: false, createdOn: new Date().toISOString() }, n));
+      return json({ pinnedNotes: list.filter(n => n.isPinned), notes: list.filter(n => !n.isPinned), count: list.length });
     }
     if (u.indexOf('/Job/TechniciansAreBooked') === 0) return json([]);
     if ((m = /\/dispatch\/job-edit-flyout\/(Assign|Unassign)Technicians/.exec(u))) {
