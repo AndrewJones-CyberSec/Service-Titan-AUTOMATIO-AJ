@@ -401,6 +401,25 @@ with sync_playwright() as p:
         { id: 9312, job: 7312, techs: [202], customer: 'Morning Mo', start: at(10), end: at(11), zip: '39465', city: 'Petal', jobType: Q, jobTypeId: 11, tags: AM },
         { id: 9313, job: 7313, techs: [202], customer: 'Booked Bea', start: at(15), end: at(16), zip: '39401', city: 'Hattiesburg', jobType: Q, jobTypeId: 11, tags: [] });
       NB.render(); }"""
+    # A phone call on Ian's day (Nov 1 2026: Optimize counted it as a stop): not on the route, not
+    # moved, not in Google Maps, and it says so.
+    CALL = ZIGZAG.replace('NB.render(); }', """APPTS.push({ id: 9304, job: 7304, techs: [206], customer: 'Call Carl', start: at(12, 30), end: at(13), zip: '39465', city: 'Petal', jobType: 'PHONE CALL ONLY', jobTypeId: 17, tags: PM });
+      NB.render(); }""")
+    page, errors = start(b, CALL)
+    open_router(page)
+    page.click('#st-toolbox [data-tab=opt]')
+    opt(page, 206)
+    o = page.inner_text('#st-opt-out')
+    check(stops(page) == ['Zig One', 'Zig Three', 'Zag Two'] and 'Call Carl' not in o, 'a phone call isn\'t a stop on the route (%s)' % stops(page))
+    check('3 stops' in o and '1 phone call isn\'t part of the route' in o, 'it says the phone call was left out (%r)' % o[-400:])
+    m = maps(page)
+    check(m and not any('7304' in w or '9304' in w for w in m[0][1]) and len(m[0][1]) == 3, 'Google Maps doesn\'t go to the phone call (%s)' % m)
+    page.click('#st-opt-send')
+    page.wait_for_function("() => /Move Jobs/.test(document.querySelector('#st-toolbox .st-head').innerText)", timeout=10000)
+    check('Call Carl' not in page.inner_text('#st-toolbox'), 'the phone call isn\'t sent to Move Jobs')
+    check(errors == [], 'phone call: no page errors: %s' % errors)
+    page.close()
+
     page, errors = start(b, ZIGZAG)
     open_router(page)
     page.click('#st-toolbox [data-tab=opt]')

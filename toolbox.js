@@ -25,8 +25,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.1.1';
+  const VERSION = '2.1.2';
   const WHATS_NEW = {
+    '2.1.2': 'Fixed: 🧭 Tech Router counted phone calls as stops on a tech\'s route. Phone calls (PHONE CALL ONLY jobs) have nothing to drive to, so ✨ Optimize, 📊 Score every tech and 🗺️ Plan the day leave them out now: they aren\'t scored, moved, sent to Move Jobs or put in Google Maps, and keep their time. ✨ Optimize says how many it left out.',
     '2.1.1': 'New in 🧭 Tech Router: ✨ Optimize. Pick a tech (or 🖱️ and their name) for a 0–100% score of their route\'s order (100% is already the best), the better order and what it saves; ➡️ Set this order in Move Jobs gives each job its new time (Review, then Set times; ↩ Put back undoes it). 📊 Score every tech lists everyone, lowest first. 🗺️ Google Maps opens a route as directions. The routes now keep to times customers asked for in job summaries and notes ("not home until 11am", "first call"), go by the appointment\'s arrival window, and measure jobs to their street address. And 🗺️ Plan the day can ＋ Fit in holds, to call and book.',
     '2.1': 'New: 🧭 Tech Router (Beta). 📞 Fill a spot: pick a tech whose day is already planned, and it finds their open time (first thing, mid-day or the end of the day) and the jobs that would fit there from the Unassigned list (this day and the next 14) and the Hold list, with the customer\'s phone number to call and move them up. 🗺️ Plan the day: a tech and a route for every Unassigned job, 8-12s first, then 12-5s, then 5-9s (a little late is OK), sent to Move Jobs to assign. It learns which jobs each department does from the last 4 weeks of schedules, so a project coordinator only gets quotes, not electrical or plumbing ones. 🔎 Closest techs is back too. It\'s still being built, so check before you call; it only reads, and changes nothing on its own.',
     '2.0.2': 'Fixed: 💬 Tech Messages skipped every tech with "their name on the board has no menu". When the board scrolls to a tech it shows their name first and their menu about a second later; the Toolbox now waits for the menu, then opens it the way you would (a right-click or a left click on their name).',
@@ -6760,6 +6761,7 @@
     const isSales = team => SALES.some(re => re.test(norm(team)));
     const PRIORITY = { urgent: -30, high: -15, normal: 0, low: 10 };
     const PHONE_ONLY = /\bphone call\b/i;
+    const isCall = a => PHONE_ONLY.test(a && a.jobType || '');
 
     // ---------- Map points and drive times ----------
     // A public Mapbox key (not a secret): in Mapbox it only works from go.servicetitan.com.
@@ -8267,8 +8269,11 @@
       const D = dayOf(s, t.id);
       if (D.off) return null;
       const h = homeOf(t.id), homePt = h ? { lat: h.lat, lon: h.lon } : null;
-      const jobs = D.jobs.filter(a => !(today && /^(done|completed)$/i.test(a.status)));
-      const done = today ? D.jobs.filter(a => /^(done|completed)$/i.test(a.status)).sort((a, b) => b.end - a.end) : [];
+      // Phone calls aren't stops: nothing to drive to (seen Nov 1 2026: Optimize counted them).
+      const visits = D.jobs.filter(a => !isCall(a));
+      const jobs = visits.filter(a => !(today && /^(done|completed)$/i.test(a.status)));
+      const calls = D.jobs.filter(a => isCall(a) && !(today && /^(done|completed)$/i.test(a.status))).length;
+      const done = today ? visits.filter(a => /^(done|completed)$/i.test(a.status)).sort((a, b) => b.end - a.end) : [];
       const lastDone = done.find(a => loc.ptOf(a));
       const stops = jobs.map(a => {
         const busyNow = today && /^(working|dispatched)$/i.test(a.techStatus[t.id] || a.status);
@@ -8285,7 +8290,7 @@
       const homeAddr = h ? h.address || h.lat + ',' + h.lon : '';
       const startAddr = working && working.pt ? working.addr : lastDone ? addrOf(lastDone.street, lastDone.city, lastDone.state, lastDone.zip) : homeAddr;
       const day0 = new Date(day); day0.setHours(0, 0, 0, 0);
-      const R = { t, D, day0, doneN: done.length, start, end: D.end, startPt, startWords, startAddr, homePt, homeAddr, home: h, stops, fixedN: stops.filter(x => x.busyNow).length, n0: new Set(jobs.map(a => a.jobId)).size, added: [], sales: isSales(t.team) };
+      const R = { t, D, day0, doneN: done.length, start, end: D.end, startPt, startWords, startAddr, homePt, homeAddr, home: h, stops, fixedN: stops.filter(x => x.busyNow).length, n0: new Set(jobs.map(a => a.jobId)).size, calls, added: [], sales: isSales(t.team) };
       if (!R.startPt && !stops.some(x => x.pt)) return null;   // nowhere to measure from
       if (today && start >= D.end) return null;                 // their day is over
       R.base = simulate(R, stops, guess, grace);
@@ -8907,6 +8912,7 @@
       mapsPills(O.R, show.out.map(o => o.x)).forEach(b => foot.appendChild(b));
       if (!same) foot.appendChild(copyPill('📋 Copy suggested order', optText(O), 'Copies the suggested order as text'));
       optOut.appendChild(foot);
+      if (O.R.calls) optOut.appendChild(small('📞 ' + plural(O.R.calls, 'phone call isn\'t', 'phone calls aren\'t') + ' part of the route (nothing to drive to), so ' + (O.R.calls === 1 ? 'it keeps its' : 'they keep their') + ' time.'));
       if (O.notesMissed) optOut.appendChild(small('⚠️ The summary or notes of ' + plural(O.notesMissed, 'job') + ' couldn\'t be read, so a time the customer asked for there may not be counted.', 'color:var(--st-amber)'));
       if (O.noPt) optOut.appendChild(small('⚠️ ' + plural(O.noPt, 'job has', 'jobs have') + ' no zip code to measure to, so ' + (O.noPt === 1 ? 'its' : 'their') + ' driving isn\'t counted.', 'color:var(--st-amber)'));
       if (O.zipError) optOut.appendChild(small('⚠️ Some zip codes couldn\'t be looked up: ' + O.zipError + '.', 'color:var(--st-amber)'));

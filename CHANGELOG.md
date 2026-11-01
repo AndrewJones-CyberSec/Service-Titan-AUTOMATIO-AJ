@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.2
+
+- **Fixed: 🧭 Tech Router counted phone calls as stops.** A *PHONE CALL ONLY* job on a tech's day was routed like a visit, driving to the customer's address, so ✨ Optimize's score, its suggested order and drive times were off. Phone calls aren't part of a route now, in ✨ Optimize, 📊 Score every tech and 🗺️ Plan the day: they aren't scored, moved, sent to 🔀 Move Jobs or put in 🗺️ Google Maps, and keep their time. ✨ Optimize says how many it left out (*📞 1 phone call isn't part of the route*). A phone call also isn't used as where a tech's day starts from.
+
 ## 2.1.1
 
 - **🧭 Tech Router: new ✨ Optimize tab.** Is a tech's route in the best order it can be, with the jobs already on it? Pick the tech (the list, 🖱️ and their name on the board, or a row in 📊 Score every tech) and it checks right away. The tabs have short names now so four fit: 📞 Fill, 🗺️ Plan, ✨ Optimize, 🔎 Closest (the full names are in their tips).
