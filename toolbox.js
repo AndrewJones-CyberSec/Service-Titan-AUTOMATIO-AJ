@@ -4,7 +4,8 @@
   One panel with seven tools for the ServiceTitan Dispatch board:
     - Notes: adds a ready-made note (sorted into folders) to a job's customer in one click.
     - Job Notifications: shows whether job notifications are on or off for the jobs you pick (one at a time,
-      a tech's day, or the whole board), and turns them off or on.
+      a tech's day, a job type, or the whole board), and turns them off or on; job types can be set on or
+      off and applied to the board's day in one run.
     - Tech Messages: sends a saved message (Good Morning, ETA, ...) to the techs you pick (by team or on the board).
     - Business Unit: switches the jobs you pick to a branch (Mendenhall Branch by default).
     - Customer Texts: texts customers a saved message (holds, tech updates, reschedules, ...).
@@ -28,8 +29,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.2';
+  const VERSION = '2.3';
   const WHATS_NEW = {
+    '2.3': 'Smarter 🗺️ Plan the day: choose ＋ Unassigned, 📋 The board (re-plan who does each job already on the board, and in what order) or Both, and tick 🕐 Set times too for each job\'s new time inside its window (set by Move Jobs, undone by ↩ Put back). It places the hardest jobs first, then keeps improving the plan a move at a time, checks it with real drive times, and shows before → after. 🔕 Job Notifications: new 🗂️ By job type, to set job types 🔔 on or 🔕 off and ⚙️ Apply them to the board\'s day in one run.',
     '2.2': 'New in 🧭 Tech Router: 🎯 Place a job. Click a job (or type its number) for the best techs to put it on, each with why: its window, the extra driving, who does these jobs, their day and skills. Or it says to RS it, with the best of the next 6 days from the schedules as they stand, and opens 📱 Customer Texts or 📝 Notes in their Reschedule folders. Also new: ✨ Optimize → 🔁 Trade jobs, for jobs another tech is better placed for at the same time (each keeps its time). The Toolbox reads the board lighter and quicker, and 🗺️ Plan the day checks skills and no longer stops when the Hold list can\'t be read.',
     '2.1.9': 'Quicker 💬 Tech Messages on the new board: about half the time per tech. A tech whose name is already showing isn\'t scrolled to (each scroll left the board\'s names without their menus for about 1.5 seconds), and the next tech is got ready during the pause after each send. The same checks run on every send, and there\'s still at least 1.2 seconds between one send and the next.',
     '2.1.8': 'Fixed: 📅 Move a tech\'s day stopped after one job when ServiceTitan kept the job\'s arrival window on the old date. ServiceTitan does that for every time change (a drag on the board too), so it no longer stops: every job moves, and the run says how many windows still show the old date.',
@@ -1699,7 +1701,7 @@
     // Unassigned list (all pages, your board's branches). Holds aren't included. Canceled
     // appointments are left out. tool: the tool's name, for the yellow bar if something comes back
     // in a shape the Toolbox doesn't know. One fresh read of the board each time.
-    // Returns { jobs: [{ jobId, customer, customerId, tech, day, teams, tags, unassigned }], onTimeline,
+    // Returns { jobs: [{ jobId, customer, customerId, tech, day, teams, tags, unassigned, type (its job type) }], onTimeline,
     // unassigned, canceled }. teams: the job's teams (timeline jobs only).
     const whole = async tool => {
       if (!onBoard()) throw new Error(board.need().replace(/\.$/, '').toLowerCase());
@@ -1714,7 +1716,7 @@
         // A two-tech job, or a job with two visits: one entry, with every team and tag.
         if (had) { teamsOf(s, a).forEach(t => { if (had.teams.indexOf(t) < 0) had.teams.push(t); }); a.tags.forEach(t => { if (!had.tags.some(y => y.name === t.name)) had.tags.push(t); }); return; }
         onTimeline++;
-        const x = { jobId: a.jobId, customer: a.customer, customerId: a.customerId, tech: board.firstName(board.techName(a.techs[0])), day: s.day, teams: teamsOf(s, a), tags: a.tags.slice(), unassigned: false };
+        const x = { jobId: a.jobId, customer: a.customer, customerId: a.customerId, tech: board.firstName(board.techName(a.techs[0])), day: s.day, teams: teamsOf(s, a), tags: a.tags.slice(), unassigned: false, type: a.jobType || '' };
         byJob.set(a.jobId, x);
         jobs.push(x);
       });
@@ -1723,7 +1725,7 @@
       un.rows.forEach(r => {
         if (byJob.has(r.jobId) || canceledJobs.has(r.jobId)) return;
         unassignedN++;
-        const x = { jobId: r.jobId, customer: r.customer, customerId: r.customerId, tech: '', day: s.day, teams: [], tags: r.tags, unassigned: true };
+        const x = { jobId: r.jobId, customer: r.customer, customerId: r.customerId, tech: '', day: s.day, teams: [], tags: r.tags, unassigned: true, type: norm(r.raw && r.raw.Type) };
         byJob.set(r.jobId, x);
         jobs.push(x);
       });
@@ -2323,6 +2325,10 @@
   // on works the same way it always has: every job is read fresh, and only the ones that need it
   // are opened, one at a time, to flip the switch, then checked that it stuck. Results come back
   // as cards.
+  // 🗂️ By job type: each job type can be set to 🔔 on or 🔕 off (or left alone), saved in this
+  // browser. ⚙️ Apply puts every job of those types on the board's day on the list and turns each
+  // one off or on to match, in one run (after you confirm). Jobs on the list that don't match their
+  // type's setting are marked ⚠️, and ⚙️ Match job types does the same for the list as it is.
   // ===================================================================
   const notify = (() => {
     const TOOL = 'Job Notifications';
@@ -2365,6 +2371,20 @@
     const needsRead = j => { const s = states.get(j); return !s || Date.now() - s.at > STALE_MS; };
     let running = false, stop = false, wholeLoading = false;
 
+    // ---------- 🗂️ By job type ----------
+    // Each job type's setting: { name: 'on' | 'off' } (not there: left alone). Read fresh each time
+    // it's used, so a change in another tab counts here too.
+    const TYPES_KEY = 'stNotifyTypes';
+    const typeRules = () => { const v = readSaved(TYPES_KEY, {}, {}); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; };
+    const setRule = (name, v) => { const r = typeRules(); if (v) r[name] = v; else delete r[name]; set(TYPES_KEY, JSON.stringify(r)); };
+    // A job's job type: from the whole board when it was last read, else the board's own data.
+    const typeOfJob = new Map();
+    const typeOf = j => typeOfJob.get(String(j)) || ((board.apptsOf(j).find(board.live) || {}).jobType) || '';
+    // What a job should be by its type's setting: true (on), false (off) or undefined (left alone).
+    const ruleFor = (j, rules) => { const v = (rules || typeRules())[typeOf(j)]; return v === 'on' ? true : v === 'off' ? false : undefined; };
+    // Jobs to change in a ⚙️ run: job -> the setting it should end up with.
+    let rulesWant = new Map();
+
     // ---------- Layout ----------
     const wrap = el('div', 'padding:8px 10px 10px;display:grid;gap:8px');
     const msg = el('div', 'font-size:12px;color:var(--st-ink-2);min-height:16px;white-space:pre-wrap');
@@ -2385,16 +2405,31 @@
     checkBtn.title = 'Reads every job on the list again and lists them as cards (changes nothing).';
     statusTop.append(statusText, checkBtn);
     const legend = el('div', 'font-size:11px;color:var(--st-ink-3)', 'On the board: orange outline = on, gray dashed = off.');
+    const matchBtn = smallBtn('⚙️ Match job types', () => matchList(), 'display:none;justify-self:start;padding:3px 8px;min-height:24px;font-size:12px;color:#5b1784;border-color:var(--st-purple-l)');
+    matchBtn.id = 'st-notify-match';
+    matchBtn.title = 'Turns the jobs on the list whose setting doesn\'t match their job type\'s (🗂️ By job type) off or on to match. Asks first.';
     const actions = el('div', 'display:flex;gap:6px');
     const offBtn = smallBtn('🔕 Turn off', () => askConfirm('off'), 'flex:1;padding:7px 6px;color:var(--st-red);border-color:var(--st-red-l);font-weight:600');
     const onBtn = smallBtn('🔔 Turn on', () => askConfirm('on'), 'flex:1;padding:7px 6px;color:var(--st-green);border-color:var(--st-green-l);font-weight:600');
     actions.append(offBtn, onBtn);
-    statusBox.append(statusTop, legend, actions);
+    statusBox.append(statusTop, legend, actions, matchBtn);
     const confirmBox = el('div', 'display:none;padding:8px;border:1px solid var(--st-red-l);background:var(--st-red-s);border-radius:6px;font-size:12px;gap:6px;flex-wrap:wrap;align-items:center');
     const confirmText = el('span', 'flex-basis:100%;white-space:pre-line');
     let confirmMode = 'off';
     const confirmYes = smallBtn('Yes, turn them off', () => { confirmBox.style.display = 'none'; start(confirmMode); }, DANGER);
     confirmBox.append(confirmText, confirmYes, smallBtn('Cancel', () => { confirmBox.style.display = 'none'; }));
+    // 🗂️ By job type: the job types on the board's day, each with its setting.
+    const typesHead = el('button', FULL + 'padding:4px 8px;border:1px solid var(--st-line);border-radius:6px;background:var(--st-soft);color:var(--st-ink);font:inherit;font-size:12px;font-weight:700;text-align:left;cursor:pointer');
+    typesHead.type = 'button'; typesHead.id = 'st-notify-types-head';
+    const typesBox = el('div', 'display:none;gap:5px;padding:7px;border:1px solid var(--st-line);border-radius:8px;background:var(--st-soft)');
+    typesBox.id = 'st-notify-types';
+    const typesMsg = el('div', 'font-size:11.5px;color:var(--st-ink-2)');
+    const typesList = el('div', 'display:grid;gap:2px;max-height:260px;overflow:auto');
+    const applyBtn = smallBtn('⚙️ Apply', () => applyTypes(), FULL + 'padding:6px 8px;font-weight:700;color:#fff;background:#6a1b9a;border-color:#6a1b9a');
+    applyBtn.id = 'st-notify-apply';
+    typesBox.append(typesMsg, typesList, applyBtn);
+    const typesLabel = () => { const n = Object.keys(typeRules()).length; typesHead.textContent = (typesBox.style.display === 'none' ? '▸ ' : '▾ ') + '🗂️ By job type' + (n ? ' (' + plural(n, 'type') + ' set)' : ''); };
+    typesHead.onclick = () => { typesBox.style.display = typesBox.style.display === 'none' ? 'grid' : 'none'; typesLabel(); if (typesBox.style.display !== 'none') loadTypes(); fit(); };
     // A run: progress bar, buttons, and the results as cards (the step-by-step log folds away).
     const progress = el('div', 'display:none;gap:6px');
     const bar = el('div', 'height:6px;background:var(--st-line);border-radius:3px;overflow:hidden');
@@ -2438,11 +2473,12 @@
       badge: j => {
         const s = states.get(j);
         if (!s) return noAccess ? '' : '⏳';
-        return s.on === true ? '🔔' : s.on === false ? '🔕' : '❔';
+        const w = ruleFor(j), mark = s.on === true ? '🔔' : s.on === false ? '🔕' : '❔';
+        return w !== undefined && (s.on === true || s.on === false) && s.on !== w ? '⚠️' + mark : mark;
       },
       css: OFF_CSS
     });
-    wrap.append(msg, picker.box, addRow, statusBox, confirmBox, progress, navRow);
+    wrap.append(msg, picker.box, addRow, typesHead, typesBox, statusBox, confirmBox, progress, navRow);
     jobsPane.appendChild(wrap);
     // A long list and a run's cards can be taller than the window: the tool scrolls instead, so
     // the Toolbox's title bar (to move or close it) always stays on screen. (Same as Move Jobs.)
@@ -2458,10 +2494,11 @@
 
     // ---------- How the list stands ----------
     const tally = () => {
-      const t = { on: 0, off: 0, unknown: 0, waiting: 0, all: 0 };
+      const t = { on: 0, off: 0, unknown: 0, waiting: 0, all: 0, mismatch: 0 }, rules = typeRules();
       picker.ids().forEach(j => {
         t.all++;
-        const s = states.get(j);
+        const s = states.get(j), w = ruleFor(j, rules);
+        if (s && w !== undefined && (s.on === true || s.on === false) && s.on !== w) t.mismatch++;
         if (!s) t.waiting++;
         else if (s.on === true) t.on++;
         else if (s.on === false) t.off++;
@@ -2483,6 +2520,7 @@
         if (t.unknown) parts.push('❔ ' + t.unknown + ' not read');
         if (reading) parts.push('reading ' + reading.done + ' of ' + reading.total + '…');
         else if (t.waiting) parts.push('⏳ ' + t.waiting + ' to read');
+        if (t.mismatch) parts.push('⚠️ ' + t.mismatch + ' not as their job type is set');
         statusText.textContent = parts.join(' · ');
         statusText.style.color = 'var(--st-ink)';
       }
@@ -2494,6 +2532,9 @@
       dim(offBtn, running || noAccess || (!busyReading && !offN));
       dim(onBtn, running || noAccess || (!busyReading && !onN));
       dim(checkBtn, running);
+      matchBtn.style.display = t.mismatch && !noAccess ? 'block' : 'none';
+      matchBtn.textContent = '⚙️ Match job types (' + t.mismatch + ')';
+      dim(matchBtn, running || !!reading);
       fit();
     };
     const renderAll = () => { picker.render(); renderStatus(); };
@@ -2631,10 +2672,100 @@
       finally { wholeLoading = false; wholeBtn.textContent = '＋ Whole board'; wholeBtn.classList.remove('st-busy'); dim(wholeBtn, running); fillTechs(true); }
     };
 
+    // The job types on the board's day (the timeline and the Unassigned list), most jobs first, each
+    // with its setting: 🔔 on, 🔕 off, or — left alone. ＋ adds that type's jobs to the list.
+    let typesLoading = false, typesDay = null;
+    const loadTypes = async () => {
+      if (typesLoading || running) return;
+      if (!onBoard()) { typesMsg.textContent = board.need(); typesList.textContent = ''; applyBtn.style.display = 'none'; return; }
+      typesLoading = true;
+      typesMsg.textContent = 'Reading the job types on ' + boardDate() + '…';
+      try { typesDay = await boardData.whole(TOOL); typesDay.jobs.forEach(x => { if (x.type) typeOfJob.set(x.jobId, x.type); }); renderTypes(); }
+      catch (e) { typesMsg.textContent = '⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t read the board: ' + errText(e)); }
+      finally { typesLoading = false; fit(); }
+    };
+    const renderTypes = () => {
+      const rules = typeRules(), by = new Map();
+      (typesDay ? typesDay.jobs : []).forEach(x => { const k = x.type || '(no job type)'; if (!by.has(k)) by.set(k, []); by.get(k).push(x); });
+      // Types set before but not on the board today stay listed, so they can be changed.
+      Object.keys(rules).forEach(k => { if (!by.has(k)) by.set(k, []); });
+      const rows = Array.from(by.entries()).sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+      typesList.textContent = '';
+      rows.forEach(([name, jobs]) => {
+        const r = el('div', 'display:flex;gap:4px;align-items:center;font-size:12px;padding:2px 0;border-bottom:1px solid var(--st-line)');
+        r.className = 'st-notify-type';
+        r.setAttribute('data-type', name);
+        const nm = el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', name);
+        nm.title = name;
+        r.append(nm, el('span', 'flex:none;color:var(--st-ink-3);font-size:11px', String(jobs.length)));
+        const add = pillBtn('＋', 'Adds the ' + plural(jobs.length, 'job') + ' of this type on ' + boardDate() + ' to the list', () => {
+          if (running) return;
+          const labels = {};
+          jobs.forEach(x => { labels[x.jobId] = { label: x.customer, tags: x.tags }; });
+          const n = picker.addMany(jobs.map(x => x.jobId), labels);
+          say('Added ' + plural(n, 'job') + ' of ' + name + (n < jobs.length ? ' (' + (jobs.length - n) + ' already picked)' : '') + '.');
+        });
+        add.disabled = !jobs.length;
+        r.appendChild(add);
+        if (name !== '(no job type)') {
+          const seg = el('div');
+          seg.className = 'st-seg';
+          seg.style.flex = 'none';
+          [['on', '🔔', 'Turn this type\'s notifications on'], ['off', '🔕', 'Turn this type\'s notifications off'], ['', '—', 'Leave this type alone']].forEach(([v, text, title]) => {
+            const b = el('button', 'padding:1px 7px', text);
+            b.type = 'button'; b.title = title; b.setAttribute('data-rule', v);
+            if ((rules[name] || '') === v) b.classList.add('on');
+            b.addEventListener('mousedown', e => e.preventDefault());
+            b.onclick = () => { setRule(name, v); renderTypes(); typesLabel(); picker.render(); renderStatus(); };
+            seg.appendChild(b);
+          });
+          r.appendChild(seg);
+        }
+        typesList.appendChild(r);
+      });
+      const n = typesDay ? typesDay.jobs.filter(x => rules[x.type] === 'on' || rules[x.type] === 'off').length : 0;
+      typesMsg.textContent = rows.length ? 'Set the types you want 🔔 on or 🔕 off (saved in this browser), then ⚙️ Apply. ＋ adds a type\'s jobs to the list.' : 'No jobs on ' + boardDate() + '.';
+      applyBtn.style.display = rows.length ? 'block' : 'none';
+      applyBtn.textContent = '⚙️ Apply to ' + plural(n, 'job') + ' on ' + boardDate();
+      dim(applyBtn, running || !n);
+      fit();
+    };
+    const pillBtn = (label, title, onClick) => { const b = smallBtn(label, onClick, 'flex:none;padding:0 7px;min-height:22px;font-size:12px'); b.title = title; b.addEventListener('mousedown', e => e.preventDefault()); return b; };
+    // ⚙️ Apply: every job of a type set 🔔 or 🔕 on the board's day goes on the list, and each is
+    // turned off or on to match (after you confirm). The whole board is read fresh first.
+    const applyTypes = async () => {
+      if (running || typesLoading) return;
+      if (!onBoard()) { say(board.need()); return; }
+      typesLoading = true; dim(applyBtn, true);
+      say('Reading the whole board…');
+      try {
+        typesDay = await boardData.whole(TOOL);
+        typesDay.jobs.forEach(x => { if (x.type) typeOfJob.set(x.jobId, x.type); });
+      } catch (e) { say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t read the board: ' + errText(e))); return; }
+      finally { typesLoading = false; renderTypes(); }
+      const rules = typeRules(), jobs = typesDay.jobs.filter(x => rules[x.type] === 'on' || rules[x.type] === 'off');
+      if (!jobs.length) { say('No jobs on ' + boardDate() + ' are of a type set to 🔔 or 🔕.'); return; }
+      const labels = {};
+      jobs.forEach(x => { labels[x.jobId] = { label: x.customer, tags: x.tags }; });
+      picker.addMany(jobs.map(x => x.jobId), labels);
+      rulesWant = new Map(jobs.map(x => [x.jobId, rules[x.type] === 'on']));
+      askConfirm('rules');
+    };
+    // ⚙️ Match job types: the list as it is, each job with a type set made to match.
+    const matchList = () => {
+      if (running) return;
+      const rules = typeRules();
+      rulesWant = new Map();
+      picker.ids().forEach(j => { const w = ruleFor(j, rules); if (w !== undefined) rulesWant.set(j, w); });
+      if (!rulesWant.size) { say('No job on the list is of a type set in 🗂️ By job type.'); return; }
+      askConfirm('rules');
+    };
+
     const setEnabled = on => {
       picker.setEnabled(on);
       dim(wholeBtn, !on || wholeLoading);
       dim(techSel, !on);
+      dim(applyBtn, !on);
       renderStatus();
     };
     // holdReads: don't start reading the list by itself (right after you pressed Stop, or when
@@ -2645,6 +2776,8 @@
       fillTechs(true);
       if (!keepMsg && !msg.textContent) say(onBoard() ? 'Add jobs: 🖱️ Pick on board (click jobs, or a tech\'s name for their whole day), ＋ Whole board, a tag, or a tech from the list.' : board.need() + ' Or type job numbers.');
       if (onBoard()) board.load().then(() => { if (!running) fillTechs(true); }, () => {});
+      typesLabel();
+      if (typesBox.style.display !== 'none' && !running) loadTypes();
       if (!holdReads) scheduleRead();
     };
 
@@ -2652,6 +2785,24 @@
     const est = n => { const s = n * 4; return s < 60 ? 'under a minute' : 'about ' + Math.round(s / 60) + ' min'; };
     const askConfirm = mode => {
       if (running || !picker.size()) return;
+      if (mode === 'rules') {
+        const n = { off: 0, on: 0, already: 0, unread: 0 };
+        rulesWant.forEach((w, j) => { const s = states.get(j); if (!s || (s.on !== true && s.on !== false)) n.unread++; else if (s.on === w) n.already++; else n[w ? 'on' : 'off']++; });
+        const lines = ['Match your job type settings on ' + plural(rulesWant.size, 'job') + ':'];
+        if (n.off) lines.push('🔕 Turn OFF ' + plural(n.off, 'job') + '.');
+        if (n.on) lines.push('🔔 Turn ON ' + plural(n.on, 'job') + ' (those customers will get ServiceTitan\'s automatic job notifications again).');
+        if (n.already) lines.push(plural(n.already, 'job') + (n.already === 1 ? ' is' : ' are') + ' already as set and will be left alone.');
+        if (n.unread) lines.push(plural(n.unread, 'job') + (n.unread === 1 ? ' hasn\'t' : ' haven\'t') + ' been read yet: ' + (n.unread === 1 ? 'it\'s' : 'they\'re') + ' checked first.');
+        if (!n.off && !n.on && !n.unread) { say('All ' + plural(rulesWant.size, 'job') + ' are already as their job type is set.'); return; }
+        lines.push('Takes ' + est(n.off + n.on + n.unread) + ' (each job\'s page opens one at a time). Other jobs on the list are left alone.');
+        confirmMode = 'rules';
+        confirmText.textContent = lines.join('\n');
+        confirmYes.textContent = 'Yes, apply them';
+        confirmYes.style.background = '#6a1b9a'; confirmYes.style.borderColor = '#6a1b9a';
+        confirmBox.style.borderColor = 'var(--st-purple-l)'; confirmBox.style.background = 'var(--st-purple-s)';
+        confirmBox.style.display = 'flex';
+        return;
+      }
       const on = mode === 'on';
       const t = tally();
       const need = on ? t.off : t.on, already = on ? t.on : t.off, unread = t.unknown + t.waiting;
@@ -2695,10 +2846,15 @@
         return { key, title, tone, open: open || items.length <= 6, items };
       };
       const openJob = j => () => { try { window.open(location.href.split('#')[0] + '#/Job/Index/' + j, '_blank'); } catch (e) {} };
+      const both = mode === 'rules';
       const sections = [
         sec('problem', '⚠️ Problems', 'warn', true, by.problem, { keep: true, status: x => x.r.text, actions: x => [{ label: '🔗 Open job', title: 'Opens the job in a new tab, to look at its Job Notifications switch yourself', onClick: openJob(x.j) }] }),
-        real ? sec('turned', (OFF_ON === 'off' ? '🔕 Turned off' : '🔔 Turned on'), 'good', false, by['turned ' + OFF_ON]) : null,
-        real ? sec('already', (OFF_ON === 'off' ? '🔕 Already off' : '🔔 Already on'), 'quiet', false, by['already ' + OFF_ON]) : null,
+        both ? sec('turned', '🔕 Turned off', 'good', false, by['turned off']) : null,
+        both ? sec('turnedOn', '🔔 Turned on', 'good', false, by['turned on']) : null,
+        both ? sec('already', '🔕 Already off', 'quiet', false, by['already off']) : null,
+        both ? sec('alreadyOn', '🔔 Already on', 'quiet', false, by['already on']) : null,
+        real && !both ? sec('turned', (OFF_ON === 'off' ? '🔕 Turned off' : '🔔 Turned on'), 'good', false, by['turned ' + OFF_ON]) : null,
+        real && !both ? sec('already', (OFF_ON === 'off' ? '🔕 Already off' : '🔔 Already on'), 'quiet', false, by['already ' + OFF_ON]) : null,
         !real ? sec('on', '🔔 On', 'done', false, by.on) : null,
         !real ? sec('off', '🔕 Off', 'quiet', false, by['already off']) : null,
         results.size || stopped ? sec('notdone', stopped ? 'Not done (stopped)' : 'Not done', 'faint', false, by.notdone) : null
@@ -2708,10 +2864,13 @@
     };
 
     const start = async mode => {
-      // real: something gets changed. want: the setting each job should end up with.
-      const real = mode === 'off' || mode === 'on';
+      // real: something gets changed. wantOf(j): the setting each job should end up with (in a ⚙️
+      // job-type run, each job's own; otherwise the same for all).
+      const real = mode === 'off' || mode === 'on' || mode === 'rules';
       const want = mode === 'on';
       const OFF_ON = want ? 'on' : 'off';
+      const rulesNow = mode === 'rules' ? new Map(rulesWant) : null;
+      const wantOf = j => rulesNow ? rulesNow.get(j) : want;
       if (running || !picker.size()) return;
       if (lock) return say('Wait for ' + lock + ' to finish first.');
       picker.setPicking(false);
@@ -2730,7 +2889,7 @@
       stopBtn.disabled = false; stopBtn.textContent = 'Stop'; stopBtn.style.display = 'inline-block';
       againBtn.style.display = 'none';
       copyBtn.textContent = 'Copy results';
-      const list = picker.ids();
+      const list = rulesNow ? picker.ids().filter(j => rulesNow.has(j)) : picker.ids();
       const date = boardDate();
       const home = board.homeHash();
       const NO_SWITCH = 'COULD NOT FIND SWITCH';
@@ -2748,7 +2907,8 @@
         if (!liveTimer) liveTimer = setTimeout(() => { liveTimer = null; picker.render(); renderStatus(); showCards(list, results, mode, stop); }, 120);
       };
       // Opens one job and checks (or turns off / on) its switch. Returns { text, kind }.
-      const doJob = async j => {
+      const doJob = async (j, want) => {
+        const OFF_ON = want ? 'on' : 'off';
         const res = (text, kind) => ({ text, kind });
         try {
           location.hash = '#/Job/Index/' + j;
@@ -2782,7 +2942,7 @@
         }
       };
       try {
-        const what = real ? ' (turning notifications ' + OFF_ON.toUpperCase() + ')' : ' (checking only, nothing changed)';
+        const what = rulesNow ? ' (matching your job type settings)' : real ? ' (turning notifications ' + OFF_ON.toUpperCase() + ')' : ' (checking only, nothing changed)';
         header = '🔕 Job Notifications · ' + date + ' · ' + plural(list.length, 'job') + what;
         add(date + ' - ' + plural(list.length, 'job') + what);
         // Read every job's setting first, a few at a time. Jobs that are already the way you want
@@ -2805,7 +2965,7 @@
         if (pre.some(v => v === true || v === false)) noAccess = false;
         picker.render(); renderStatus();
         if (pre.halted) add('⚠️ ' + st.haltNote(pre) + ' Opening the rest one at a time instead.');
-        const toOpen = list.filter((j, n) => real ? pre[n] !== want : pre[n] !== true && pre[n] !== false).length;
+        const toOpen = list.filter((j, n) => real ? pre[n] !== wantOf(j) : pre[n] !== true && pre[n] !== false).length;
         for (let n = 0; n < list.length; n++) {
           if (stop) { add('Stopped. ' + (list.length - n) + ' job(s) not checked.'); break; }
           const j = list[n];
@@ -2815,15 +2975,16 @@
             if (on === false) { record(j, { text: 'already off', kind: 'already off' }); continue; }
             if (on === true) { record(j, { text: 'ON (left alone)', kind: 'on' }); continue; }
           } else {
+            const w = wantOf(j), oo = w ? 'on' : 'off';
             // About to leave it alone as "already off" (or "already on")? Only on a fresh reading.
-            if (on === want && Date.now() - preAt > FRESH_MS) {
+            if (on === w && Date.now() - preAt > FRESH_MS) {
               try { on = await readState(j); } catch (e) { if (st.isSignedOut(e)) throw e; on = null; }
             }
-            if (on === want) { record(j, { text: 'already ' + OFF_ON, kind: 'already ' + OFF_ON }); continue; }
+            if (on === w) { record(j, { text: 'already ' + oo, kind: 'already ' + oo }); continue; }
           }
           const opened = Array.from(results.values()).filter(r => r.opened).length;
-          say((real ? 'Turning ' + OFF_ON + ' ' : 'Checking ') + (opened + 1) + ' of ' + Math.max(toOpen, opened + 1) + ' (job ' + j + (picker.label(j) ? ', ' + picker.label(j) : '') + ')');
-          const r = await doJob(j);
+          say((real ? 'Turning ' + (wantOf(j) ? 'on' : 'off') + ' ' : 'Checking ') + (opened + 1) + ' of ' + Math.max(toOpen, opened + 1) + ' (job ' + j + (picker.label(j) ? ', ' + picker.label(j) : '') + ')');
+          const r = await doJob(j, wantOf(j));
           r.opened = true;
           record(j, r);
         }
@@ -2841,7 +3002,7 @@
             if (stop) { add('Stopped. ' + (failed.length - n) + ' retry(s) not done.'); break; }
             const j = failed[n];
             say('Retrying ' + (n + 1) + ' of ' + failed.length + ' (job ' + j + ')');
-            const r = await doJob(j);
+            const r = await doJob(j, wantOf(j));
             r.opened = true;
             record(j, r, true);
           }
@@ -5844,7 +6005,7 @@
       say: t => say(t),
       changed: () => { clearReview(); updateButtons(); },
       // A new order: each job's new time beside it. A plan: each job's tech.
-      next: j => mode === 'order' && order && order.byJob.has(S(j)) ? '→ ' + tm(order.byJob.get(S(j))) : mode === 'plan' && plan && plan.has(S(j)) ? '→ ' + (plan.get(S(j)).name || techName(plan.get(S(j)).id)) : '',
+      next: j => mode === 'order' && order && order.byJob.has(S(j)) ? '→ ' + tm(order.byJob.get(S(j))) : mode === 'plan' && plan && plan.has(S(j)) ? '→ ' + (plan.get(S(j)).name || techName(plan.get(S(j)).id)) + (plan.get(S(j)).time ? ' at ' + tm(plan.get(S(j)).time.start) : '') : '',
       tool: TOOL
     });
     const uaBtn = smallBtn('＋ All Unassigned', () => addUnassigned());
@@ -6138,8 +6299,8 @@
       picker.ids().forEach(j => {
         const appts = rows.filter(r => r.jobId === S(j));
         if (!appts.length) { missing.push(j); return; }
-        const to = m === 'plan' ? (plan && plan.get(S(j)) ? plan.get(S(j)).id : null) : toPick.value();
-        appts.forEach(r => list.push({ r, p: { to, from: m === 'plan' ? null : fromPick.value() } }));
+        const pl = m === 'plan' && plan ? plan.get(S(j)) || null : null, to = m === 'plan' ? (pl ? pl.id : null) : toPick.value();
+        appts.forEach(r => list.push({ r, p: { to, from: m === 'plan' ? null : fromPick.value(), at: pl && pl.time && pl.time.apptId === S(r.apptId) ? { start: pl.time.start, end: pl.time.end } : null } }));
       });
       return { list, missing };
     };
@@ -6240,6 +6401,9 @@
         // A new order: every job in it is moving, so where they are now doesn't count as "booked"
         // for the others' new times.
         if (m === 'order') list.forEach(it => leave(it.p.tech, { apptId: it.r.apptId, start: it.r.start, end: it.r.end }));
+        // A plan: every job in it goes to another tech or time, so where it is now doesn't count as
+        // "booked" for the others (two jobs at the same time swapping techs, say).
+        if (m === 'plan') list.forEach(it => { if (it.r.start && it.r.end) (it.r.techs || []).forEach(t => leave(t.id, { apptId: it.r.apptId, start: it.r.start, end: it.r.end })); });
         // A day move: where this run's jobs are going (on the new day, for the tech they go to and
         // anyone else on them) doesn't count as "booked" for each other. Anything else on that day does.
         if (m === 'dayMove') list.forEach(it => {
@@ -6324,6 +6488,29 @@
           }
           if (stopWhy) return Object.assign(out, { skip: stopWhy, kind: 'skipped' });
           if (m === 'plan' && !it.p.to) return Object.assign(out, { skip: 'no tech planned for it (🗺️ Plan the day again to include it)', kind: 'skipped' });
+          // A plan with a new time (🗺️ Plan the day, 🕐 Set times too): its planned tech, and its new
+          // time on the same day. A job with no tech yet (the Unassigned list) gets its tech first,
+          // then the time, as on the board; one on a tech gets its time first, then its tech.
+          if (m === 'plan' && it.p.at) {
+            const d = decide(kindOf(m), cur, it.p), moving = !sameTime(a.start, it.p.at.start);
+            if (d.skip && !moving) return Object.assign(out, { skip: d.skip + ' at ' + tm(a.start), kind: d.kind });
+            const want = d.skip ? cur.slice() : after(cur, d);
+            it.p.want = want;
+            const mp = managedProblem(out.total, want);
+            if (mp) return Object.assign(out, { skip: mp, kind: 'skipped' });
+            out.d = d.skip ? { add: [], remove: [] } : d;
+            out.techsFirst = !cur.length;
+            if (moving) {
+              out.t = { from: { start: a.start, end: a.end }, to: { start: it.p.at.start, end: it.p.at.end } };
+              out.windowStart = a.windowStart; out.windowEnd = a.windowEnd;
+              timeWarns(out, cur, null);
+            } else if (!isScheduled(status)) out.warn.status = 'it\'s ' + status + ', not Scheduled';
+            if (out.d.add.length) await checkSkills(out, out.d.add);
+            const slot = moving ? out.t.to : { start: a.start, end: a.end };
+            const booked = await bookedAt(want, { apptId: it.r.apptId, start: slot.start, end: slot.end }, id => leaving.get(S(id)) || []);
+            if (booked.length) out.warn.booked = bookedText(booked);
+            return out;
+          }
           if (m === 'swapDays') {
             const hA = hasId(cur, it.p.a), hB = hasId(cur, it.p.b);
             if (hA === hB) return Object.assign(out, { skip: hA ? 'has both ' + techName(it.p.a) + ' and ' + techName(it.p.b) : 'has neither tech now', kind: 'skipped' });
@@ -6545,7 +6732,7 @@
       // and where they're going) don't count. A day move checks whoever will be on it then.
       if (!okWarn.booked && m !== 'putback') {
         try {
-          const who = m === 'dayMove' && Array.isArray(x.it.p.want) ? x.it.p.want : cur;
+          const who = (m === 'dayMove' || m === 'plan') && Array.isArray(x.it.p.want) ? x.it.p.want : cur;
           const since = await bookedAt(who, { apptId: r.apptId, start: to.start, end: to.end }, id => (ctx.leaving.get(S(id)) || []).concat(ctx.given.filter(g => hasId(g.ids, id))));
           if (since.length) return res(bookedText(since) + ' (since the review), left alone. Review again to see it', 'skipped');
         } catch (e) { if (st.isSignedOut(e)) throw e; noteBad(e); return res('couldn\'t check if the tech is booked then (' + errText(e) + '). Nothing changed', 'problem'); }
@@ -6585,6 +6772,22 @@
       x.lastSeen = cur.slice();
       if (!x.origin) x.origin = cur.slice();
       if (!x.t) return doTechs(x, m, okWarn, ctx, now);
+      // A plan's job from the Unassigned list: its tech first (as the board would), then its new time,
+      // read fresh. Its time before is kept first, so ↩ Put back can undo the tech even if the time
+      // never goes on.
+      if (x.techsFirst && techChange(x.d)) {
+        if (!x.tOrigin) { x.tOrigin = { start: now.appointment.start, end: now.appointment.end }; x.tLast = x.tOrigin; }
+        const rk = await doTechs(x, m, okWarn, ctx, now);
+        if (rk.kind !== 'done' && rk.kind !== 'already') return rk;
+        let now2;
+        try { now2 = await st.appointment(r.apptId); }
+        catch (e) { if (st.isSignedOut(e)) throw e; noteBad(e); return res(rk.text + '; couldn\'t read the job again to set its time. Try again', 'problem'); }
+        x.touched = true; x.lastSeen = now2.appointment.techIds.slice();
+        const rt = await doTime(x, m, okWarn, ctx, now2);
+        if (rt.kind === 'done') return res(rk.text + '; ' + rt.text, 'done');
+        if (rt.kind === 'already') return rk;
+        return res(rk.text + ', but its time: ' + rt.text, rt.kind === 'skipped' ? 'problem' : rt.kind, { noRetry: true });
+      }
       // A new time. For a day move to another tech (or putting one back), the time goes first, then
       // the techs, read fresh: the new tech is checked for being booked where the job now is.
       const rt = await doTime(x, m, okWarn, ctx, now);
@@ -6889,15 +7092,16 @@
       say('From 🧭 Tech Router: ' + plural(n, 'job') + ' to ' + techName(toId) + '. Press Review to see it first; nothing changes until you press Move.');
       return n;
     };
-    // A plan from 🧭 Tech Router: [{ jobId, techId, techName, customer }]. Only these jobs are picked
-    // (anything picked before is taken off), each with its own tech. Nothing changes until Review and
-    // Assign. Returns how many jobs are picked, or -1 if Move Jobs is busy.
+    // A plan from 🧭 Tech Router: [{ jobId, techId, techName, customer, and with a new time: apptId,
+    // start, end }]. Only these jobs are picked (anything picked before is taken off), each with its
+    // own tech (and time). Nothing changes until Review and Assign. Returns how many jobs are picked,
+    // or -1 if Move Jobs is busy.
     const takePlan = items => {
       if (busy) return -1;
       plan = new Map();
       const labels = {};
       items.forEach(x => {
-        plan.set(S(x.jobId), { id: x.techId, name: x.techName });
+        plan.set(S(x.jobId), { id: x.techId, name: x.techName, time: x.start && x.end && x.apptId != null ? { apptId: S(x.apptId), start: new Date(x.start).toISOString(), end: new Date(x.end).toISOString() } : null });
         if (x.techName && !seenNames.has(S(x.techId))) seenNames.set(S(x.techId), x.techName);
         labels[S(x.jobId)] = x.customer || '';
       });
@@ -7571,6 +7775,38 @@
 
     // ---------- 🗺️ Plan the day: the controls ----------
     const planBox = el('div', 'display:none;gap:6px');
+    // What to plan: the Unassigned list into the board as it stands, the board's own jobs (who does
+    // each one, and in what order), or both together. Remembered.
+    const WHAT = [['ua', '＋ Unassigned', 'Plan the Unassigned list into the board as it stands (the board\'s jobs stay with their techs, at their times)'],
+      ['board', '📋 The board', 'Re-plan the jobs already on the board: who does each one and in what order (no Unassigned jobs)'],
+      ['both', 'Both', 'The Unassigned list and the board\'s jobs together']];
+    let planWhatV = WHAT.some(w => w[0] === get('stPlanWhat')) ? get('stPlanWhat') : 'ua';
+    const whatRow = el('div');
+    whatRow.className = 'st-seg st-plan-what';
+    const whatBtns = WHAT.map(([v, text, title]) => {
+      const b = el('button', '', text);
+      b.type = 'button'; b.title = title; b.setAttribute('data-what', v);
+      b.addEventListener('mousedown', e => e.preventDefault());
+      b.onclick = () => { planWhatV = v; set('stPlanWhat', v); showWhat(); };
+      whatRow.appendChild(b);
+      return b;
+    });
+    const showWhat = () => {
+      whatBtns.forEach(b => b.classList.toggle('on', b.getAttribute('data-what') === planWhatV));
+      holdsLab.style.display = planWhatV === 'board' ? 'none' : 'flex';
+      if (shown() && tab === 'plan' && planOut.style.display === 'none') say(planHint());
+    };
+    const planHint = () => planWhatV === 'board' ? 'Re-plans the jobs already on the board: who does each one, and in what order, for less driving and fewer late stops. Jobs underway, shared or with two visits stay put. Nothing changes until you send it to Move Jobs and press Assign there.' :
+      (planWhatV === 'both' ? 'The Unassigned list and the board\'s jobs together: ' : 'A tech and a route for every Unassigned job: ') + '8-12s first, then 12-5s, then 5-9s. Nothing changes until you send it to Move Jobs and press Assign there.';
+    // 🕐 Set times too: each planned job gets its new time (inside its arrival window, laid out back to
+    // back as on the board), and the board's jobs can move to a new time inside their window. Off: the
+    // board's jobs keep their times (only who does them changes), and Unassigned jobs keep theirs.
+    const timesLab = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer;font-size:12px;color:var(--st-ink-2)');
+    const planTimes = el('input'); planTimes.type = 'checkbox'; planTimes.id = 'st-plan-times';
+    planTimes.checked = get('stPlanTimes') === '1';
+    planTimes.onchange = () => set('stPlanTimes', planTimes.checked ? '1' : '0');
+    timesLab.title = 'Each job gets its new time too (inside its arrival window, back to back as on the board), set by 🔀 Move Jobs (↩ Put back undoes it). Off: jobs on the board keep their times, so only who does them changes.';
+    timesLab.append(planTimes, document.createTextNode('🕐 Set times too (inside each job\'s window)'));
     const planOpts = el('div', 'display:flex;gap:6px;align-items:center');
     // Who gets jobs: everyone, the sales team, or one department (saved in this browser).
     const teamPick = el('select', 'flex:1;min-width:0;' + FIELD);
@@ -7606,7 +7842,7 @@
     planBtn.id = 'st-plan-go';
     const planOut = el('div', 'display:none;gap:7px');
     planOut.id = 'st-plan-out';
-    planBox.append(planOpts, holdsLab, planBtn, planOut);
+    planBox.append(whatRow, planOpts, holdsLab, timesLab, planBtn, planOut);
 
     // ---------- ✨ Optimize: the controls ----------
     const optBox = el('div', 'display:none;gap:6px');
@@ -7687,11 +7923,12 @@
       optBox.style.display = tab === 'opt' ? 'grid' : 'none';
       nearBox.style.display = tab === 'near' ? 'grid' : 'none';
       fillPlanTeams();
+      showWhat();
       if (!searching) planBtn.textContent = planLabel();
       if (!onBoard()) say(board.need());
       else if (tab === 'place') say(placeOut.style.display === 'none' ? 'Press 🖱️ and click a job (on the board or in the Jobs Tray), or type its number: the best techs to put it on and why, or whether to RS it. Nothing changes on its own.' : msg.textContent);
       else if (tab === 'fill') say(fillOut.style.display === 'none' ? 'Pick a tech whose day is planned, then Find: jobs that fit their open time, with the number to call.' : msg.textContent);
-      else if (tab === 'plan') say(planOut.style.display === 'none' ? 'A tech and a route for every Unassigned job: 8-12s first, then 12-5s, then 5-9s. Nothing changes until you send it to Move Jobs and press Assign there.' : msg.textContent);
+      else if (tab === 'plan') say(planOut.style.display === 'none' ? planHint() : msg.textContent);
       else if (tab === 'opt') say(optOut.style.display === 'none' ? 'Pick a tech, or 🖱️ and click their name: a score for their route\'s order (100% is the best it can be with those jobs) and what would change. It only suggests.' : msg.textContent);
       else say(nearOut.style.display === 'none' ? 'Type a zip code or job number, or press 🖱️ and click a job. It reads only; nothing changes.' : msg.textContent);
       paint(); fit();
@@ -8613,7 +8850,162 @@
       R.base = simulate(R, stops, guess, grace);
       return R;
     };
+    // ---------- 🗺️ Plan the day: better, a move at a time ----------
+    // Once every job has a place, the plan is made better a change at a time, keeping a change only
+    // when it makes the day better in all (driving, lateness, time past shifts and the sales rule, as
+    // the routes are simulated; a job to someone with more jobs than the tech it leaves counts against
+    // it, PER_JOB a job) and breaks none of the rules:
+    //   - no stop later than Late OK that wasn't (and none of the board's jobs later than it was),
+    //     nothing much later than that (TOO_LATE), no one past their shift by more than MAX_OVER (or
+    //     than they already were);
+    //   - a job only to a tech who does that kind of job (a board job: one they or their department
+    //     did 2 or 3 times or more in the last 4 weeks), and a job keeping its time only to a tech
+    //     free then, inside their shift;
+    //   - a board job never leaves a tech with none, and changes tech only for MOVE_MIN minutes or more.
+    // The changes: a job to its best place on another tech's route (or, when it doesn't keep its time,
+    // to a better place on its own), and two jobs at the same time, each keeping its time, swapping
+    // techs. Rounds until nothing gets better, up to IMPROVE_MS. When the board's jobs can get new
+    // times, each one put out of the order it's in now counts SHUFFLE minutes, and every minute it gets
+    // there away from its booked time counts DRIFT of a minute (an hour: 3 minutes), so a day isn't
+    // reshuffled to save a minute and jobs stay near their times. o: { leg, grace, fitFor (R, c), s, times }.
+    const MOVE_MIN = 15, IMPROVE_MS = 1500, SHUFFLE = 5, DRIFT = 0.05;
+    const typeOf = x => x.kind === 'board' ? { typeId: x.a.jobTypeId, type: x.a.jobType } : x.c;
+    const improvePlan = async (routes, o, stale) => {
+      // How many of a route's own board jobs are out of the order they had (their place among the ones still there).
+      routes.forEach(R => R.origStops.forEach((x, i) => { if (x.kind === 'board') x.origIdx = i; }));
+      const shuffled = (R, sim) => {
+        if (!o.times) return 0;
+        const own = sim.out.map(y => y.x).filter(x => x.kind === 'board' && x.home === R), want = own.slice().sort((a, b) => a.origIdx - b.origIdx);
+        return own.filter((x, i) => x !== want[i]).length;
+      };
+      const drift = sim => !o.times ? 0 : sim.out.reduce((t, y) => t + (y.x.kind === 'board' && y.x.a && y.x.a.start ? Math.abs(y.arrive - y.x.a.start) / 60000 : 0), 0);
+      const K = (R, sim) => sim.cost + salesK(R, sim) + SHUFFLE * shuffled(R, sim) + DRIFT * drift(sim);
+      const penOf = (x, R) => { if (x.kind === 'board' && x.home === R) return 0; const f = o.fitFor(R, typeOf(x)); return f.tier === 'family' ? 8 : f.tier === 'unknown' ? 30 : 0; };
+      const canGo = (x, B) => {
+        if (x.kind === 'board') { if (B === x.home) return true; if (!x.movable) return false; const f = o.fitFor(B, typeOf(x)); return f.tier === 'good' || f.tier === 'family'; }
+        return o.fitFor(B, x.c).tier !== 'no';
+      };
+      const badBoard = sim => sim.out.filter(y => y.x.kind === 'board' && y.bad).length;
+      const okRoute = (before, after) => after.tooLate <= before.tooLate && after.over <= Math.max(MAX_OVER, before.over) && badBoard(after) <= badBoard(before);
+      const sims = new Map(routes.map(R => [R, simulate(R, R.stops, o.leg, o.grace)]));
+      // Where a stop can go in a route: at its time (a job keeping its time), else every place.
+      const tries = (R, stops, x) => {
+        if (x.notBefore) { const s2 = withIn(stops, x); return [{ stops: s2, sim: simulate(R, s2, o.leg, o.grace) }]; }
+        const out = [];
+        for (let p = R.fixedN; p <= stops.length; p++) { const s2 = stops.slice(0, p).concat([x], stops.slice(p)); out.push({ stops: s2, sim: simulate(R, s2, o.leg, o.grace) }); }
+        return out;
+      };
+      const need = (x, B) => x.kind === 'board' && B !== x.home ? MOVE_MIN : 1;
+      const apply = (x, A, aStops, a1, B, bStops, b1) => {
+        A.stops = aStops; sims.set(A, a1); B.stops = bStops; sims.set(B, b1); x.on = B;
+        if (x.kind === 'board') { if (B === x.home) x.home.gone.delete(x.jobId); else x.home.gone.add(x.jobId); }
+      };
+      const tryMove = x => {
+        const A = x.on, aStops = A.stops.filter(y => y !== x);
+        if (x.kind === 'board' && !aStops.length) return false;   // not a tech's only job
+        const a0 = sims.get(A), a1 = simulate(A, aStops, o.leg, o.grace);
+        let best = null;
+        routes.forEach(B => {
+          if (!canGo(x, B)) return;
+          if (B === A) {
+            if (x.notBefore) return;
+            tries(A, aStops, x).forEach(c => {
+              if (c.stops.every((y, i) => y === A.stops[i]) || !okRoute(a0, c.sim)) return;
+              const d = K(A, c.sim) - K(A, a0);
+              if (d < -2 && (!best || d < best.d)) best = { B, stops: c.stops, sim: c.sim, d, same: true };
+            });
+            return;
+          }
+          if (x.notBefore && x.a && !freeFor(o.s, B, x.a, [])) return;
+          if (!okRoute(a0, a1)) return;
+          const b0 = sims.get(B), more = B.stops.length - aStops.length, work = PER_JOB * (x.kind === 'board' ? Math.max(0, more) : more);
+          tries(B, B.stops, x).forEach(c => {
+            if (!okRoute(b0, c.sim)) return;
+            const d = K(A, a1) + K(B, c.sim) - K(A, a0) - K(B, b0) + penOf(x, B) - penOf(x, A) + work;
+            if (d < -need(x, B) && (!best || d < best.d)) best = { B, stops: c.stops, sim: c.sim, d };
+          });
+        });
+        if (!best) return false;
+        if (best.same) { A.stops = best.stops; sims.set(A, best.sim); return true; }
+        apply(x, A, aStops, a1, best.B, best.stops, best.sim);
+        return true;
+      };
+      // Two board jobs at the same time, each keeping its time, on two techs: they swap techs.
+      const trySwap = (x, y) => {
+        const A = x.on, B = y.on;
+        if (A === B || !canGo(x, B) || !canGo(y, A) || !overlap(x.a, y.a)) return false;
+        if (!freeFor(o.s, A, y.a, [x.jobId]) || !freeFor(o.s, B, x.a, [y.jobId])) return false;
+        const a0 = sims.get(A), b0 = sims.get(B), aS = withIn(A.stops.filter(z => z !== x), y), bS = withIn(B.stops.filter(z => z !== y), x);
+        const a1 = simulate(A, aS, o.leg, o.grace), b1 = simulate(B, bS, o.leg, o.grace);
+        if (!okRoute(a0, a1) || !okRoute(b0, b1)) return false;
+        const d = K(A, a1) + K(B, b1) - K(A, a0) - K(B, b0) + penOf(x, B) - penOf(x, A) + penOf(y, A) - penOf(y, B);
+        if (d >= -Math.max(need(x, B), need(y, A))) return false;
+        A.stops = aS; B.stops = bS; sims.set(A, a1); sims.set(B, b1); x.on = B; y.on = A;
+        [x, y].forEach(z => { if (z.on === z.home) z.home.gone.delete(z.jobId); else z.home.gone.add(z.jobId); });
+        return true;
+      };
+      const movable = () => [].concat.apply([], routes.map(R => R.stops.filter(x => !x.busyNow && x.kind !== 'hold' && (x.kind === 'new' || x.movable))));
+      const end = Date.now() + IMPROVE_MS;
+      let n = 0, moves = 0;
+      for (let round = 0, better = true; better && round < 8 && Date.now() < end; round++) {
+        better = false;
+        for (const x of movable()) {
+          if (Date.now() > end) break;
+          if (tryMove(x)) { better = true; moves++; }
+          if (++n % 25 === 0) { await wait(0); if (stale()) return moves; }
+        }
+        const pinned = movable().filter(x => x.kind === 'board' && x.notBefore);
+        for (let i = 0; i < pinned.length && Date.now() < end; i++) for (let j = i + 1; j < pinned.length; j++) {
+          if (trySwap(pinned[i], pinned[j])) { better = true; moves++; }
+        }
+      }
+      routes.forEach(R => { R.base = sims.get(R); R.added = R.stops.filter(y => y.kind !== 'board'); });
+      return moves;
+    };
+    // New times for a route (🕐 Set times too), laid out the way dispatchers lay out the board (as
+    // ✨ Optimize's order does): the first job at the day's first slot (its first board job's time, or
+    // the start of their shift when a new job goes first), each next one the moment the one before it
+    // ends (drive time comes out of the job's time, as on the board), later only when it has to (its
+    // window hasn't started, the customer asked for later, today the time has passed), then on the
+    // next ORDER_ROUND minutes. A job keeping its time stays where it is, and the next starts after it.
+    // Map(stop -> { start, end }) for the stops whose time changes.
+    const stackTimes = (R, sim, today) => {
+      const out = new Map(), q = ORDER_ROUND * 60000, up = t => Math.ceil(t / q) * q;
+      const own = sim.out.filter(o => o.x.kind === 'board' && !o.x.busyNow && o.x.a.start).map(o => +o.x.a.start);
+      const firstOut = sim.out.find(o => !o.x.busyNow);
+      const first = firstOut && firstOut.x.kind === 'board' && own.length ? Math.min.apply(null, own) : up(+R.start);
+      let prevEnd = null;
+      sim.out.forEach(o => {
+        const x = o.x;
+        if (x.busyNow) { prevEnd = Math.max(prevEnd || 0, +o.arrive + x.dur * 60000); return; }
+        if (x.notBefore && x.a) { prevEnd = Math.max(prevEnd || 0, +x.a.end); return; }
+        const len = x.a ? x.a.end - x.a.start : x.dur * 60000;
+        let start = prevEnd == null ? first : prevEnd, need = today ? +R.start : 0;
+        if (x.win) need = Math.max(need, +x.win.start - (x.win.booked ? EARLY * 60000 : 0));
+        if (x.ask && x.ask.at != null) need = Math.max(need, +x.ask.at);
+        if (start < need) start = up(need);
+        prevEnd = start + len;
+        const was = x.a ? +x.a.start : x.c && x.c.start ? +x.c.start : null;
+        if (was == null || Math.abs(start - was) >= 60000) out.set(x, { start: new Date(start), end: new Date(start + len) });
+      });
+      return out;
+    };
     let planRun = 0, lastPlan = null;
+    // The planner. What it plans (the choice above it): ＋ Unassigned (the Unassigned list into the board as it
+    // stands), 📋 The board (who does each of the board's jobs, and in what order), or Both.
+    //   - The Unassigned jobs are placed one at a time, the job with the fewest good places first: the
+    //     gap between its best place and its second best (its "regret"), so a job only one tech can
+    //     take is placed before that room goes to a job that had other choices. Urgent, then High,
+    //     before the rest; ties by the earliest window, then the longest waiting.
+    //   - Then it's made better a move at a time (improvePlan), with straight-line guesses, and again
+    //     with Mapbox's drive times for the routes that change.
+    //   - The board's jobs keep their times unless 🕐 Set times too is ticked and the board is being
+    //     planned (then they can move to a new time inside their window). A job keeping its time only
+    //     goes to a tech free then. Jobs underway, shared, with two visits that day, or phone calls
+    //     never move.
+    //   - Skills: a job planned onto a tech without a skill it needs goes to someone who has it (a
+    //     board job back to its own tech), or is left not planned, saying which.
+    //   - 🕐 Set times too: each planned job's new time (stackTimes) goes to Move Jobs with its tech.
     const planDay = async () => {
       const run = ++planRun;
       const stale = () => run !== planRun || !alive;
@@ -8622,15 +9014,16 @@
       if (!onBoard()) return say(board.need());
       setBusy(true);
       try {
-        say('Reading the board and the Unassigned list…');
+        const what = planWhatV, withUA = what !== 'board', withBoard = what !== 'ua', times = planTimes.checked;
+        say(withUA ? 'Reading the board and the Unassigned list…' : 'Reading the board…');
         const s = await board.load({ fresh: true });
-        const [un] = await Promise.all([board.unassigned(TOOL, { fresh: true }), loadHomes()]);
+        const [un] = await Promise.all([withUA ? board.unassigned(TOOL, { fresh: true }) : { rows: [] }, loadHomes()]);
         if (stale()) return;
         const grace = Number(graceSel.value) || 60, fieldOnly = true, pick = teamPick.value;
         const pickName = !pick ? '' : pick === SALES_PICK ? 'Sales & Project Coordinators' : shortTeam(pick);
         const day = s.day, now = new Date(), today = board.sameDay(day, now);
         const jobs0 = un.rows.map(r => { const c = candOf(r.raw, 'ua', day); if (c) c.win = windowOf(c.tags, r.raw.ArrivalWindowStart, r.raw.ArrivalWindowEnd, day); return c; }).filter(Boolean);
-        if (!jobs0.length && !planHolds.checked) return say('The Unassigned list for ' + dayText(day) + ' is empty. Nothing to plan.');
+        if (!withBoard && !jobs0.length && !planHolds.checked) return say('The Unassigned list for ' + dayText(day) + ' is empty. Nothing to plan.');
         if (!learned || learned.key !== learnKey()) say('Learning which jobs each department does, from the last 4 weeks of schedules…');
         let L;
         try { L = await learn(s); }
@@ -8642,80 +9035,118 @@
         const loc = await locate(appts, jobs0, [], stale), zipError = loc.error;
         if (stale()) return;
         // Customers' time requests on the Unassigned jobs: their summaries, and their notes.
-        say('Reading the Unassigned jobs\' notes (for customers\' time requests)…');
-        const uaNotes = await readAsks(jobs0.map(askCand), stale, (n, of) => say('Reading the Unassigned jobs\' notes (for customers\' time requests): ' + n + ' of ' + of + '…'));
-        if (stale()) return;
-        // Each tech's route as it stands.
+        let uaNotes = new Map();
+        if (jobs0.length) {
+          say('Reading the Unassigned jobs\' notes (for customers\' time requests)…');
+          uaNotes = await readAsks(jobs0.map(askCand), stale, (n, of) => say('Reading the Unassigned jobs\' notes (for customers\' time requests): ' + n + ' of ' + of + '…'));
+          if (stale()) return;
+        }
+        // Each tech's route as it stands. When the board's jobs keep their times, they're done no sooner
+        // than booked: planning the board without 🕐 Set times too (only who does each one changes), or,
+        // with it, a job whose time can't change (shared, two visits that day, not Scheduled). Planning
+        // only the Unassigned list without it, the board's jobs stay with their techs, in their windows.
         const usable = t => { if (!homes) return true; const h = homes.get(S(t.id)); return h ? h.active && (!fieldOnly || h.managed) : !fieldOnly; };
+        const retimable = (R, x) => x.kind === 'board' && !x.busyNow && x.a && x.a.start && x.a.end && /^scheduled$/i.test(x.a.status) && !UNDERWAY.test(x.a.techStatus[R.t.id] || '') &&
+          x.a.techs.length === 1 && (s.byJob.get(x.jobId) || []).filter(board.live).length === 1;
         const routes = [];
         s.techs.forEach(t => {
           if (!inPick(pick, t.team) || !usable(t)) return;
           const R = routeOf(s, t, loc, now, grace);
           if (!R) return;
-          R.before = R.base;
+          R.stops.forEach(x => {
+            x.home = R; x.on = R;
+            x.movable = withBoard && tradeable(s, R, x);
+            if (!x.busyNow && x.a && x.a.start && ((withBoard && !times) || (times && !retimable(R, x)))) x.notBefore = x.a.start;
+          });
+          R.base = simulate(R, R.stops, guess, grace);
+          R.before = R.base; R.origStops = R.stops.slice(); R.gone = new Set(); R.ver = 0;
           routes.push(R);
         });
-        // The jobs, most urgent first, then the earliest window, then the longest waiting.
-        const order = jobs0.slice().sort((a, b) => prioRank(a.priority) - prioRank(b.priority) || ((a.win ? +a.win.start : 864e13) - (b.win ? +b.win.start : 864e13)) || ((a.created || 0) - (b.created || 0)) || a.jobId.localeCompare(b.jobId));
-        const left = [];
-        let otherDept = 0;
         const memo = new Map();
         const fitFor = (R, c) => { const k = R.t.id + '|' + c.typeId + '|' + c.type; if (!memo.has(k)) memo.set(k, fitOf(L, R.t, c.typeId, c.type)); return memo.get(k); };
-        order.forEach((c, i) => {
+        // The Unassigned jobs, the fewest good places first (see above).
+        const left = [];
+        let otherDept = 0;
+        const pend = [];
+        jobs0.forEach(c => {
           const fits = routes.filter(R => fitFor(R, c).tier !== 'no');
           // Planning one department: another department's job is left for them.
           if (pick && !fits.length) { otherDept++; return; }
           if (PHONE_ONLY.test(c.type)) { left.push({ c, why: 'a phone call only, not a visit' }); return; }
           if (!c.pt) { left.push({ c, why: 'no location in ServiceTitan to measure to' }); return; }
+          if (!fits.length) { const f = routes.length ? fitFor(routes[0], c) : null, by = f && f.by; left.push({ c, why: 'no field tech on the board ' + (by ? 'in ' + shortTeam(by) + ' ' : '') + 'does this kind of job' }); return; }
           const x = { kind: 'new', c, jobId: c.jobId, customer: c.customer, city: c.city, addr: addrOf(c.street, c.city, c.state, c.zip, c.pt), pt: c.pt, win: c.win, ask: asksFrom(uaNotes.get(S(c.jobId)), day), dur: c.dur, prio: norm(c.priority).toLowerCase() };
-          let best = null, why = null, closest = null;
-          if (!fits.length) {
-            const f = routes.length ? fitFor(routes[0], c) : null, by = f && f.by;
-            left.push({ c, why: 'no field tech on the board ' + (by ? 'in ' + shortTeam(by) + ' ' : '') + 'does this kind of job' });
-            return;
-          }
-          fits.forEach(R => {
-            const f = fitFor(R, c);
-            for (let p = R.fixedN; p <= R.stops.length; p++) {
-              const stops = R.stops.slice(0, p).concat([x], R.stops.slice(p));
-              const sim = simulate(R, stops, guess, grace);
-              const add = sim.drive - R.base.drive;
-              if (!closest || add < closest.add) closest = { R, add, over: sim.over };
-              if (add > MAX_ADD) { why = why || 'far'; continue; }
-              const overCap = Math.max(MAX_OVER, R.base.over) + (x.win && x.win.evening ? Math.max(0, (x.win.end - R.end) / 60000) : 0);
-              if (sim.over > overCap) { why = why === 'late' ? why : 'room'; continue; }
-              if (sim.tooLate > R.base.tooLate) { why = 'late'; continue; }
-              let score = sim.cost - R.base.cost + PER_JOB * (R.n0 + R.added.length) + (f.tier === 'family' ? 8 : f.tier === 'unknown' ? 30 : 0);
-              if (R.sales) score += (Math.max(0, sim.drive - SALES_MAX) - Math.max(0, R.base.drive - SALES_MAX)) * OVER_WEIGHT;
-              if (!best || score < best.score) best = { R, p, stops, sim, score, f };
-            }
-          });
-          if (!best) {
-            left.push({ c, why: why === 'late' ? 'no one who does it can get there anywhere near its window (' + (c.win ? c.win.label : '') + ')' : why === 'room' ? 'no one close has room in their day' + (closest ? ' (' + closest.R.t.name + ' would be home about ' + mins(closest.over) + ' after their shift)' : '') :
-              'more than ' + mins(MAX_ADD) + ' out of the way for everyone who does it' + (closest ? ' (closest: ' + closest.R.t.name + ', about ' + mins(closest.add) + ' more driving)' : '') });
-            return;
-          }
-          x.fit = best.f;
-          best.R.stops = best.stops; best.R.base = best.sim; best.R.added.push(x);
+          pend.push({ c, x, fits, seen: new Map() });
         });
-        // Skills: a job planned onto a tech without a skill it needs (the same check 📞 Fill a spot and
-        // 🔀 Move Jobs make) is taken off that route and planned again among the techs who have it,
-        // or left not planned, saying which skill.
+        const whyLeft = (c, res) => {
+          const w = res.some(v => v.why === 'late') ? 'late' : res.some(v => v.why === 'room') ? 'room' : 'far';
+          const near = res.filter(v => v.near).sort((a, b) => a.near.add - b.near.add)[0];
+          return w === 'late' ? 'no one who does it can get there anywhere near its window (' + (c.win ? c.win.label : '') + ')' : w === 'room' ? 'no one close has room in their day' + (near ? ' (' + near.R.t.name + ' would be home about ' + mins(near.near.over) + ' after their shift)' : '') :
+            'more than ' + mins(MAX_ADD) + ' out of the way for everyone who does it' + (near ? ' (closest: ' + near.R.t.name + ', about ' + mins(near.near.add) + ' more driving)' : '');
+        };
+        const REGRET_ONE = 240;
+        const ahead = (e, f) => prioRank(e.c.priority) - prioRank(f.c.priority) || f.regret - e.regret || ((e.c.win ? +e.c.win.start : 864e13) - (f.c.win ? +f.c.win.start : 864e13)) || ((e.c.created || 0) - (f.c.created || 0)) || e.c.jobId.localeCompare(f.c.jobId);
+        if (pend.length) say('Placing ' + plural(pend.length, 'Unassigned job') + '…');
+        while (pend.length) {
+          let pickE = null;
+          for (let i = pend.length - 1; i >= 0; i--) {
+            const e = pend[i];
+            const res = e.fits.map(R => {
+              let v = e.seen.get(R);
+              if (!v || v.ver !== R.ver) { v = Object.assign(insertBest(R, e.x, fitFor(R, e.c), guess, grace), { ver: R.ver, R }); if (v.ok) v.score += PER_JOB * R.added.length; e.seen.set(R, v); }
+              return v;
+            });
+            const ok = res.filter(v => v.ok).sort((a, b) => a.score - b.score);
+            if (!ok.length) { left.push({ c: e.c, why: whyLeft(e.c, res) }); pend.splice(i, 1); continue; }
+            e.best = ok[0]; e.regret = ok.length > 1 ? Math.min(REGRET_ONE, ok[1].score - ok[0].score) : REGRET_ONE;
+            if (!pickE || ahead(e, pickE) < 0) pickE = e;
+          }
+          if (!pickE) break;
+          const b = pickE.best, R = b.R;
+          pickE.x.fit = fitFor(R, pickE.c); pickE.x.on = R;
+          R.stops = b.stops; R.base = b.sim; R.added.push(pickE.x); R.ver++;
+          pend.splice(pend.indexOf(pickE), 1);
+          if (pend.length % 20 === 0) { await wait(0); if (stale()) return; }
+        }
+        // Better, a move at a time: with guesses, then with Mapbox's drive times for the routes that change.
+        const io = { leg: guess, grace, fitFor, s, times };
+        const changedNow = () => routes.filter(R => R.stops.length !== R.origStops.length || R.stops.some((x, i) => x !== R.origStops[i]));
+        say('Making the plan better, a move at a time…');
+        await wait(0);
+        await improvePlan(routes, io, stale);
+        if (stale()) return;
+        if (changedNow().length) {
+          const ch = changedNow();
+          say('Getting drive times for ' + plural(ch.length, 'route') + '…');
+          await fillLegs(ch.map(R => routePts(R).concat(R.origStops.map(x => x.pt))), stale);
+          if (stale()) return;
+          say('Making the plan better with real drive times…');
+          await improvePlan(routes, Object.assign({}, io, { leg: legFrom({}) }), stale);
+          if (stale()) return;
+        }
+        // Skills: a job on a tech without a skill it needs (the check 📞 Fill a spot and 🔀 Move Jobs
+        // make): an Unassigned job goes to the best place among the techs who have it (or is left not
+        // planned, saying which skill), a board job back to its own tech.
         let skillsMissed = 0;
         if (skillsOn()) {
-          const planned = [];
-          routes.forEach(R => R.added.forEach(x => planned.push([R, x])));
-          if (planned.length) {
-            say('Checking the skills ' + plural(planned.length, 'planned job') + ' need…');
-            const got = await st.pool(planned.map(([, x]) => x.jobId), 4, j => skillsFor(j), null, { stop: stale });
+          const placed = [];
+          routes.forEach(R => R.stops.forEach(x => { if (x.kind === 'new' || (x.kind === 'board' && x.home !== R)) placed.push([R, x]); }));
+          if (placed.length) {
+            say('Checking the skills ' + plural(placed.length, 'planned job') + ' need…');
+            const got = await st.pool(placed.map(([, x]) => x.jobId), 4, j => skillsFor(j), null, { stop: stale });
             if (stale() || got.stopped) return;
             if (got.halted === 'signedOut') throw got.haltError;
             const lacks = (R, need) => { const prof = homes && homes.get(S(R.t.id)); if (!prof || !Array.isArray(prof.skillIds)) return []; const have = new Set(prof.skillIds.map(String)); return need.filter(k => !have.has(String(k.id))); };
-            planned.forEach(([R, x], i) => {
+            placed.forEach(([R, x], i) => {
               if (!Array.isArray(got[i])) { skillsMissed++; return; }
               const need = got[i];
               if (!need.length || !lacks(R, need).length) return;
               R.stops = R.stops.filter(y => y !== x); R.added = R.added.filter(y => y !== x); R.base = simulate(R, R.stops, guess, grace);
+              if (x.kind === 'board') {
+                const H = x.home, stops = x.notBefore ? withIn(H.stops, x) : (insertBest(H, x, { tier: 'good' }, guess, grace).stops || withIn(H.stops, x));
+                H.stops = stops; H.base = simulate(H, stops, guess, grace); x.on = H; H.gone.delete(x.jobId);
+                return;
+              }
               let best = null;
               routes.forEach(Q => {
                 const f = fitFor(Q, x.c);
@@ -8723,7 +9154,7 @@
                 const b = insertBest(Q, x, f, guess, grace);
                 if (b.ok && (!best || b.score + PER_JOB * Q.added.length < best.score + PER_JOB * best.Q.added.length)) best = Object.assign(b, { Q, f });
               });
-              if (best) { x.fit = best.f; best.Q.stops = best.stops; best.Q.base = best.sim; best.Q.added.push(x); }
+              if (best) { x.fit = best.f; x.on = best.Q; best.Q.stops = best.stops; best.Q.base = best.sim; best.Q.added.push(x); }
               else left.push({ c: x.c, why: 'needs ' + need.map(k => k.name || 'skill #' + k.id).join(', ') + ', and no one close who has it has room' });
             });
           }
@@ -8734,7 +9165,7 @@
         // job types they do (not ones with nothing to go by). Best fit first, across every route.
         let holdsPlaced = 0;
         const holdNotes = [];
-        if (planHolds.checked && routes.length) {
+        if (withUA && planHolds.checked && routes.length) {
           say('Looking through the Hold list…');
           const H = await candidates(s, false, true, stale);
           if (!H || stale()) return;
@@ -8787,7 +9218,7 @@
         // are read now (only those), and each new job is put in its best place again with them counted
         // (a job asked to be the first call stays first, say). Requests the route still can't keep are
         // marked on it.
-        const changed = routes.filter(R => R.added.length);
+        const changed = changedNow();
         if (changed.length) {
           say('Reading the summaries and notes of the jobs on ' + plural(changed.length, 'route') + ' (for customers\' time requests)…');
           const notes = await readAsks([].concat.apply([], changed.map(R => R.stops.filter(x => x.kind === 'board').map(x => askJob(x.a)))), stale);
@@ -8795,7 +9226,7 @@
           changed.forEach(R => {
             R.stops.forEach(x => { if (x.kind === 'board') x.ask = asksFrom(notes.get(S(x.jobId)), day); });
             if (!R.stops.some(x => x.kind === 'board' && x.ask)) return;
-            R.added.forEach(x => {
+            R.stops.filter(x => x.kind !== 'board').forEach(x => {
               const rest = R.stops.filter(y => y !== x);
               let best = null;
               for (let p = R.fixedN; p <= rest.length; p++) {
@@ -8806,28 +9237,41 @@
             });
           });
         }
-        // Real drive times for the routes that changed: one Mapbox Directions request each.
+        // Drive times for the routes that changed (Mapbox's, packed a few routes to a request), the
+        // day as planned and as it was.
         say('Getting drive times for ' + plural(changed.length, 'route') + '…');
         let noDrive = 0;
-        await Promise.all(changed.map(async R => {
-          const pts = [R.startPt].concat(R.stops.map(x => x.pt), [R.homePt]).filter(Boolean);
-          const legs = new Map();
-          try {
-            if (Date.now() - mapboxDown < 60000 || pts.length < 2 || pts.length > 25) throw new Error('skip');
-            const j = await outside(MB + 'directions/v5/mapbox/driving/' + pts.map(ptText).join(';') + '?overview=false&alternatives=false&access_token=' + encodeURIComponent(driveKey()), 12000);
-            const r = j && j.code === 'Ok' && Array.isArray(j.routes) ? j.routes[0] : null;
-            if (!r || !Array.isArray(r.legs)) throw new Error('no route');
-            r.legs.forEach((g, i) => { if (typeof g.duration === 'number') legs.set(ptText(pts[i]) + '>' + ptText(pts[i + 1]), Math.round(g.duration / 60)); });
-          } catch (e) { if (e.message !== 'skip') mapboxDown = Date.now(); noDrive++; R.guess = true; }
-          const leg = (a, b) => { const k = legs.get(ptText(a) + '>' + ptText(b)); return k != null ? k : guess(a, b); };
-          R.final = simulate(R, R.stops, leg, grace);
-          R.was = simulate(R, R.stops.filter(x => x.kind === 'board'), leg, grace);
-        }));
+        await fillLegs(changed.map(R => routePts(R).concat(R.origStops.map(x => x.pt))), stale);
         if (stale()) return;
+        changed.forEach(R => {
+          const flag = { guess: false }, leg = legFrom(flag);
+          R.final = simulate(R, R.stops, leg, grace);
+          R.was = simulate(R, R.origStops, leg, grace);
+          R.guess = flag.guess;
+          if (flag.guess) noDrive++;
+        });
+        // What goes to Move Jobs: each Unassigned job and its tech, each board job going to another
+        // tech, and (🕐 Set times too) each job's new time. Holds aren't sent: they need a call first.
         const rows = [];
-        // Only the Unassigned jobs go to Move Jobs: a hold needs a call and a new time first.
-        changed.forEach(R => R.added.forEach(x => { if (x.kind === 'new') rows.push({ jobId: x.jobId, techId: R.t.id, techName: R.t.name, customer: x.customer }); }));
-        lastPlan = { s, routes: changed, left, rows, grace, today, noDrive, zipError, holdNotes, total: jobs0.length - otherDept, otherDept, pickName, holdsPlaced, skillsMissed };
+        changed.forEach(R => {
+          const tms = times ? stackTimes(R, R.final, today) : new Map();
+          R.final.out.forEach(o => {
+            const x = o.x;
+            x.newTime = tms.get(x) || null;
+            if (x.kind === 'hold') return;
+            const moved = x.kind === 'new' || x.home !== R;
+            if (!moved && !x.newTime) return;
+            rows.push({ jobId: x.jobId, techId: R.t.id, techName: R.t.name, customer: x.customer, apptId: x.kind === 'new' ? x.c.apptId : x.a.apptId,
+              start: x.newTime ? x.newTime.start : null, end: x.newTime ? x.newTime.end : null });
+          });
+        });
+        const sum = (list, f) => list.reduce((t, R) => t + f(R), 0);
+        const score = { driveWas: sum(changed, R => R.was.drive), drive: sum(changed, R => R.final.drive), lateWas: sum(changed, R => R.was.out.filter(o => o.bad).length), late: sum(changed, R => R.final.out.filter(o => o.bad).length),
+          overWas: sum(changed, R => R.was.over), over: sum(changed, R => R.final.over) };
+        const newN = rows.filter(r => jobs0.some(c => c.jobId === r.jobId)).length;
+        const movedN = changed.reduce((t, R) => t + R.stops.filter(x => x.kind === 'board' && x.home !== R).length, 0);
+        const timedN = rows.filter(r => r.start).length;
+        lastPlan = { s, what, times, routes: changed, left, rows, grace, today, noDrive, zipError, holdNotes, total: jobs0.length - otherDept, otherDept, pickName, holdsPlaced, skillsMissed, score, newN, movedN, timedN };
         renderPlan(lastPlan);
       } catch (e) {
         if (stale()) return;
@@ -8842,18 +9286,31 @@
       const n = P.rows.length, lateN = P.routes.reduce((a, R) => a + R.final.out.filter(o => o.bad).length, 0), holdsN = P.holdsPlaced || 0;
       const sum = el('div', 'display:grid;gap:1px');
       sum.className = 'st-plan-head';
-      sum.appendChild(el('div', 'font-size:14px;font-weight:800;color:var(--st-ink)', P.total ? n + ' of ' + plural(P.total, 'job') + ' planned' : 'No Unassigned jobs to plan'));
+      const boardWords = (P.movedN ? plural(P.movedN, 'board job') + (P.movedN === 1 ? ' changes' : ' change') + ' tech' : '') + (P.timedN && P.what !== 'ua' ? (P.movedN ? ', ' : '') + plural(P.timedN, 'new time') : '');
+      const headText = P.what === 'board' ? (n ? '📋 ' + boardWords : '📋 The board is in good shape: nothing to change') :
+        (P.total ? P.newN + ' of ' + plural(P.total, 'job') + ' planned' : 'No Unassigned jobs to plan') + (P.what === 'both' && boardWords ? ' · ' + boardWords : '');
+      sum.appendChild(el('div', 'font-size:14px;font-weight:800;color:var(--st-ink)', headText));
       sum.appendChild(el('div', 'font-size:12px;color:var(--st-ink-2)', [dayText(P.s.day), P.pickName, plural(P.routes.length, 'tech'), holdsN ? '⏸️ ' + plural(holdsN, 'hold') + ' to call' : '', P.left.length ? P.left.length + ' not planned' : '', lateN ? '⚠️ ' + plural(lateN, 'late stop') : ''].filter(Boolean).join(' · ')));
       planOut.appendChild(sum);
+      // Before → after, for the routes that change: driving, late stops, time past shifts.
+      if (P.routes.length && P.score) {
+        const c = P.score, g = P.noDrive ? '~' : '', parts = ['🚗 ' + g + mins(c.driveWas) + ' → ' + g + mins(c.drive)];
+        if (c.lateWas || c.late) parts.push('⚠️ late ' + c.lateWas + ' → ' + c.late);
+        if (c.overWas >= 5 || c.over >= 5) parts.push('⏱ past shifts ' + mins(c.overWas) + ' → ' + mins(c.over));
+        const sc = el('div', 'font-size:12px;font-weight:700;color:var(--st-ink);padding:5px 8px;border:1px solid var(--st-line);border-radius:8px;background:var(--st-soft)', parts.join(' · '));
+        sc.className = 'st-plan-score';
+        sc.title = 'The routes that change, as they are now → as planned' + (P.what === 'ua' ? ' (with the new jobs in them)' : '') + ': driving, stops later than Late OK, and time past the end of a shift';
+        planOut.appendChild(sc);
+      }
       if (n) {
-        const send = smallBtn('➡️ Send ' + plural(n, 'job') + ' to Move Jobs', () => {
+        const send = smallBtn('➡️ Send ' + plural(n, 'job') + ' to Move Jobs' + (P.timedN ? ' (with times)' : ''), () => {
           if (lock) return say('Wait for ' + lock + ' to finish first.');
           const k = moves.takePlan(P.rows);
           if (k < 0) return say('🔀 Move Jobs is busy. Wait for it to finish, then try again.');
           showView('moves');
         }, FULL + 'background:#6a1b9a;border-color:#6a1b9a;color:#fff;padding:6px 9px;font-size:12.5px');
         send.id = 'st-plan-send';
-        send.title = 'Opens 🔀 Move Jobs with each job and its tech. Nothing changes until you review it and press Assign.' + (holdsN ? ' Holds aren\'t sent: call to book them first.' : '');
+        send.title = 'Opens 🔀 Move Jobs with each job and its tech' + (P.timedN ? ' and new time' : '') + '. Nothing changes until you review it and press Assign (↩ Put back undoes it).' + (holdsN ? ' Holds aren\'t sent: call to book them first.' : '');
         planOut.appendChild(send);
       }
       if (holdsN) planOut.appendChild(small('⏸️ Holds are to call and book (their phone number is on their stop); they aren\'t sent to Move Jobs.'));
@@ -8883,9 +9340,11 @@
       if (P.noDrive) planOut.appendChild(small('⚠️ Drive times aren\'t available for ' + plural(P.noDrive, 'route') + ', so those times are guesses (marked ~).', 'color:var(--st-amber)'));
       if (P.zipError) planOut.appendChild(small('⚠️ Some zip codes couldn\'t be looked up: ' + P.zipError + '.', 'color:var(--st-amber)'));
       (P.holdNotes || []).forEach(n => planOut.appendChild(small(n, 'color:var(--st-amber)')));
+      if (P.times && n) planOut.appendChild(small('🕐 New times: back to back from the day\'s first slot, inside each job\'s window, as on the board. 🔀 Move Jobs sets them, and ↩ Put back puts them back.'));
+      else if (P.what !== 'ua') planOut.appendChild(small('The board\'s jobs keep their times: only who does them changes (tick 🕐 Set times too to let them move inside their windows). Jobs underway, shared, or with two visits stay put.'));
       planOut.appendChild(small('Late is OK up to ' + mins(P.grace) + ' (Urgent: none, High: half); 5-9s count lightly. Times assume each job takes its booked time. Drive times © Mapbox © OpenStreetMap.'));
       planOut.style.display = 'grid';
-      say(n ? 'Check the routes, then Send to Move Jobs. Nothing changes until you press Assign there.' : holdsN ? 'Only holds fit: call to book them.' : 'Nothing could be planned (see why below).');
+      say(n ? 'Check the routes, then Send to Move Jobs. Nothing changes until you press Assign there.' : holdsN ? 'Only holds fit: call to book them.' : P.what === 'board' ? 'Nothing on the board is much better another way.' : 'Nothing could be planned (see why below).');
       fit();
     };
     // Late within the grace is fine ("OK"); later than that is ⚠️ (marked on the route as o.bad).
@@ -8913,9 +9372,12 @@
       const head = el('div', 'display:flex;gap:6px;align-items:baseline;cursor:pointer');
       head.title = R.open ? 'Hide the stops' : 'Show every stop';
       head.onclick = () => { R.open = !R.open; renderPlan(P); };
-      const newN = R.added.filter(x => x.kind === 'new').length, holdN = R.added.length - newN;
+      const newN = R.added.filter(x => x.kind === 'new').length, holdN = R.added.filter(x => x.kind === 'hold').length;
+      const inN = R.stops.filter(x => x.kind === 'board' && x.home !== R).length, out = R.origStops ? R.origStops.filter(x => R.stops.indexOf(x) < 0) : [];
       head.append(el('span', 'font-weight:800;font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', (R.open ? '▾ ' : '▸ ') + R.t.name));
       if (newN) head.appendChild(chip('+' + newN, 'p', plural(newN, 'new job')));
+      if (inN) head.appendChild(chip('🔁 +' + inN, 'b', plural(inN, 'board job') + ' from another tech'));
+      if (out.length) head.appendChild(chip('−' + out.length, '', plural(out.length, 'job') + ' to another tech'));
       if (holdN) head.appendChild(chip('⏸️ ' + holdN, 'a', plural(holdN, 'hold') + ' to call and book'));
       head.append(chip('🚗 ' + g + mins(f.drive), R.sales && f.drive > SALES_MAX ? 'a' : '', 'Driving that day (was ' + g + mins(R.was.drive) + ')' + (R.sales ? '. Sales goal: under ' + mins(SALES_MAX) : '')));
       box.appendChild(head);
@@ -8925,10 +9387,10 @@
       const chips = el('div');
       chips.className = 'st-chips';
       f.out.forEach(o => {
-        if (o.x.kind === 'board') return;
-        const hold = o.x.kind === 'hold';
-        const c = chip((hold ? '⏸️ ' : '') + clock(o.arrive).replace(/ (AM|PM)$/, '') + ' ' + (o.x.customer || '#' + o.x.jobId) + (o.x.win ? ' · ' + o.x.win.label : '') + (o.bad ? ' ⚠️' : ''), o.bad ? 'r' : hold ? 'a' : winTone(o.x.win),
-          (hold ? 'On hold: call ' + (o.x.phone ? fmtPhone(o.x.phone) + ' ' : '') + 'to book it. ' : '') + '#' + o.x.jobId + ' ' + (o.x.customer || '') + ', arrives about ' + clock(o.arrive) + (o.x.win ? ' (' + o.x.win.label + ')' : '') + (o.late >= 5 ? ', ' + lateWords(o, P) : '') + (o.x.ask ? '. Asked for ' + askWords(o.x.ask) + (o.askMiss ? ' (not kept)' : '') : ''));
+        if (o.x.kind === 'board' && o.x.home === R) return;
+        const hold = o.x.kind === 'hold', moved = o.x.kind === 'board';
+        const c = chip((hold ? '⏸️ ' : moved ? '🔁 ' : '') + clock(o.x.newTime ? o.x.newTime.start : o.arrive).replace(/ (AM|PM)$/, '') + ' ' + (o.x.customer || '#' + o.x.jobId) + (o.x.win ? ' · ' + o.x.win.label : '') + (o.bad ? ' ⚠️' : ''), o.bad ? 'r' : hold ? 'a' : moved ? 'b' : winTone(o.x.win),
+          (hold ? 'On hold: call ' + (o.x.phone ? fmtPhone(o.x.phone) + ' ' : '') + 'to book it. ' : moved ? 'From ' + o.x.home.t.name + '. ' : '') + '#' + o.x.jobId + ' ' + (o.x.customer || '') + ', arrives about ' + clock(o.arrive) + (o.x.win ? ' (' + o.x.win.label + ')' : '') + (o.late >= 5 ? ', ' + lateWords(o, P) : '') + (o.x.ask ? '. Asked for ' + askWords(o.x.ask) + (o.askMiss ? ' (not kept)' : '') : ''));
         c.classList.add('st-plan-chip');
         chips.appendChild(c);
       });
@@ -8948,17 +9410,23 @@
       };
       row(clock(R.start), R.startPt ? R.startWords : 'Start (nowhere to measure from)', '', 'edge');
       f.out.forEach(o => {
-        const x = o.x, isNew = x.kind === 'new', hold = x.kind === 'hold';
+        const x = o.x, isNew = x.kind === 'new', hold = x.kind === 'hold', moved = x.kind === 'board' && x.home !== R;
         const what = el('span', '');
         if (hold) what.appendChild(el('span', 'font-weight:800;color:var(--st-amber)', '⏸️ Hold · '));
+        if (moved) what.appendChild(el('span', 'font-weight:800;color:var(--st-blue-d)', '🔁 from ' + x.home.t.name + ' · '));
         if (x.win) { what.appendChild(winChip(x.win)); what.appendChild(document.createTextNode(' ')); }
         what.appendChild(document.createTextNode((x.customer || 'Job') + ' #' + x.jobId + (x.prio === 'urgent' || x.prio === 'high' ? ' ⭐' : '') + (x.city ? ' · ' + tidy(x.city) : '')));
         if (x.ask) { what.appendChild(document.createTextNode(' ')); what.appendChild(askChip(x.ask, o.askMiss)); }
         if (o.late >= 5) what.appendChild(el('span', 'font-weight:700;color:' + (o.winBad ? 'var(--st-red)' : 'var(--st-amber)'), ' · ' + (o.winBad ? '⚠️ ' : '') + lateWords(o, P)));
         if (hold) what.appendChild(el('span', 'display:block;font-weight:700;user-select:text', x.phone ? '📞 ' + fmtPhone(x.phone) + ' · call to book it' : 'No phone number: call to book it'));
-        row(clock(o.arrive), what, o.drive ? '🚗 ' + g + mins(o.drive) : '', (isNew ? 'new st-plan-new' : hold ? 'hold st-plan-hold' : 'st-plan-stop') + (o.bad ? ' late' : ''));
+        // Its new time (🕐 Set times too), or an Unassigned job's booked time when it's far from when they'd get there.
+        const was = x.a ? x.a.start : x.c && x.c.start ? x.c.start : null;
+        if (x.newTime && !hold) what.appendChild(el('span', 'font-weight:700;color:var(--st-blue-d)', ' · 🕐 ' + (was ? clock(was) + ' → ' : '') + clock(x.newTime.start)));
+        else if (isNew && was && Math.abs(o.arrive - was) > 30 * 60000) what.appendChild(el('span', 'color:var(--st-ink-3)', ' · 🕐 booked ' + clock(was)));
+        row(clock(o.arrive), what, o.drive ? '🚗 ' + g + mins(o.drive) : '', (isNew ? 'new st-plan-new' : hold ? 'hold st-plan-hold' : moved ? 'new st-plan-stop st-plan-moved' : 'st-plan-stop') + (o.bad ? ' late' : ''));
       });
       row(clock(f.home), '🏠 Home' + (f.over >= 5 ? ' · ' + mins(f.over) + ' past their shift' : ''), f.back ? '🚗 ' + g + mins(f.back) : '', 'edge');
+      out.forEach(x => row('', '↗ #' + x.jobId + ' ' + (x.customer || '') + ' goes to ' + (x.on && x.on !== R ? x.on.t.name : 'another tech'), '', 'edge st-plan-out'));
       box.appendChild(tl);
       // 🗺️ The whole route (new jobs and holds too) in Google Maps.
       const maps = mapsPills(R, f.out.map(o => o.x));
@@ -8969,7 +9437,7 @@
       const lines = ['Plan for ' + dayText(P.s.day) + (P.pickName ? ' (' + P.pickName + ')' : '')];
       P.routes.forEach(R => {
         lines.push('', R.t.name + ' (' + (shortTeam(R.t.team) || 'no team') + '): +' + plural(R.added.length, 'job') + ', driving ' + mins(R.final.drive));
-        R.final.out.forEach(o => lines.push('  ' + clock(o.arrive) + '  ' + (o.x.kind === 'new' ? 'NEW ' : o.x.kind === 'hold' ? 'HOLD (call ' + (o.x.phone ? fmtPhone(o.x.phone) : 'them') + ' to book) ' : '') + (o.x.customer || 'Job') + ' #' + o.x.jobId + (o.x.win ? ' (' + o.x.win.label + ')' : '') + (o.x.ask ? ' [asked: ' + askWords(o.x.ask) + ']' : '') + (o.late >= 5 ? ' ' + lateWords(o, P) : '')));
+        R.final.out.forEach(o => lines.push('  ' + clock(o.arrive) + '  ' + (o.x.kind === 'new' ? 'NEW ' : o.x.kind === 'hold' ? 'HOLD (call ' + (o.x.phone ? fmtPhone(o.x.phone) : 'them') + ' to book) ' : o.x.home && o.x.home !== R ? 'FROM ' + o.x.home.t.name + ' ' : '') + (o.x.newTime && o.x.kind !== 'hold' ? '[new time ' + clock(o.x.newTime.start) + '] ' : '') + (o.x.customer || 'Job') + ' #' + o.x.jobId + (o.x.win ? ' (' + o.x.win.label + ')' : '') + (o.x.ask ? ' [asked: ' + askWords(o.x.ask) + ']' : '') + (o.late >= 5 ? ' ' + lateWords(o, P) : '')));
         lines.push('  ' + clock(R.final.home) + '  home');
       });
       if (P.left.length) { lines.push('', 'Not planned:'); P.left.forEach(l => lines.push('  #' + l.c.jobId + ' ' + (l.c.customer || '') + ': ' + l.why)); }

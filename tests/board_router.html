@@ -115,7 +115,7 @@
   window.ASSIGNED = {};
   const apptInfo = id => {
     const x = LISTS.find(r => r[1] === id);
-    if (x) { const r = rowOf(x); return { job: r.JobId, start: r.Start, end: r.End, techs: [] }; }
+    if (x) { const r = rowOf(x), t = (window.TIMES || {})[id]; return { job: r.JobId, start: t ? t.start : r.Start, end: t ? t.end : r.End, techs: [], ws: r.ArrivalWindowStart, we: r.ArrivalWindowEnd }; }
     const a = APPTS.find(a => a.id === id);
     return a ? { job: a.job, start: a.start.toISOString(), end: a.end.toISOString(), techs: a.techs, ws: a.windowStart ? new Date(a.windowStart).toISOString() : null, we: a.windowEnd ? new Date(a.windowEnd).toISOString() : null } : null;
   };
@@ -186,8 +186,10 @@
     // A new time for an appointment on the board (the board's drag): its start and end change.
     if ((m = /^\/dispatch-center\/appointments\/(\d+)$/.exec(u)) && opts && opts.method === 'PUT') {
       window.WRITES.push('PUT ' + u); window.timePuts = (window.timePuts || []).concat([{ id: Number(m[1]), body }]);
-      const a = APPTS.find(x => x.id === Number(m[1]));
-      if (!a || window.TIME_FAIL) return json({ Error: { Message: 'nope' } }, 400);
+      const a = APPTS.find(x => x.id === Number(m[1])), l = LISTS.find(r => r[1] === Number(m[1]));
+      if ((!a && !l) || window.TIME_FAIL) return json({ Error: { Message: 'nope' } }, 400);
+      // A job from the Unassigned list: its new time is kept in window.TIMES (and its tech in ASSIGNED).
+      if (!a) { window.TIMES = window.TIMES || {}; window.TIMES[l[1]] = { start: new Date(body.start).toISOString(), end: new Date(body.end).toISOString() }; return new Response('', { status: 200 }); }
       a.start = new Date(body.start); a.end = new Date(body.end);
       return new Response('', { status: 200 });
     }

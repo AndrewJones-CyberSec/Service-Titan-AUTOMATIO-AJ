@@ -308,7 +308,7 @@ with sync_playwright() as p:
     left = page.inner_text('#st-plan-out .st-plan-left')
     check('Way Off' in left and 'no one close has room' in left and 'Just Call' in left and 'phone call only' in left, 'not planned, with why: the far job and the phone call (%r)' % left)
     check(ev(page, 'window.WRITES') == [], 'planning changed nothing')
-    check(ev(page, 'window.routeCalls') == 4, 'one drive-time request per route (%s)' % ev(page, 'window.routeCalls'))
+    check(not ev(page, 'window.routeCalls') and 1 <= ev(page, 'window.mapboxCalls') <= 3, 'drive times for the 4 routes that change in a few Mapbox requests, packed together (%s)' % ev(page, 'window.mapboxCalls'))
     # A 2-hour grace: the late morning job is OK now.
     page.select_option('#st-plan-grace', '120')
     plan(page)
