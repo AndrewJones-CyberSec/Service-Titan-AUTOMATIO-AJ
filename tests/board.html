@@ -78,7 +78,8 @@
     if (u.indexOf('/Dispatch/GetJobs') === 0) {
       const b = JSON.parse((opts && opts.body) || '{}');
       window.lastGetJobs = b;
-      const rows = b.JobType === 'Unassigned' && window.FULL ? window.FULL_UNASSIGNED : [];
+      // window.TYPES[job]: a job's job type (🗂️ By job type), on the timeline and the Unassigned list.
+      const rows = (b.JobType === 'Unassigned' && window.FULL ? window.FULL_UNASSIGNED : []).map(r => Object.assign({ Type: (window.TYPES || {})[r.JobId] || '' }, r));
       return json({ Count: rows.length, Jobs: rows.slice(b.QueryFilter.Skip, b.QueryFilter.Skip + b.QueryFilter.Take) });
     }
     // Every signed-in user can read this (asked after a 401 to tell "signed out" from "not allowed").
@@ -107,7 +108,7 @@
   NB.setup({
     techs: () => [{ id: 1, name: 'Tech One', team: 'Install HVAC', teamId: 1 }].concat(window.FULL ? [{ id: 2, name: 'Tech Two', team: 'Install HVAC', teamId: 1 }] : []),
     appts: () => window.FULL
-      ? window.FULL_ASSIGNMENTS.map(a => ({ id: a.Id, job: a.JobId, techs: (a.Technicians || []).map(t => t.Id), customer: a.Customer, customerId: a.CustomerId, start: a.Start, status: a.AppointmentStatus === 5 ? 'Canceled' : 'Scheduled' }))
+      ? window.FULL_ASSIGNMENTS.map(a => ({ id: a.Id, job: a.JobId, techs: (a.Technicians || []).map(t => t.Id), customer: a.Customer, customerId: a.CustomerId, start: a.Start, status: a.AppointmentStatus === 5 ? 'Canceled' : 'Scheduled', jobType: (window.TYPES || {})[a.JobId] }))
       : Object.keys(DB).filter(j => j < 900000).map((j, i) => ({ id: 7000 + i, job: Number(j), techs: [1], customer: 'Cust ' + j, customerId: Number(j) })),
     tray: () => [{ job: 901003, customer: 'Tray Cust 901003 ', customerId: 3 }, { job: 901004, customer: 'Tray Cust 901004', customerId: 4 }],
     trayTab: 'Hold',
