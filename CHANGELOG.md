@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.1
+
+- **Fixed: 🗺️ Plan the day kept customers' time requests only for the Unassigned jobs while planning.** In 📋 The board and Both, a job already on the board could be moved to another tech, or given a time, that its customer's request couldn't keep (*Please make this the last stop*, *not home until 1pm*): the board's jobs' summaries and notes were only read after the plan was made, so the route marked it *⚠️ asked* afterwards but the plan still sent it. Now, planning the board, every board job's summary and the job's, customer's and location's notes are read first (kept 10 minutes, as everywhere in Tech Router), and a change that breaks a request isn't made, the same as one that would make a stop late. ＋ Unassigned works as before (the board's jobs don't change tech there). If some couldn't be read, the plan says how many.
+- Tests: `tests/test_plan_modes.py` checks a board job asked to be the last stop stays the last stop.
+
 ## 2.3
 
 - **🗺️ Plan the day: choose what it plans.** Above the button: **＋ Unassigned** (the Unassigned list into the board as it stands, as before), **📋 The board** (re-plan the jobs already on the board: who does each one, and in what order, for less driving and fewer late stops) or **Both**. Remembered.

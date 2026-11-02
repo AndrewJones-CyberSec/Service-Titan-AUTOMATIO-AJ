@@ -146,6 +146,17 @@ with sync_playwright() as p:
     check(re.search(r'\d+ of 10 jobs planned · \d board jobs? changes? tech', o), 'Both: the Unassigned jobs planned and board jobs changing tech, in one plan (%r)' % o[:120])
     page.close()
 
+    # ================= The board's jobs' time requests are kept while re-planning =================
+    # Hal Hatt's summary asks to be the last stop: he's Pat's only job (so last). He isn't moved into the
+    # middle of Dustin's day, and nothing on the plan breaks what a customer asked for.
+    page, errors = start(b, SWAP.rstrip('}') + " window.SUMMARIES = { 7011: '<p>Please make this the last stop of the day.</p>' }; }")
+    o = plan(page, 'board', times=True)
+    hal = [x for t in (201, 202) for x in on(page, t) if 'Hal Hatt' in x]
+    check(hal and '🕑 last stop' in hal[0] and not any('Hal Hatt' in x for x in on(page, 201)), 'Hal Hatt (last stop, asked) stays Pat\'s last stop, not moved into Dustin\'s day (%s)' % hal)
+    check('⚠️ asked' not in o, 'nothing on the plan breaks a customer\'s time request')
+    check(errors == [], 'time requests: no page errors: %s' % errors)
+    page.close()
+
     # ================= A shared job never moves =================
     page, errors = start(b, SWAP.replace("techs: [201], customer: 'Mo Magee'", "techs: [201, 207], customer: 'Mo Magee'"))
     plan(page, 'board', times=True)

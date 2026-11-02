@@ -29,8 +29,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.3';
+  const VERSION = '2.3.1';
   const WHATS_NEW = {
+    '2.3.1': 'Fixed: 🗺️ Plan the day (📋 The board, or Both) could move a job on the board to where its customer\'s time request couldn\'t be kept ("last stop", "not home until 1pm"), and only marked it ⚠️ afterwards. The board\'s jobs\' summaries and notes are read first now, so their requests are kept while planning, the same as the Unassigned jobs\'.',
     '2.3': 'Smarter 🗺️ Plan the day: choose ＋ Unassigned, 📋 The board (re-plan who does each job already on the board, and in what order) or Both, and tick 🕐 Set times too for each job\'s new time inside its window (set by Move Jobs, undone by ↩ Put back). It places the hardest jobs first, then keeps improving the plan a move at a time, checks it with real drive times, and shows before → after. 🔕 Job Notifications: new 🗂️ By job type, to set job types 🔔 on or 🔕 off and ⚙️ Apply them to the board\'s day in one run.',
     '2.2': 'New in 🧭 Tech Router: 🎯 Place a job. Click a job (or type its number) for the best techs to put it on, each with why: its window, the extra driving, who does these jobs, their day and skills. Or it says to RS it, with the best of the next 6 days from the schedules as they stand, and opens 📱 Customer Texts or 📝 Notes in their Reschedule folders. Also new: ✨ Optimize → 🔁 Trade jobs, for jobs another tech is better placed for at the same time (each keeps its time). The Toolbox reads the board lighter and quicker, and 🗺️ Plan the day checks skills and no longer stops when the Hold list can\'t be read.',
     '2.1.9': 'Quicker 💬 Tech Messages on the new board: about half the time per tech. A tech whose name is already showing isn\'t scrolled to (each scroll left the board\'s names without their menus for about 1.5 seconds), and the next tech is got ready during the pause after each send. The same checks run on every send, and there\'s still at least 1.2 seconds between one send and the next.',
@@ -9062,6 +9063,24 @@
           R.before = R.base; R.origStops = R.stops.slice(); R.gone = new Set(); R.ver = 0;
           routes.push(R);
         });
+        // Planning the board: what the customers asked for on the board's jobs (their summaries, and
+        // the job's, customer's and location's notes) is read first, so a job is never moved or given a
+        // time its customer's request can't keep ("last stop", "not home until 1pm"). A change that
+        // breaks one isn't made (the same rule as being late).
+        let boardNotesMissed = 0;
+        if (withBoard) {
+          const bj = [].concat.apply([], routes.map(R => R.stops.filter(x => x.kind === 'board' && x.a).map(x => askJob(x.a))));
+          if (bj.length) {
+            say('Reading the board\'s jobs\' summaries and notes (for customers\' time requests)…');
+            const notes = await readAsks(bj, stale, (n, of) => say('Reading the board\'s jobs\' summaries and notes (for customers\' time requests): ' + n + ' of ' + of + '…'));
+            if (stale()) return;
+            boardNotesMissed = notes.missed || 0;
+            routes.forEach(R => {
+              R.stops.forEach(x => { if (x.kind === 'board') x.ask = asksFrom(notes.get(S(x.jobId)), day); });
+              R.base = simulate(R, R.stops, guess, grace); R.before = R.base;
+            });
+          }
+        }
         const memo = new Map();
         const fitFor = (R, c) => { const k = R.t.id + '|' + c.typeId + '|' + c.type; if (!memo.has(k)) memo.set(k, fitOf(L, R.t, c.typeId, c.type)); return memo.get(k); };
         // The Unassigned jobs, the fewest good places first (see above).
@@ -9271,7 +9290,7 @@
         const newN = rows.filter(r => jobs0.some(c => c.jobId === r.jobId)).length;
         const movedN = changed.reduce((t, R) => t + R.stops.filter(x => x.kind === 'board' && x.home !== R).length, 0);
         const timedN = rows.filter(r => r.start).length;
-        lastPlan = { s, what, times, routes: changed, left, rows, grace, today, noDrive, zipError, holdNotes, total: jobs0.length - otherDept, otherDept, pickName, holdsPlaced, skillsMissed, score, newN, movedN, timedN };
+        lastPlan = { s, what, times, routes: changed, left, rows, grace, today, noDrive, zipError, holdNotes, total: jobs0.length - otherDept, otherDept, pickName, holdsPlaced, skillsMissed, score, newN, movedN, timedN, boardNotesMissed };
         renderPlan(lastPlan);
       } catch (e) {
         if (stale()) return;
@@ -9335,6 +9354,7 @@
         P.left.forEach(l => box.appendChild(el('div', 'color:var(--st-ink-2)', '• ' + (l.c.customer || 'Job') + ' #' + l.c.jobId + (l.c.win ? ' (' + l.c.win.label + ')' : '') + ': ' + l.why)));
         planOut.appendChild(box);
       }
+      if (P.boardNotesMissed) planOut.appendChild(small('⚠️ The summary or notes of ' + plural(P.boardNotesMissed, 'job') + ' on the board couldn\'t be read, so a time the customer asked for there may not be counted.', 'color:var(--st-amber)'));
       if (P.skillsMissed) planOut.appendChild(small('⚠️ The skills ' + plural(P.skillsMissed, 'planned job needs', 'planned jobs need') + ' couldn\'t be read; 🔀 Move Jobs checks them before anything changes.', 'color:var(--st-amber)'));
       if (P.otherDept) planOut.appendChild(small(plural(P.otherDept, 'job') + ' for other departments ' + (P.otherDept === 1 ? 'is' : 'are') + ' left on the Unassigned list (pick All departments to plan them too).'));
       if (P.noDrive) planOut.appendChild(small('⚠️ Drive times aren\'t available for ' + plural(P.noDrive, 'route') + ', so those times are guesses (marked ~).', 'color:var(--st-amber)'));
