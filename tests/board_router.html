@@ -42,6 +42,22 @@
     { id: 9004, job: 7004, techs: [205], customer: 'Di Purvis', start: at(13), end: at(15), zip: '39475', city: 'Purvis', jobType: T[11], jobTypeId: 11, tags: PM },
     { id: 9005, job: 7005, techs: [203], customer: 'Ed Volt', start: at(9), end: at(11), zip: '39465', city: 'Petal', jobType: T[21], jobTypeId: 21, tags: AM }
   ];
+  // The days after the board's (🎯 Place a job looks at them for a job to RS): day offset -> { appts,
+  // shifts }. Every field tech works 8–5 on days +1, +4, +5 and +6; days +2 and +3 are a weekend (no
+  // shifts, no jobs). Day +1: Dustin is booked in Hattiesburg all morning; Pat works then too.
+  // window.OTHER_DAYS can be changed by a test before the Toolbox looks.
+  const allDay = { 201: [[8, 17]], 202: [[8, 17]], 203: [[8, 17]], 204: [[8, 17]], 205: [[8, 17]], 206: [[8, 17]] };
+  window.OTHER_DAYS = {
+    1: { appts: [{ id: 9301, job: 7301, techs: [201], customer: 'Wed Morning', start: on(1, 8), end: on(1, 12), zip: '39401', city: 'Hattiesburg', jobType: T[11], jobTypeId: 11, tags: AM }], shifts: allDay },
+    4: { appts: [], shifts: allDay }, 5: { appts: [], shifts: allDay }, 6: { appts: [], shifts: allDay }
+  };
+  const dayIso = n => { const d = on(n, 0); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  const otherDay = iso => {
+    const n = Object.keys(window.OTHER_DAYS).map(Number).find(k => dayIso(k) === iso);
+    if (n == null) return null;
+    const x = window.OTHER_DAYS[n];
+    return { appts: (x.appts || []).map(a => Object.assign({ n: 1, status: 'Scheduled', bu: 1 }, a)), shifts: id => ((x.shifts || {})[id] || []).map(([a, b, type]) => ({ start: on(n, a), end: on(n, b), type: type || 'Normal' })) };
+  };
   // Eli (203) has time off 7 AM–7 PM on the board too, at the same time as his job (like ServiceTitan on Oct 29 2026).
   window.SHIFTS = { 201: [[8, 17]], 203: [[8, 17], [7, 19, 'TimeOff']], 204: [[8, 17]], 205: [[8, 17]], 206: [[8, 17]], 207: [[8, 17, 'TimeOff']] };
   // The lists: [day offset or 'hold', id, job, customer, type, place, start h, hours, priority, phone, created (days ago), arrival-window tag].
@@ -198,6 +214,7 @@
     shifts: id => (SHIFTS[id] || []).map(([a, b, type]) => ({ start: at(a), end: at(b), type: type || 'Normal' })),
     events: id => (window.EVENTS && window.EVENTS[id]) || [],
     past: () => PAST,
+    other: iso => otherDay(iso),
     tray: () => []
   });
 </script>
