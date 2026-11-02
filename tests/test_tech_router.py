@@ -446,7 +446,7 @@ with sync_playwright() as p:
     open_router(page)
     page.click('#st-toolbox [data-tab=opt]')
     tabs_ = ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox .st-seg button[data-tab]')).map(b => [b.textContent, b.scrollWidth <= b.clientWidth])")
-    check([x[0] for x in tabs_] == ['📞 Fill', '🗺️ Plan', '✨ Optimize', '🔎 Closest'] and all(x[1] for x in tabs_), 'four tabs, every name shown in full (%s)' % tabs_)
+    check([x[0] for x in tabs_] == ['🎯 Place', '📞 Fill', '🗺️ Plan', '✨ Optimize', '🔎 Closest'] and all(x[1] for x in tabs_), 'five tabs (🎯 Place first), every name shown in full (%s)' % tabs_)
     check('100%' in msg(page) and 'only suggests' in msg(page), 'it says what it does: a score, and it only suggests (%r)' % msg(page))
     opt(page, 206)
     o = page.inner_text('#st-opt-out')

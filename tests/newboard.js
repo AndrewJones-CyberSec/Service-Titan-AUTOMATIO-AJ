@@ -26,6 +26,8 @@
 //                 after a scroll, show a plain name with no menu button and no menu for n ms,
 //                 then the real name with its menu button). NB.scrolls counts the list's real scrolls.
 //   slideMs: n   (the Send Message panel slides in from the right over n ms when it opens)
+//   other(dayIso): { appts, shifts(id), events(id) } or null: another day's schedule (any single day
+//                 that isn't the board's; null: the past, from past())
 //   filler: n    (n extra rows in the Jobs Tray, and a tall board above it)
 // NB.render() draws the board when the page is on it. '#/DispatchBoard' goes to the new address,
 // like ServiceTitan does. NB.setDay(d) changes the day. window.SENT lists [tech name, text] sent.
@@ -89,8 +91,12 @@
       }
       if (u.indexOf('/dispatch-center/technicians') === 0) return json({ items: techs().filter(t => body.technicianIds.indexOf(t.id) > -1).map(t => Object.assign(team(t), { status: t.status || 'Idle' })), page: 1, pageSize: body.pageSize, totalCount: techs().length });
       if (u.indexOf('/dispatch-center/daily-assignments') === 0) {
+        // Another single day than the board's, when the page has one: NB.cfg.other(dayIso) gives
+        // { appts, shifts(id), events(id) } or null (🧭 Tech Router's 🎯 Place a job reads the days after).
+        const other = body.startDate !== iso(NB.day()) && NB.cfg.other ? NB.cfg.other(body.startDate) : null;
+        if (other) NB.otherCalls = (NB.otherCalls || []).concat([body.startDate]);
         // Another range than the board's day: the past (NB.cfg.past(), for Tech Router's 4 weeks).
-        if (body.startDate !== iso(NB.day())) {
+        if (body.startDate !== iso(NB.day()) && !other) {
           NB.pastCalls = (NB.pastCalls || 0) + 1;
           if (window.PAST_BAD) return json({ nope: true });
           const from = new Date(body.startDate + 'T00:00:00'), to = new Date(body.endDate + 'T00:00:00');
@@ -99,13 +105,14 @@
             assignments: past.filter(a => (a.techs || []).indexOf(id) > -1).map(a => ({ appointmentId: a.id, appointmentStart: new Date(a.start).toISOString(), appointmentEnd: new Date(a.end || a.start).toISOString(),
               appointmentStatus: a.status || 'Done', jobId: a.job, jobTypeId: a.jobTypeId, jobTypeName: a.jobType })) }] })), page: 1, pageSize: body.pageSize, totalCount: body.technicianIds.length });
         }
-        NB.lastDaily = body;
-        const list = appts().filter(live);
+        if (!other) NB.lastDaily = body;
+        const list = other ? (other.appts || []) : appts().filter(live);
+        const shiftsOf = other ? (other.shifts || (() => [])) : NB.cfg.shifts, eventsOf = other ? (other.events || (() => [])) : NB.cfg.events;
         const timed = (x, a, b) => ({ [a]: new Date(x.start).toISOString(), [b]: new Date(x.end).toISOString() });
-        return json({ items: body.technicianIds.map(id => ({ technicianId: id, technicianSchedule: [{ dateTime: iso(NB.day()) + 'T00:00:00',
+        return json({ items: body.technicianIds.map(id => ({ technicianId: id, technicianSchedule: [{ dateTime: body.startDate + 'T00:00:00',
           // NB.cfg.shifts(id): [{ start, end, type ('Normal' or 'TimeOff') }]; NB.cfg.events(id): [{ start, end }].
-          shifts: (NB.cfg.shifts ? NB.cfg.shifts(id) : []).map((x, i) => Object.assign({ id: i + 1, type: x.type || 'Normal', name: 'Day Shift', maxShiftOvertimeMinutes: 0 }, timed(x, 'startDate', 'endDate'))),
-          nonJobEvents: (NB.cfg.events ? NB.cfg.events(id) : []).map((x, i) => Object.assign({ id: i + 1, name: 'Meeting' }, timed(x, 'appointmentStart', 'appointmentEnd'))),
+          shifts: (shiftsOf ? shiftsOf(id) : []).map((x, i) => Object.assign({ id: i + 1, type: x.type || 'Normal', name: 'Day Shift', maxShiftOvertimeMinutes: 0 }, timed(x, 'startDate', 'endDate'))),
+          nonJobEvents: (eventsOf ? eventsOf(id) : []).map((x, i) => Object.assign({ id: i + 1, name: 'Meeting' }, timed(x, 'appointmentStart', 'appointmentEnd'))),
           assignments: list.filter(a => (a.techs || []).indexOf(id) > -1).map(a => ({
             assignmentId: a.id * 10 + id, assignmentStatus: a.status || 'Scheduled', appointmentId: a.id, appointmentNumber: a.job + '-' + (a.n || 1),
             appointmentStart: a.start ? new Date(a.start).toISOString() : null, appointmentEnd: a.end ? new Date(a.end).toISOString() : null,
