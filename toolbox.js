@@ -26,8 +26,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.1.8';
+  const VERSION = '2.1.9';
   const WHATS_NEW = {
+    '2.1.9': 'Quicker 💬 Tech Messages on the new board: about half the time per tech. A tech whose name is already showing isn\'t scrolled to (each scroll left the board\'s names without their menus for about 1.5 seconds), and the next tech is got ready during the pause after each send. The same checks run on every send, and there\'s still at least 1.2 seconds between one send and the next.',
     '2.1.8': 'Fixed: 📅 Move a tech\'s day stopped after one job when ServiceTitan kept the job\'s arrival window on the old date. ServiceTitan does that for every time change (a drag on the board too), so it no longer stops: every job moves, and the run says how many windows still show the old date.',
     '2.1.7': 'Fixed: 📅 Move a tech\'s day stopped after one job, saying ServiceTitan kept its arrival window on an old day, when the window was already dated that day before the move (the day the job was first booked, as after a drag on the board). It now only stops for a window that was on the job\'s own day and got left behind.',
     '2.1.6': 'New in 🔀 Move Jobs: 📅 Move a tech\'s day to another day. Pick the tech and the day, and every open job of theirs on the day the board shows goes to that day at the same times (same length). Pick another tech in To and the jobs go to them instead. Review first, as always: it warns about anyone already booked on the new day, skills, and jobs another tech shares. One job goes first, and the rest only go once ServiceTitan shows its arrival window on the new day too. ↩ Put back puts the times and techs back.',
@@ -785,20 +786,42 @@
       return all.find(h => h.hasAttribute('data-hover-popover-trigger')) || all.find(visible) || all[0] || null;
     };
     const scrollerOf = el => { for (let e = el; e; e = e.parentElement) { const s = getComputedStyle(e); if (/(auto|scroll)/.test(s.overflowY) && e.scrollHeight > e.clientHeight + 4) return e; } return null; };
+    // A name already showing whole (inside the board's list and the window) is left where it is:
+    // every scroll makes the board draw its names again, without their menus for about 1.5 seconds
+    // (Oct 29 2026). One that isn't is brought in near the top of the list, so the techs after it
+    // on the board are showing too and the next ones need no scroll.
+    const inView = h => {
+      if (!h || !visible(h)) return false;
+      const r = h.getBoundingClientRect();
+      if (r.top < 0 || r.bottom > innerHeight) return false;
+      const sc = scrollerOf(h);
+      if (!sc) return true;
+      const s = sc.getBoundingClientRect();
+      return r.top >= s.top - 1 && r.bottom <= s.bottom + 1;
+    };
+    const bring = async h => {
+      const sc = scrollerOf(h);
+      if (sc) {
+        const r = h.getBoundingClientRect(), s = sc.getBoundingClientRect();
+        sc.scrollTop += (r.top - s.top) - Math.min(120, sc.clientHeight / 4);
+      }
+      if (!sc || !inView(h)) h.scrollIntoView({ block: sc ? 'nearest' : 'center' });
+      await wait(250);
+    };
     const showTech = async id => {
       let h = headerOf(id);
-      if (h && visible(h)) { h.scrollIntoView({ block: 'center' }); await wait(250); return headerOf(id); }
+      if (h && visible(h)) { if (!inView(h)) await bring(h); return headerOf(id); }
       const any = qa('[data-cy^="ddb-technician-header-"]')[0];
       const sc = any && scrollerOf(any);
       if (!sc) return null;
       const order = snap ? snap.techs.map(t => t.id) : [];
       const i = order.indexOf(String(id));
       // Jump near where the row should be, then step through the list until it's drawn.
-      if (i > -1 && order.length) { sc.scrollTop = Math.max(0, (sc.scrollHeight * i / order.length) - sc.clientHeight / 2); await wait(300); }
-      if ((h = headerOf(id))) { h.scrollIntoView({ block: 'center' }); await wait(250); return headerOf(id); }
+      if (i > -1 && order.length) { sc.scrollTop = Math.max(0, (sc.scrollHeight * i / order.length) - Math.min(120, sc.clientHeight / 4)); await wait(300); }
+      if ((h = headerOf(id))) { if (!inView(h)) await bring(h); return headerOf(id); }
       sc.scrollTop = 0; await wait(250);
       for (let n = 0; n < 60; n++) {
-        if ((h = headerOf(id))) { h.scrollIntoView({ block: 'center' }); await wait(250); return headerOf(id); }
+        if ((h = headerOf(id))) { if (!inView(h)) await bring(h); return headerOf(id); }
         const before = sc.scrollTop;
         sc.scrollTop += Math.max(200, sc.clientHeight * 0.8);
         await wait(180);
@@ -2843,6 +2866,9 @@
     // "Who can be messaged" before anyone on it can be picked.
     const SUGGEST_BLOCK = /^(leadership team|executive leadership)$|human resources|accounts (payable|receivable)|compliance|^dispatch$|client care|account executive|concierge|client benefits/i;
     const MAX_PER_RUN = 57;
+    // After a message is sent, the panel isn't switched to the next tech for this long. The next
+    // tech's row and menu are got ready meanwhile, so it no longer adds to each send's time.
+    const SEND_GAP = 1200;
     const K = { msgs: 'stMsgs', teams: 'stMsgTeams', never: 'stMsgNever', sel: 'stMsgSel', mode: 'stMsgMode', jobsOnly: 'stMsgJobsOnly', pick: 'stMsgPick', teamMap: 'stMsgTeamMap' };
     const loadJSON = (k, d) => { try { const v = JSON.parse(get(k)); return v == null ? d : v; } catch (e) { return d; } };
     const validMsgs = v => Array.isArray(v) && v.length > 0 && v.every(n => Array.isArray(n) && n.length === 2 && typeof n[0] === 'string' && typeof n[1] === 'string');
@@ -2974,6 +3000,21 @@
       }
       return best;
     };
+    // The message panel slides in (about half a second) when it opens. Wait until it has stopped
+    // moving (the same place three times running, 60 ms apart; up to a second) so the Toolbox
+    // moves out of its way to the right spot. Already open (the tech before), that's at once.
+    const settle = async () => {
+      let last = '', same = 0;
+      const end = Date.now() + 1000;
+      while (Date.now() < end) {
+        const r = acRect();
+        const k = r ? [r.left, r.top, r.width, r.height].map(Math.round).join() : '';
+        same = k && k === last ? same + 1 : 0;
+        if (same >= 2) return;
+        last = k;
+        await wait(60);
+      }
+    };
     const dodge = () => {
       const hr = acRect();
       if (!hr) return;
@@ -3011,7 +3052,9 @@
       items.forEach(it => (it.closest('[role="menu"]') || it).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, composed: true, cancelable: true })));
       if (items.length) await until(() => !openItems().length, 1000, 100);
     };
-    const openChatFor = async t => {
+    // notBefore: the message panel isn't switched to this tech before then (see SEND_GAP). Their
+    // row is brought into view and their menu waited for meanwhile; that doesn't touch the panel.
+    const openChatFor = async (t, notBefore) => {
       if (!board.root()) return changed('can\'t find the Dispatch board on the page', 'SERVICETITAN-DISPATCH-CENTER-*');
       // The board only draws the rows on screen: bring the tech's row into view first.
       let h = await board.showTech(t.id);
@@ -3022,6 +3065,8 @@
       // meanwhile, so it's looked up each time.
       const hasMenuButton = x => !!x && (!!x.querySelector('button[aria-haspopup]') || x.hasAttribute('data-hover-popover-trigger'));
       if (!hasMenuButton(h)) h = (await until(() => { const x = board.headerOf(t.id); return hasMenuButton(x) ? x : null; }, 6000, 100)) || board.headerOf(t.id) || h;
+      if (notBefore > Date.now()) await wait(notBefore - Date.now());
+      if (stopRun) return { stopped: true };   // Stop pressed meanwhile: nothing opened for them
       // The tech menu opens from their name: a right-click (Oct 27 2026) or a left click (it does
       // both since Oct 29). Whichever worked last is tried first. The press goes to the innermost
       // part of the name at that spot, so it reaches the menu whichever part listens for it.
@@ -3042,7 +3087,7 @@
       const openMenu = async how => {
         await closeMenus();
         press(how);
-        const found = await until(() => menuItem(h), 1500);
+        const found = await until(() => menuItem(h), 1500, 100);
         if (found) menuHow = how;
         return found;
       };
@@ -3061,7 +3106,7 @@
       // Only ever the item that says exactly "Send Message" (never the memo or call items).
       if (norm(item.textContent) !== 'Send Message') return changed('the tech menu has no "Send Message" option', '[data-cy="tmi-send-message"]: Send Message');
       item.click();
-      const ok = await until(() => chatBox() && panelName().toLowerCase() === t.name.toLowerCase(), 8000);
+      const ok = await until(() => chatBox() && panelName().toLowerCase() === t.name.toLowerCase(), 8000, 50);
       await closeMenus();   // the menu stays open after Send Message
       if (!ok) {
         if (!acHost(true)) return changed('can\'t find the message panel', 'SERVICETITAN-ACTIVITY-CENTER-*');
@@ -3456,6 +3501,7 @@
       // afterward, unless you dragged it somewhere yourself during the run (that saves a new spot).
       const homePos = { left: panel.style.left, right: panel.style.right, saved: get('stPos') };
       dodged = false;
+      let nextAt = 0;   // when the panel may switch to the next tech (SEND_GAP after a send)
       try {
         for (let n = 0; n < people.length; n++) {
           if (stopRun) { add('Stopped. ' + (people.length - n) + ' not messaged.'); break; }
@@ -3469,14 +3515,15 @@
           syncSafety();
           if (!canMessage(t)) { out(t, 'skipped: blocked by your 🛡️ settings', 'skipped'); continue; }
           if (!(await closeJobDrawer())) { out(t, 'skipped: a job panel would not close', 'problem'); continue; }
-          const err = await openChatFor(t);
+          const err = await openChatFor(t, nextAt);
+          if (err && err.stopped) { add('Stopped. ' + (people.length - n) + ' not messaged.'); break; }
           if (err && err.changed) {
             out(t, 'stopped: ' + err.what + '.', 'problem');
             add('Stopped the run.' + CHANGED);
             break;
           }
           if (err) { out(t, 'skipped: ' + err, 'problem'); continue; }
-          await wait(400);
+          await settle();
           dodge();
           let cover = coverOf();
           if (cover) {
@@ -3526,12 +3573,12 @@
             continue;
           }
           sb.click();
-          const went = await until(() => { const b3 = chatBox(); return b3 && b3.value === '' ? b3 : null; }, 8000);
+          const went = await until(() => { const b3 = chatBox(); return b3 && b3.value === '' ? b3 : null; }, 8000, 50);
           if (!went) { out(t, 'NOT CONFIRMED: the message may not have sent. Stopping to be safe.', 'problem'); break; }
           const r0 = acRoot();
-          const seen = await until(() => r0 && Array.from(r0.querySelectorAll('p')).filter(visible).slice(-5).some(p => norm(p.textContent) === norm(text)), 4000);
+          const seen = await until(() => r0 && Array.from(r0.querySelectorAll('p')).filter(visible).slice(-5).some(p => norm(p.textContent) === norm(text)), 4000, 100);
           out(t, seen ? 'sent' : 'sent (not showing in the chat yet)', 'sent');
-          await wait(1200);
+          nextAt = Date.now() + SEND_GAP;
         }
         const summary = Object.keys(tally).map(k => tally[k] + ' ' + k).join(', ') || 'nothing done';
         runMsg.textContent = 'Done: ' + summary + '.';

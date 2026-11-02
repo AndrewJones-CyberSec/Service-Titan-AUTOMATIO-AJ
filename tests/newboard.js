@@ -24,7 +24,8 @@
 //                 menuWords: the menu's items have no data-cy labels; a tech with noMenu has none)
 //   hydrateMs: n  (like the real board on Oct 29 2026: rows it has just drawn, at the start or
 //                 after a scroll, show a plain name with no menu button and no menu for n ms,
-//                 then the real name with its menu button)
+//                 then the real name with its menu button). NB.scrolls counts the list's real scrolls.
+//   slideMs: n   (the Send Message panel slides in from the right over n ms when it opens)
 //   filler: n    (n extra rows in the Jobs Tray, and a tall board above it)
 // NB.render() draws the board when the page is on it. '#/DispatchBoard' goes to the new address,
 // like ServiceTitan does. NB.setDay(d) changes the day. window.SENT lists [tech name, text] sent.
@@ -216,6 +217,7 @@
         // Only a real move counts (drawing the list again puts its scroll back, which isn't one).
         if (sc.scrollTop === NB.lastTop) return;
         NB.lastTop = sc.scrollTop;
+        NB.scrolls = (NB.scrolls || 0) + 1;
         clearTimeout(NB.vt);
         NB.vt = setTimeout(() => {
           if (c.hydrateMs) { NB.readyAt = Date.now() + c.hydrateMs; clearTimeout(NB.ht); NB.ht = setTimeout(NB.render, c.hydrateMs + 10); }
@@ -277,7 +279,16 @@
       const host = activityCenter();
       host.shadowRoot.getElementById('who').textContent = name;
       host.shadowRoot.getElementById('hist').textContent = '';
+      const wasShut = host.style.display !== 'inline';
       host.style.display = 'inline';
+      // NB.cfg.slideMs: like the real panel, it slides in from the right when it opens (not when
+      // it's already open and switches to another tech).
+      if (NB.cfg.slideMs && wasShut) {
+        const col = host.shadowRoot.querySelector('.col');
+        col.style.transition = 'none'; col.style.transform = 'translateX(100%)';
+        col.getBoundingClientRect();
+        col.style.transition = 'transform ' + NB.cfg.slideMs + 'ms linear'; col.style.transform = 'none';
+      }
       const c = NB.cfg.cover;
       host.__cover.style.display = c ? 'block' : 'none';
       if (typeof c === 'number') setTimeout(() => { host.__cover.style.display = 'none'; }, c);

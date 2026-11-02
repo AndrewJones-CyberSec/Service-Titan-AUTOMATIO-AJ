@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 HERE = pathlib.Path(__file__).parent
 # Suites with checks on how long things take: run one at a time, after the others.
-ALONE = {'test_move_speed.py', 'test_concurrency.py'}
+ALONE = {'test_move_speed.py', 'test_concurrency.py', 'test_message_speed.py'}
 
 args = sys.argv[1:]
 jobs = max(2, min(3, os.cpu_count() or 2))
