@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.9
+
+- **Quicker 💬 Tech Messages on the new board.** Sending took noticeably longer per tech than on the old board. The new board only draws the rows on screen, and every scroll draws its names again without their menus for about 1.5 seconds (Oct 29 2026). Tech Messages centered each tech's row before opening their menu, which nearly always scrolled, so most techs cost that 1.5 seconds, on top of the 1.2-second pause after each send and a fixed 0.4 seconds for the message panel. On the test board, 8 techs in a row went from 21.5 to 9.9 seconds, and 5 techs already showing from 12 to 5.5 seconds.
+  - **A tech whose name is already showing isn't scrolled to.** One that isn't is brought in near the top of the board's list, not the middle, so the techs after them are showing too and usually need no scroll (8 techs in a row: one scroll instead of five).
+  - **The next tech is got ready during the pause after a send:** their row is brought into view and their menu waited for meanwhile. The message panel still isn't switched to them until 1.2 seconds after the last send, as before.
+  - **The message panel:** instead of a fixed 0.4 seconds after it opens, the Toolbox waits until it has stopped sliding in (at once when it's already open from the tech before). That also fixes the Toolbox ending up over the panel for the first tech: it used to move out of the way while the panel was still sliding in, to a spot the panel then slid under.
+  - **Checks run more often** (every 0.05–0.1 seconds instead of every 0.25) for the tech menu, the panel showing the right person, the box clearing after Send, and the message showing in the chat.
+  - The checks themselves are the same on every send: 🛡️ settings read again, the right person in the panel, nothing covering the box, an empty box, the send confirmed. **Stop** during the pause after a send stops before the next tech's panel is opened.
+- Tests: new `tests/test_message_speed.py` (run on its own, as it times things). The fake board counts its scrolls and its message panel can slide in.
+
 ## 2.1.8
 
 - **Fixed: 📅 Move a tech's day still stopped after one job.** On Nov 1 2026, a job on Nov 2 with its window dated Nov 2 moved to Nov 30 and ServiceTitan kept the window dated Nov 2. ServiceTitan keeps a window's date for any time change (a drag on the board too; many jobs' windows are dated the day they were first booked), so it's not a reason to stop. Every job moves now, and the run ends with how many windows still show the old date. The window times are the same.

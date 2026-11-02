@@ -13,10 +13,10 @@ python3 tests/run_all.py other.js     # test another copy of the Toolbox
 ```
 
 **Why it's quick:** suites run two or three at a time, each in its own browser on its own fake
-board; the two suites that time how fast the Toolbox is (`test_move_speed.py`,
-`test_concurrency.py`) run afterwards with nothing else going. And runs that are slow on purpose
-(a save that never goes through, ServiceTitan not answering, a job that keeps failing) skip ahead
-on the page's clock instead of waiting it out for real (`fastclock.py`). The Toolbox sees the
+board; the three suites that time how fast the Toolbox is (`test_move_speed.py`,
+`test_concurrency.py`, `test_message_speed.py`) run afterwards with nothing else going. And runs
+that are slow on purpose (a save that never goes through, ServiceTitan not answering, a job that
+keeps failing) skip ahead on the page's clock instead of waiting it out for real (`fastclock.py`). The Toolbox sees the
 same time go by, just sooner. Checks that time something use the real clock, or the page's own
 clock when the point is "it gave up after 15 seconds".
 
@@ -28,6 +28,7 @@ clock when the point is "it gave up after 15 seconds".
 | `test_business_unit.py` | 🏢 Business Unit: picking, check, change, put back, locked jobs, errors, pop-ups, Stop |
 | `test_job_notifications.py` | 🔕 Job Notifications: one list (board, job list, typed, a tech from the list, a tech's name on the board, ＋ Whole board with jobs scrolled out of view, Unassigned, canceled and other days), each job's setting read as it's added (🔔 / 🔕 in the list, dashed on the board, no pages opened), buttons that count what they'd change, turning off and on (only the jobs that need it are opened), results as cards, a switch that won't stay on (⚠️ card, Open job, Try again), job data unreadable (❔, ↻ Check opens each job), no job-record access, scrolling, highlights |
 | `test_tech_menu.py` | 💬 Tech Messages opening each tech's menu: names that get their menu a moment after the board scrolls to them (Oct 29 2026), left click or right-click, left click only, the Oct 27 board, menu items found by their words, one tech without a menu skipped, a menu that never opens stops the run at the first tech, menus closed after each tech, a message box covered for a moment (waits) or the whole time (skipped, saying what covers it) |
+| `test_message_speed.py` | 💬 Tech Messages on the new board, quicker (2.1.9): names already showing aren't scrolled, eight in a row take one scroll (near the top, so the next ones show), five techs and eight techs in less time, still 1.2 s or more between one send and the next, techs picked far apart, Stop during the pause after a send (nobody else messaged, no other panel opened), the message panel sliding in (the Toolbox moves out of the way of where it ends up) |
 | `test_tech_messages.py` | 💬 Tech Messages: picking techs on the board, 🛡️ rules, highlights |
 | `test_customer_texts.py` | 📱 Customer Texts: holds, filters, numbers, repeat rules, STOP, Type only, Auto-send, ＋ Everyone on the board |
 | `test_outreach.py` | 📣 OutReach: a default folder, added once to saved folders (and not again after deleting it), its 30-day rule and opt-out line; the look-ahead at the next customer (one quick read at their turn, a STOP after the look-ahead is still caught, a stale one is taken again) |
