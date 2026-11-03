@@ -29,8 +29,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.3.1';
+  const VERSION = '2.3.2';
   const WHATS_NEW = {
+    '2.3.2': '🧭 Tech Router leaves out customers who don\'t want calls from us: if a job\'s summary or notes say "do not call", "doesn\'t want calls from us", "remove from call list" or "DNC", its hold isn\'t suggested in 📞 Fill a spot or 🗺️ Plan the day, and 🎯 Place a job says not to call. New 🚫 on a hold: Tech Router won\'t suggest it again until you take it off the list (🚫 Holds not suggested, at the bottom).',
     '2.3.1': 'Fixed: 🗺️ Plan the day (📋 The board, or Both) could move a job on the board to where its customer\'s time request couldn\'t be kept ("last stop", "not home until 1pm"), and only marked it ⚠️ afterwards. The board\'s jobs\' summaries and notes are read first now, so their requests are kept while planning, the same as the Unassigned jobs\'.',
     '2.3': 'Smarter 🗺️ Plan the day: choose ＋ Unassigned, 📋 The board (re-plan who does each job already on the board, and in what order) or Both, and tick 🕐 Set times too for each job\'s new time inside its window (set by Move Jobs, undone by ↩ Put back). It places the hardest jobs first, then keeps improving the plan a move at a time, checks it with real drive times, and shows before → after. 🔕 Job Notifications: new 🗂️ By job type, to set job types 🔔 on or 🔕 off and ⚙️ Apply them to the board\'s day in one run.',
     '2.2': 'New in 🧭 Tech Router: 🎯 Place a job. Click a job (or type its number) for the best techs to put it on, each with why: its window, the extra driving, who does these jobs, their day and skills. Or it says to RS it, with the best of the next 6 days from the schedules as they stand, and opens 📱 Customer Texts or 📝 Notes in their Reschedule folders. Also new: ✨ Optimize → 🔁 Trade jobs, for jobs another tech is better placed for at the same time (each keeps its time). The Toolbox reads the board lighter and quicker, and 🗺️ Plan the day checks skills and no longer stops when the Hold list can\'t be read.',
@@ -7208,6 +7209,8 @@
   //     whether to RS it and which of the next days has room (see place, below).
   //   🔁 Trade jobs (in ✨ Optimize): jobs another tech is better placed for at the same time, and
   //     two jobs at the same time that should swap techs (see findTrades, below).
+  //   🚫 A customer whose notes say not to call isn't suggested to call (see noCallFor), and holds
+  //     marked 🚫 aren't suggested again until they're taken off the list (see skipList).
   //   Where things are: Unassigned and Hold jobs by their map point in ServiceTitan; jobs on the
   //   timeline, and Unassigned or Hold jobs without a map point, by their street address, looked up
   //   with Mapbox (only the address is sent: street, town, state, zip); if that can't be had, by the
@@ -7239,7 +7242,7 @@
     const overlap = (a, b) => !!(a.start && a.end && b.start && b.end) && a.start < b.end && b.start < a.end;
     const hours = a => a.start && a.end ? (a.end - a.start) / 3600000 : 0;
 
-    const LEARN_DAYS = 28, UA_DAYS = 15, MIN_GAP = 30, SLACK = 15, MAX_DETOUR = 90, ROUTED = 24, SKILL_MISS = 45, ASK_MISS = 60;
+    const LEARN_DAYS = 28, UA_DAYS = 15, MIN_GAP = 30, SLACK = 15, MAX_DETOUR = 90, ROUTED = 24, SKILL_MISS = 45, ASK_MISS = 60, NO_CALL_SPARE = 4;
     const SHOW = 5, MAX = 12, NEAR_SHOW = 3, NEAR_MAX = 10, STACK = 60, LONG_JOB = 4;
     const SALES = [/^sales\s*\/\s*service\b/i, /^project coordinator/i], SALES_MAX = 330, OVER_WEIGHT = 2;
     const isSales = team => SALES.some(re => re.test(norm(team)));
@@ -7914,7 +7917,30 @@
 
     const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
     navRow.append(smallBtn('← Menu', () => showView('menu')));
-    wrap.append(beta, tabs, msg, placeBox, fillBox, planBox, optBox, nearBox, keyHead, keyBox, navRow);
+    // 🚫 Holds not suggested: the holds marked 🚫, each with ↩ to suggest it again.
+    const skipHead = el('button', FULL + 'padding:3px 6px;border:1px solid var(--st-line);border-radius:6px;background:var(--st-soft);color:var(--st-ink-2);font:inherit;font-size:11.5px;text-align:left;cursor:pointer');
+    skipHead.type = 'button'; skipHead.id = 'st-router-skips-head';
+    const skipBox = el('div', 'display:none;gap:3px;padding:7px;border:1px solid var(--st-line);border-radius:6px;background:var(--st-soft);font-size:12px');
+    skipBox.id = 'st-router-skips';
+    const renderSkips = () => {
+      const v = skipList(), ids = Object.keys(v).sort((a, b) => (v[b].at || 0) - (v[a].at || 0));
+      skipHead.style.display = ids.length || skipBox.style.display !== 'none' ? 'block' : 'none';
+      skipHead.textContent = '🚫 Holds not suggested (' + ids.length + ')' + (skipBox.style.display === 'none' ? '  ▸' : '  ▾');
+      skipBox.textContent = '';
+      skipBox.appendChild(el('div', 'color:var(--st-ink-2)', ids.length ? 'Tech Router doesn\'t suggest these holds. ↩ puts one back. (Saved in this browser.)' : 'No holds on the list.'));
+      ids.forEach(j => {
+        const r = el('div', 'display:flex;gap:6px;align-items:center;padding:2px 0;border-top:1px solid var(--st-line)');
+        r.className = 'st-router-skip';
+        r.setAttribute('data-job', j);
+        const at = v[j].at ? new Date(v[j].at) : null;
+        r.append(el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', '#' + j + (v[j].customer ? ' ' + v[j].customer : '') + (at && !isNaN(at) ? ' · since ' + at.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '')),
+          pill('↩', 'Suggest #' + j + ' again', () => { setSkip({ jobId: j }, false); say('#' + j + ' can be suggested again.'); }));
+        skipBox.appendChild(r);
+      });
+      fit();
+    };
+    skipHead.onclick = () => { skipBox.style.display = skipBox.style.display === 'none' ? 'grid' : 'none'; renderSkips(); };
+    wrap.append(beta, tabs, msg, placeBox, fillBox, planBox, optBox, nearBox, keyHead, keyBox, skipHead, skipBox, navRow);
     routerPane.appendChild(wrap);
     const showTab = () => {
       [[placeTab, 'place'], [fillTab, 'fill'], [planTab, 'plan'], [optTab, 'opt'], [nearTab, 'near']].forEach(([b, v]) => b.classList.toggle('on', tab === v));
@@ -8048,11 +8074,14 @@
         const C = await candidates(s, uaBox.checked, holdBox.checked, stale);
         if (!C || stale()) return;
         // The right kind of job, and somewhere to measure to.
-        const onDay = new Set(board.techJobs(t.id)), memo = new Map(), left = { other: 0, otherBy: new Map(), place: 0, phone: 0 };
+        const onDay = new Set(board.techJobs(t.id)), memo = new Map(), left = { other: 0, otherBy: new Map(), place: 0, phone: 0, skip: 0, noCall: [] };
         const fitFor = c => { const k = c.typeId + '|' + c.type; if (!memo.has(k)) memo.set(k, fitOf(L, t, c.typeId, c.type)); return memo.get(k); };
         const pool = [];
+        const skips = skipList();
         C.rows.forEach(c => {
           if (onDay.has(c.jobId)) return;
+          // A hold on your 🚫 list isn't suggested again.
+          if (c.source === 'hold' && Object.prototype.hasOwnProperty.call(skips, S(c.jobId))) { left.skip++; return; }
           // A phone-call-only job isn't a visit to fit into their day.
           if (PHONE_ONLY.test(c.type)) { left.phone++; return; }
           const f = fitFor(c);
@@ -8128,7 +8157,8 @@
             x.score = x.extra + bonus(x.c, g) + penalty + (x.askMiss ? ASK_MISS : 0);
           });
           top.forEach(x => { if (x.out === 'long') g.left.long++; else if (x.out === 'far') g.left.far++; });
-          g.list = top.filter(x => !x.out).sort((x, y) => x.score - y.score || x.extra - y.extra).slice(0, MAX);
+          // A few more than are shown, in case some are left out for their notes (🚫 don't call).
+          g.list = top.filter(x => !x.out).sort((x, y) => x.score - y.score || x.extra - y.extra).slice(0, MAX + NO_CALL_SPARE);
           g.noDrive = !m.ok && top.length > 0;
           gaps.push(g);
         }
@@ -8161,7 +8191,20 @@
           const asks = await readAsks(listed.map(askCand), stale);
           if (stale()) return;
           listed.forEach(c => { if (asks.has(S(c.jobId))) c.ask = asksFrom(asks.get(S(c.jobId)), s.day); });
+          // 🚫 Notes that say not to call: a job to call (a hold to book, or an Unassigned job on a
+          // later day to move up) is left out; one already on that day's Unassigned list (no call to
+          // assign it) stays, marked.
+          const nc = new Map();
+          listed.forEach(c => { const v = noCallFor(askCand(c)); if (v) nc.set(S(c.jobId), v); });
+          const toCall = c => c.source === 'hold' || (c.source === 'ua' && c.day && !board.sameDay(c.day, s.day));
           gaps.forEach(g => {
+            g.list = g.list.filter(x => {
+              const v = nc.get(S(x.c.jobId));
+              if (!v) return true;
+              if (!toCall(x.c)) { x.noCall = v; return true; }
+              if (!left.noCall.some(y => y.c.jobId === x.c.jobId)) left.noCall.push({ c: x.c, nc: v });
+              return false;
+            });
             g.list.forEach(x => {
               const was = x.askMiss;
               x.askMiss = !!x.c.ask && !askFits(x.c.ask, g, x);
@@ -8170,6 +8213,7 @@
             g.list.sort((x, y) => x.score - y.score || x.extra - y.extra);
           });
         }
+        gaps.forEach(g => { g.list = g.list.slice(0, MAX); });
         const notes = C.notes.slice();
         if (zipError) notes.push('⚠️ Some zip codes couldn\'t be looked up: ' + zipError + '.');
         renderFill({ s, t, D, gaps, L, notes, left, sales, dayDrive, home, total: C.rows.length, suited: pool.length });
@@ -8232,6 +8276,7 @@
       if (x.salesOver) chips.appendChild(chip('⚠️ ~' + mins(x.salesOver) + ' driving that day', 'a', 'Over the sales goal of ' + mins(SALES_MAX) + ' of driving a day'));
       const wt = waiting(c);
       if (wt) chips.appendChild(chip(wt, '', 'Booked ' + dayText(c.created)));
+      if (x.noCall) chips.appendChild(chip('🚫 notes: don\'t call', 'r', noCallWords(x.noCall) + ' It\'s on that day\'s Unassigned list, so it can be assigned without a call.'));
       box.appendChild(chips);
       if (c.tags.length) box.appendChild(tagChips(c.tags, 3));
       box.appendChild(el('div', 'color:var(--st-ink-3);font-size:11px', driveWords(x, g)));
@@ -8240,6 +8285,18 @@
       act.appendChild(el('span', 'flex:1;min-width:120px;font-size:13px;font-weight:800;user-select:text;color:' + (c.phone ? 'var(--st-ink)' : 'var(--st-ink-3)'), c.phone ? '📞 ' + fmtPhone(c.phone) : 'No phone number'));
       if (c.phone) act.appendChild(copyPill('📋', fmtPhone(c.phone), 'Copy the phone number'));
       act.appendChild(pill('🔎', 'Open job #' + c.jobId + ' in a new tab', () => openJob(c.jobId)));
+      // 🚫 A hold not to suggest again (already called about, said no…).
+      if (c.source === 'hold') {
+        const nb = pill('🚫', 'Don\'t suggest this hold again. (🚫 Holds not suggested, at the bottom, puts it back.)', () => {
+          setSkip(c, true);
+          r.gaps.forEach(g2 => { g2.list = g2.list.filter(y => y.c.jobId !== c.jobId); });
+          r.left.skip = (r.left.skip || 0) + 1;
+          renderFill(r, true);
+          say('#' + c.jobId + (c.customer ? ' ' + c.customer : '') + ' won\'t be suggested again.');
+        });
+        nb.className = 'st-router-skip-btn';
+        act.appendChild(nb);
+      }
       if (c.source === 'ua' && c.day && board.sameDay(c.day, r.s.day)) {
         const mv = pill('➡️ Assign', 'Opens 🔀 Move Jobs with #' + c.jobId + ' and ' + r.t.name + ' filled in. Nothing changes until you review it and press Move.' + (x.asIs ? '' : ' Its time doesn\'t fit this open time yet: change it first.'), () => assign(c.jobId, r.t.id, r.t.name), 'background:#6a1b9a;border-color:#6a1b9a;color:#fff');
         mv.className = 'st-router-assign';
@@ -8312,6 +8369,12 @@
         const by = Array.from(r.left.otherBy.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => '• ' + shortTeam(k) + ': ' + v).join('\n');
         fillOut.appendChild(fold(head, 'Only the kinds of jobs ' + t.name + ' or ' + (shortTeam(t.team) || 'their department') + ' did in the last 4 weeks are suggested.' + (by ? '\nMostly done by:\n' + by : '')));
       }
+      if (r.left && r.left.noCall && r.left.noCall.length) {
+        const f = fold('🚫 Left out: ' + plural(r.left.noCall.length, 'job') + ' whose notes say not to call', r.left.noCall.map(y => '• #' + y.c.jobId + ' ' + (y.c.customer || '') + ': ' + noCallWords(y.nc)).join('\n'));
+        f.className = 'st-router-nocall';
+        fillOut.appendChild(f);
+      }
+      if (r.left && r.left.skip) fillOut.appendChild(small('🚫 ' + plural(r.left.skip, 'hold') + ' on your don\'t-suggest list ' + (r.left.skip === 1 ? 'was' : 'were') + ' left out (🚫 Holds not suggested, at the bottom).'));
       r.notes.forEach(n => fillOut.appendChild(small(n, 'color:var(--st-amber)')));
       const foot = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap');
       foot.append(copyPill('📋 Copy list', fillText(r), 'Copies the suggestions for every open time as text'));
@@ -9182,22 +9245,26 @@
         // without much more driving (HOLD_ADD minutes), without making a stop late or the day longer
         // than it already is, and close to the route (HOLD_NEAR miles); at most HOLD_MAX per tech, and only
         // job types they do (not ones with nothing to go by). Best fit first, across every route.
-        let holdsPlaced = 0;
-        const holdNotes = [];
+        let holdsPlaced = 0, holdsSkipped = 0;
+        const holdNotes = [], holdsNoCall = [];
         if (withUA && planHolds.checked && routes.length) {
           say('Looking through the Hold list…');
           const H = await candidates(s, false, true, stale);
           if (!H || stale()) return;
           H.notes.forEach(n => holdNotes.push(n));
           const planned = new Set(jobs0.map(c => c.jobId));
-          const pool0 = H.rows.filter(c => !PHONE_ONLY.test(c.type) && !planned.has(c.jobId)).map(c => Object.assign({}, c, { win: windowOf(c.tags, null, null, day) }));
+          // Holds on your 🚫 list aren't fitted in.
+          const skips = skipList();
+          const pool0 = H.rows.filter(c => !PHONE_ONLY.test(c.type) && !planned.has(c.jobId) && !(Object.prototype.hasOwnProperty.call(skips, S(c.jobId)) && ++holdsSkipped)).map(c => Object.assign({}, c, { win: windowOf(c.tags, null, null, day) }));
           await locate([], pool0, [], stale);
           if (stale()) return;
-          const pool = pool0.filter(c => c.pt);
+          const pool1 = pool0.filter(c => c.pt);
           // Their notes: only for the holds close to someone's route (the only ones that can be fitted in).
           const nearAny = h => routes.some(R => [R.startPt, R.homePt].concat(R.stops.map(x => x.pt)).some(p => p && miles(p, h.pt) <= HOLD_NEAR));
-          const holdAsks = await readAsks(pool.filter(nearAny).map(askCand), stale);
+          const holdAsks = await readAsks(pool1.filter(nearAny).map(askCand), stale);
           if (stale()) return;
+          // 🚫 A hold whose notes say not to call isn't fitted in (it's to call and book).
+          const pool = pool1.filter(h => { const v = nearAny(h) ? noCallFor(askCand(h)) : null; if (v) holdsNoCall.push({ c: h, nc: v }); return !v; });
           const near = (R, h) => [R.startPt, R.homePt].concat(R.stops.map(x => x.pt)).some(p => p && miles(p, h.pt) <= HOLD_NEAR);
           const bestFor = (R, h) => {
             const x = { kind: 'hold', c: h, jobId: h.jobId, customer: h.customer, city: h.city, addr: addrOf(h.street, h.city, h.state, h.zip, h.pt), pt: h.pt, win: h.win, ask: holdAsks.has(S(h.jobId)) ? asksFrom(holdAsks.get(S(h.jobId)), day) : askOf(h.note, day), dur: h.dur, prio: norm(h.priority).toLowerCase(), phone: h.phone };
@@ -9290,7 +9357,7 @@
         const newN = rows.filter(r => jobs0.some(c => c.jobId === r.jobId)).length;
         const movedN = changed.reduce((t, R) => t + R.stops.filter(x => x.kind === 'board' && x.home !== R).length, 0);
         const timedN = rows.filter(r => r.start).length;
-        lastPlan = { s, what, times, routes: changed, left, rows, grace, today, noDrive, zipError, holdNotes, total: jobs0.length - otherDept, otherDept, pickName, holdsPlaced, skillsMissed, score, newN, movedN, timedN, boardNotesMissed };
+        lastPlan = { s, what, times, routes: changed, left, rows, grace, today, noDrive, zipError, holdNotes, total: jobs0.length - otherDept, otherDept, pickName, holdsPlaced, skillsMissed, score, newN, movedN, timedN, boardNotesMissed, holdsNoCall, holdsSkipped };
         renderPlan(lastPlan);
       } catch (e) {
         if (stale()) return;
@@ -9354,6 +9421,12 @@
         P.left.forEach(l => box.appendChild(el('div', 'color:var(--st-ink-2)', '• ' + (l.c.customer || 'Job') + ' #' + l.c.jobId + (l.c.win ? ' (' + l.c.win.label + ')' : '') + ': ' + l.why)));
         planOut.appendChild(box);
       }
+      if (P.holdsNoCall && P.holdsNoCall.length) {
+        const f = fold('🚫 ' + plural(P.holdsNoCall.length, 'hold') + ' not fitted in: their notes say not to call', P.holdsNoCall.map(y => '• #' + y.c.jobId + ' ' + (y.c.customer || '') + ': ' + noCallWords(y.nc)).join('\n'));
+        f.className = 'st-plan-nocall';
+        planOut.appendChild(f);
+      }
+      if (P.holdsSkipped) planOut.appendChild(small('🚫 ' + plural(P.holdsSkipped, 'hold') + ' on your don\'t-suggest list ' + (P.holdsSkipped === 1 ? 'was' : 'were') + ' left out (🚫 Holds not suggested, at the bottom).'));
       if (P.boardNotesMissed) planOut.appendChild(small('⚠️ The summary or notes of ' + plural(P.boardNotesMissed, 'job') + ' on the board couldn\'t be read, so a time the customer asked for there may not be counted.', 'color:var(--st-amber)'));
       if (P.skillsMissed) planOut.appendChild(small('⚠️ The skills ' + plural(P.skillsMissed, 'planned job needs', 'planned jobs need') + ' couldn\'t be read; 🔀 Move Jobs checks them before anything changes.', 'color:var(--st-amber)'));
       if (P.otherDept) planOut.appendChild(small(plural(P.otherDept, 'job') + ' for other departments ' + (P.otherDept === 1 ? 'is' : 'are') + ' left on the Unassigned list (pick All departments to plan them too).'));
@@ -9438,7 +9511,15 @@
         what.appendChild(document.createTextNode((x.customer || 'Job') + ' #' + x.jobId + (x.prio === 'urgent' || x.prio === 'high' ? ' ⭐' : '') + (x.city ? ' · ' + tidy(x.city) : '')));
         if (x.ask) { what.appendChild(document.createTextNode(' ')); what.appendChild(askChip(x.ask, o.askMiss)); }
         if (o.late >= 5) what.appendChild(el('span', 'font-weight:700;color:' + (o.winBad ? 'var(--st-red)' : 'var(--st-amber)'), ' · ' + (o.winBad ? '⚠️ ' : '') + lateWords(o, P)));
-        if (hold) what.appendChild(el('span', 'display:block;font-weight:700;user-select:text', x.phone ? '📞 ' + fmtPhone(x.phone) + ' · call to book it' : 'No phone number: call to book it'));
+        if (hold) {
+          const line = el('span', 'display:block;font-weight:700;user-select:text', x.skipped ? '🚫 Won\'t be suggested again (plan again to fill its time)' : x.phone ? '📞 ' + fmtPhone(x.phone) + ' · call to book it ' : 'No phone number: call to book it ');
+          if (!x.skipped) {
+            const nb = pill('🚫', 'Don\'t suggest this hold again. (🚫 Holds not suggested, at the bottom, puts it back.)', () => { setSkip(x.c, true); x.skipped = true; renderPlan(P); say('#' + x.jobId + (x.customer ? ' ' + x.customer : '') + ' won\'t be suggested again. Plan again to fill its time.'); });
+            nb.className = 'st-router-skip-btn';
+            line.appendChild(nb);
+          }
+          what.appendChild(line);
+        }
         // Its new time (🕐 Set times too), or an Unassigned job's booked time when it's far from when they'd get there.
         const was = x.a ? x.a.start : x.c && x.c.start ? x.c.start : null;
         if (x.newTime && !hold) what.appendChild(el('span', 'font-weight:700;color:var(--st-blue-d)', ' · 🕐 ' + (was ? clock(was) + ' → ' : '') + clock(x.newTime.start)));
@@ -9639,6 +9720,66 @@
     const asksFrom = (src, day) => { for (const x of src || []) { const a = askOf(x.text, day); if (a) { a.src = x.src; return a; } } return null; };
     const askJob = a => ({ jobId: a.jobId, customerId: a.customerId, locationId: a.locationId });
     const askCand = c => ({ jobId: c.jobId, customerId: c.customerId, locationId: c.locationId, summary: c.note || '' });
+
+    // ---------- 🚫 A customer who doesn't want calls from us ----------
+    // Their job's summary, or the job's, customer's or location's notes (any age, pinned or not), say
+    // so: "do not call", "doesn't want to receive calls from us", "stop calling", "remove from call
+    // list", "DNC"… A time to call isn't one ("don't call before 10am", "do not call until after 3"),
+    // and neither is which number to use ("don't call the house phone"). A job like that isn't
+    // suggested to call (a hold to book, an Unassigned job on a later day to move up). The notes are
+    // the ones readAsks has read (it's always called first). { text (the sentence), src } or null.
+    const NO_CALL = [
+      /\b(?:do\s*not|don'?t|dont|never|please\s+do\s*not|pls\s+do\s*not|plz\s+do\s*not)\s+(?:ever\s+)?(?:call|phone|contact)\b/i,
+      /\b(?:does\s*not|doesn'?t|doesnt|do\s*not|don'?t|dont|did\s*not|didn'?t)\s+want\s+(?:any\s+|a\s+|our\s+|more\s+|any\s+more\s+)?(?:calls?|phone\s*calls?|call\s*backs?|callbacks?|to\s+be\s+(?:called|contacted)|us\s+to\s+(?:call|contact)|to\s+(?:receive|get)\s+(?:any\s+)?(?:more\s+)?(?:calls?|phone\s*calls?))\b/i,
+      /\b(?:said|asked|asks|says|wants|requested)\s+(?:us\s+)?(?:not\s+to|to\s+not)\s+(?:call|contact)\b/i,
+      /\b(?:stop|quit)\s+calling\b/i,
+      /\bno\s+more\s+(?:phone\s+)?calls\b|\bno\s+(?:phone\s+)?calls?\s+(?:please|pls|plz)\b/i,
+      /\b(?:remove|take)\s+(?:\w+\s+){0,3}(?:off|from)\s+(?:\w+\s+){0,2}(?:call(?:ing)?|contact|phone)\s+list\b/i,
+      /\bdo\s*-?\s*not\s*-?\s*call\s+list\b|\bDNC\b/,
+      /\b(?:not|never)\s+to\s+be\s+(?:called|contacted)\b/i
+    ];
+    // What comes right after "do not call" (the first pattern) that makes it about when, or which
+    // number, so not a "no calls": "before 10", "until after 3", "at 9", "on Mondays", "in the
+    // morning", "the house phone". ("Do not call at all" still counts.)
+    const NOT_NO_CALL = /^\s*(?:(?:the\s+)?(?:customer|cust|them|him|her|homeowner|ho)\s+)?(?:before|after|until|till|til|past|between|during|unless|while|early|late|(?:at|from)\s+(?:\d|noon|lunch|night|work\b)|on\s+(?:mon|tue|wed|thu|fri|sat|sun|weekend|\d)|in\s+the\s+(?:morning|afternoon|evening)|this\s+(?:morning|afternoon|evening)|(?:the\s+|their\s+|his\s+|her\s+)?(?:house|home|land\s*line|work|cell|mobile|office|other|main|old)\b)/i;
+    const noCallIn = raw => {
+      const text = norm(String(raw || '').replace(/<br\s*\/?>|<\/p>|<\/div>|<\/li>/gi, '. ').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&#39;|&apos;/gi, '\'').replace(/&quot;/gi, '"')).replace(/\.(\s*\.)+/g, '.');
+      if (!text) return null;
+      for (const sen of text.split(/(?<=[.!?;\n])\s+|\s*\n\s*/).map(norm).filter(Boolean)) {
+        for (let i = 0; i < NO_CALL.length; i++) {
+          const m = NO_CALL[i].exec(sen);
+          if (!m || (i === 0 && NOT_NO_CALL.test(sen.slice(m.index + m[0].length)))) continue;
+          return sen.length > 140 ? sen.slice(0, 137) + '…' : sen;
+        }
+      }
+      return null;
+    };
+    const noCallFor = j => {
+      const src = [];
+      const sc = sumCache.get(S(j.jobId)), sum = j.summary != null ? j.summary : sc ? sc.text : null;
+      if (sum) src.push({ text: sum, src: 'The job summary' });
+      owners(j).forEach(([k, id, word]) => {
+        const c = ownerCache.get(k + id);
+        if (c) c.notes.forEach(n => src.push({ text: n.text, src: 'A ' + word + ' note' + (n.at ? ' from ' + n.at.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: n.at.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined }) : '') }));
+      });
+      for (const x of src) { const sen = noCallIn(x.text); if (sen) return { text: sen, src: x.src }; }
+      return null;
+    };
+    const noCallWords = nc => nc.src + ' says: "' + nc.text + '"';
+
+    // ---------- 🚫 Holds not to suggest again ----------
+    // Holds you've marked 🚫 (already called about, said no…): Tech Router doesn't suggest them again
+    // until you take them off the list (🚫 Holds not suggested, at the bottom). Saved in this browser:
+    // { job number: { customer, at } }. Read fresh each time, so a change in another tab counts here too.
+    const SKIP_KEY = 'stRouterSkipHolds';
+    const skipList = () => { const v = readSaved(SKIP_KEY, {}, {}); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; };
+    const isSkipped = j => Object.prototype.hasOwnProperty.call(skipList(), S(j));
+    const setSkip = (c, on) => {
+      const v = skipList();
+      if (on) v[S(c.jobId)] = { customer: norm(c.customer) || '', at: Date.now() }; else delete v[S(c.jobId)];
+      set(SKIP_KEY, JSON.stringify(v));
+      renderSkips();
+    };
     let optRun = 0, lastOpt = null, optView = 'best';
     const optimize = async () => {
       const run = ++optRun;
@@ -10339,6 +10480,8 @@
         const asks = await readAsks([J.source === 'board' ? askJob(J.appt) : askCand(J)], stale);
         if (stale()) return;
         const src = asks.get(S(J.jobId)) || [];
+        // 🚫 Notes that say not to call this customer (a hold isn't suggested to book then).
+        const nc = noCallFor(J.source === 'board' ? askJob(J.appt) : askCand(J));
         // Its own day: everyone tried, then Mapbox's drive times for the best few.
         let home = null;
         if (sOwn) {
@@ -10360,10 +10503,10 @@
           if (stale()) return;
           if (home) { markSkills(home.list, need); rankOk(home.list); }
         }
-        const P = { s, J, home, need, grace, src, L, asksMissed: asks.missed };
+        const P = { s, J, home, need, grace, src, L, asksMissed: asks.missed, nc };
         P.best = home ? home.list.find(o => o.ok) || null : null;
         // RS: when it has no day, its day has passed, or nobody can take it well on its day.
-        const wantRS = !home || !clean(P.best);
+        const wantRS = (!home || !clean(P.best)) && !(J.source === 'hold' && nc);
         if (wantRS) await placeDays(P, stale);
         if (stale()) return;
         verdict(P);
@@ -10424,6 +10567,10 @@
       const low = days.length ? Math.min.apply(null, days.map(r => r.best.score)) : 0, soonest = days.find(r => r.best.score <= low + GOOD_ENOUGH) || null;
       const firstName = t => board.firstName(t.name) || t.name;
       const where = o => '~' + clock(o.at.arrive) + (o.at.x.win ? ' (' + o.at.x.win.label + ')' : '') + ' · +' + (o.guessed ? '~' : '') + mins(o.add) + ' driving';
+      if (J.source === 'hold' && P.nc) {
+        P.v = { kind: 'nocall', tone: 'r', head: '🚫 Don\'t call to book it: the notes say not to', sub: noCallWords(P.nc) + ' So it isn\'t suggested to book.' };
+        return;
+      }
       if (J.source === 'hold') {
         const r = cleanDay || soonest;
         const warn = r && !clean(r.best) ? [r.best.at.winBad ? mins(r.best.at.late) + ' late' : '', r.best.at.askMiss ? 'not when they asked' : '', r.best.newBad ? 'makes ' + plural(r.best.newBad, 'other stop') + ' late' : '', r.best.add > CLEAN_ADD ? mins(r.best.add) + ' out of the way' : '', r.best.sim.over > CLEAN_OVER ? 'a long day' : ''].filter(Boolean).join(', ') : '';
@@ -10578,6 +10725,21 @@
         vb.appendChild(b);
       }
       if (v.kind === 'rs' || v.kind === 'none' || v.kind === 'late' || v.kind === 'book') vb.appendChild(rsButtons(P));
+      // 🚫 Notes that say not to call, for any job (a hold's is the verdict itself).
+      if (P.nc && v.kind !== 'nocall') {
+        const w = el('div', 'font-size:12px;font-weight:700;color:var(--st-red-d)', '🚫 Notes: don\'t call. ' + noCallWords(P.nc));
+        w.className = 'st-place-nocall';
+        vb.appendChild(w);
+      }
+      // A hold: 🚫 not to be suggested again, or ↩ back on.
+      if (J.source === 'hold') {
+        const on = isSkipped(J.jobId);
+        if (on) vb.appendChild(el('div', 'font-size:12px;color:var(--st-ink-2)', '🚫 On your don\'t-suggest list: 📞 Fill a spot and 🗺️ Plan the day leave it out.'));
+        const t = pill(on ? '↩ Suggest this hold again' : '🚫 Don\'t suggest this hold again', on ? 'Takes it off your don\'t-suggest list' : 'Puts it on your don\'t-suggest list: 📞 Fill a spot and 🗺️ Plan the day leave it out (🚫 Holds not suggested, at the bottom, puts it back)',
+          () => { setSkip(J, !on); say('#' + J.jobId + (on ? ' can be suggested again.' : ' won\'t be suggested again.')); renderPlace(P); }, 'justify-self:start');
+        t.className = 'st-place-skip';
+        vb.appendChild(t);
+      }
       placeOut.appendChild(vb);
       // Its own day: the best few.
       if (P.home) {
@@ -10647,7 +10809,7 @@
       if (P.home && !P.home.real) placeOut.appendChild(small('⚠️ Drive times aren\'t available right now, so these are guesses from straight-line miles (marked ~).', 'color:var(--st-amber)'));
       placeOut.appendChild(small('Like 🗺️ Plan the day: its window (Late OK: ' + mins(P.grace) + '), least extra driving, a little for each job a tech has, their shift, the sales rule. Field techs who did this kind of job in the last 4 weeks. Drive times © Mapbox © OpenStreetMap.'));
       placeOut.style.display = 'grid';
-      say(v.kind === 'here' || v.kind === 'move' ? 'Best first. ➡️ fills in Move Jobs; nothing changes until you press Move there.' : v.kind === 'stay' ? 'It\'s fine where it is.' : v.kind === 'book' ? 'A hold: call the customer to book it.' : 'Call the customer to RS it; nothing changes by itself.');
+      say(v.kind === 'here' || v.kind === 'move' ? 'Best first. ➡️ fills in Move Jobs; nothing changes until you press Move there.' : v.kind === 'stay' ? 'It\'s fine where it is.' : v.kind === 'book' ? 'A hold: call the customer to book it.' : v.kind === 'nocall' ? 'Don\'t call: the notes say not to.' : 'Call the customer to RS it; nothing changes by itself.');
       paint();
       fit();
     };
@@ -10655,6 +10817,7 @@
     board.onChange(() => { if (shown()) { fillTechs(); fillPlanTeams(); paint(); } });
     const refresh = () => {
       beta.style.display = 'flex';   // the Beta warning, every time it's opened
+      renderSkips();
       fillTechs();
       fillPlanTeams();
       showTab();
