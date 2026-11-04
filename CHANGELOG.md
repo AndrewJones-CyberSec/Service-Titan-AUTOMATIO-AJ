@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.4.1
+
+- **🧠 Toolbox AI: 👎 Something's wrong? (teach it).** The AI reads notes with a list of the ways dispatchers write things, which misses shorthand and your own words. Now you can teach it, right in the write-up:
+  - **Read wrong:** ✕ on a chip (🔥 No heat or AC, 🚫 Don't call…), then keep the words that made it look that way (*"not cooling upstairs"*). Those words don't mean that any more.
+  - **Missed something:** pick the sentence, what it means (any of its chips, or 🚫 Doesn't want calls), and the words that say it (*"pt on order"*, *"TCC"*, *"waiting on tax refund"*). The words have to be in the sentence, side by side (case and punctuation don't matter).
+  - Each lesson works right away (the job is read again from what was already read, nothing is asked of ServiceTitan again), on every job from then on: the write-up, the chips (📖 marks one you taught), the kind of call script, ⏸️ Holds to call, and the chances.
+  - **A phrase taught as 🚫 Doesn't want calls counts in 🧭 Tech Router too**, so 📞 Fill a spot, 🗺️ Plan the day and 🎯 Place a job don't suggest calling them (and one taught as not meaning it is no longer read as "don't call").
+  - **📖 What you've taught it** lists the lessons, with ↩ to take one back. Saved in this browser.
+- **🧠 Toolbox AI learns without taps:**
+  - **Credit on its own:** when a hold is booked (it left the Hold list with a visit on the schedule) within 14 days of a call, the approach gets the credit: a "📅 Call back later" counts as booked, and if no call was logged at all, the approach you were shown for it does. *(1 counted on its own: the hold got booked within 14 days)* says so under the script. A script you were shown is noted (once a day per hold and approach), but never counted as a call.
+  - **The best time to call:** from the calls logged (each with its hour), when customers pick up: *🕑 Customers pick up most in the afternoon (3–6): 9 of 10 calls; mornings 1 of 8* (once there are 10 calls and a clear best time), in the write-up and at the top of ⏸️ Holds to call. And when this customer picked up last (*🕑 They picked up in the middle of the day (12–3) last time (Oct 31, 2:00 PM)*), from the notes' times and your calls. When calls at this time of day haven't reached them, the next step says when to try instead (*🕑 Try in the afternoon (3–6): customers pick up most then (9 of 10 calls), and calls in the morning haven't reached them*).
+- Tests: `tests/test_ai.py` adds teaching (✕ on a chip, a missed phrase used on another job, words not in the sentence refused, "do not solicit" taught as don't call and left out of Holds to call, ↩), credit on its own (after "call back later", and after a script shown with no tap, each picked next time; scripts shown aren't calls), and the best time to call (customers' and this customer's).
+
 ## 2.4
 
 - **New: 🧠 Toolbox AI (Beta).** A small AI that lives in your browser and learns from your own ServiceTitan data. It doesn't chat: it reads, and it suggests. It never changes a job, sends a text or adds a note by itself.

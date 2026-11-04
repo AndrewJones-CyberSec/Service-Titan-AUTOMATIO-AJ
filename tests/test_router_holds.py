@@ -106,7 +106,8 @@ with sync_playwright() as p:
     # ================= The sentences =================
     page = b.new_page()
     page.set_content('<p>check</p>')
-    page.evaluate("(code) => { const norm = s => String(s == null ? '' : s).replace(/\\s+/g, ' ').trim(); window.noCallIn = new Function('norm', code + '; return noCallIn;')(norm); }", SNIP)
+    # The reading on its own: norm, and no lessons taught (🧠 Toolbox AI's taught phrases, 2.4.1).
+    page.evaluate("(code) => { const norm = s => String(s == null ? '' : s).replace(/\\s+/g, ' ').trim(); window.noCallIn = new Function('norm', 'taught', code + '; return noCallIn;')(norm, { list: () => [], says: () => null }); }", SNIP)
     missed = [x for x in YES if not page.evaluate('(t) => noCallIn(t)', x)]
     wrong = [x for x in NO if page.evaluate('(t) => noCallIn(t)', x)]
     check(not missed, 'every "don\'t call" sentence counts (%d of them; missed: %s)' % (len(YES), missed))

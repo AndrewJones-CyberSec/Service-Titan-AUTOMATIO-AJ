@@ -35,8 +35,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.4';
+  const VERSION = '2.4.1';
   const WHATS_NEW = {
+    '2.4.1': 'Smarter 🧠 Toolbox AI. 👎 Something\'s wrong? teaches it how your notes are written: ✕ on what it read wrong, or pick a sentence it missed and what it means ("pt on order", "TCC", "waiting on tax refund"); it reads it that way on every job from then on, and a phrase you teach means "don\'t call" in 🧭 Tech Router too. It also learns without taps: a hold booked within 14 days after a call (or after you were shown its script) credits that approach, and it learns when customers pick up ("Customers pick up most in the afternoon (3–6): 9 of 10 calls") and when this one did, to say when to call.',
     '2.4': 'New: 🧠 Toolbox AI (Beta). Click a job (or type its number) and 🧠 Explain writes up what\'s going on: why a hold is waiting (the price, who has to say yes, parts, financing, away until a day), the calls that didn\'t reach them, their texts (an unread one is left unread), a call-back day, their other jobs and usual tech, and what to watch out for. For a hold it gives a call script to book it (opener, why you\'re calling, the offer, answers for what they\'ll say, a voicemail), and learns which approach books the most from "How did the call go?". ⏸️ Holds to call puts the Hold list in order. 📚 Learn reads months or years of schedules into this browser (each day once, nothing kept twice), and 📥 adds a CSV report from ServiceTitan. It only reads and suggests.',
     '2.3.2': '🧭 Tech Router leaves out customers who don\'t want calls from us: if a job\'s summary or notes say "do not call", "doesn\'t want calls from us", "remove from call list" or "DNC", its hold isn\'t suggested in 📞 Fill a spot or 🗺️ Plan the day, and 🎯 Place a job says not to call. New 🚫 on a hold: Tech Router won\'t suggest it again until you take it off the list (🚫 Holds not suggested, at the bottom).',
     '2.3.1': 'Fixed: 🗺️ Plan the day (📋 The board, or Both) could move a job on the board to where its customer\'s time request couldn\'t be kept ("last stop", "not home until 1pm"), and only marked it ⚠️ afterwards. The board\'s jobs\' summaries and notes are read first now, so their requests are kept while planning, the same as the Unassigned jobs\'.',
@@ -7183,6 +7184,37 @@
   })();
 
   // ===================================================================
+  // What you've taught the AI (🧠 Toolbox AI → 👎 Something's wrong?)
+  // Phrases your notes use that the AI read wrong, or didn't read at all: { id, topic, phrase, not,
+  // at }. topic: one of the AI's topics (parts, price, urgent…) or 'nocall' (the customer doesn't
+  // want calls). not: true for "this phrase does NOT mean that" (it read a topic that isn't there).
+  // A phrase counts in a sentence when its words are there, in order, side by side (case and
+  // punctuation don't matter): "pt on order" is in "Pt. on order, ETA Friday". Saved in this
+  // browser and read fresh, so a lesson taught in another tab counts here too. Tech Router uses the
+  // 'nocall' lessons too, so a hold the AI has been taught not to call isn't suggested there either.
+  // ===================================================================
+  const taught = (() => {
+    const KEY = 'stAiTaught', MAX = 400;
+    const squash = t => ' ' + String(t == null ? '' : t).toLowerCase().replace(/<[^>]*>/g, ' ').replace(/&[a-z]+;|&#\d+;/g, ' ').replace(/[^a-z0-9$%]+/g, ' ').trim() + ' ';
+    const list = () => { const v = readSaved(KEY, [], []); return Array.isArray(v) ? v.filter(x => x && typeof x.topic === 'string' && typeof x.phrase === 'string' && norm(x.phrase)) : []; };
+    // Does this sentence have a lesson for topic (not: the "isn't" kind)? The lesson, or null.
+    const says = (sen, topic, not, lessons) => {
+      const s0 = squash(sen);
+      return (lessons || list()).find(l => l.topic === topic && !!l.not === !!not && s0.indexOf(squash(l.phrase)) > -1) || null;
+    };
+    const add = (topic, phrase, not) => {
+      phrase = norm(phrase);
+      const v = list().filter(l => !(l.topic === topic && squash(l.phrase) === squash(phrase)));
+      const x = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), topic, phrase, not: !!not, at: Date.now() };
+      v.push(x);
+      set(KEY, JSON.stringify(v.slice(-MAX)));
+      return x;
+    };
+    const remove = id => { set(KEY, JSON.stringify(list().filter(l => l.id !== id))); };
+    return { list, says, add, remove, squash };
+  })();
+
+  // ===================================================================
   // Tool 7: Tech Router (Beta)
   // Still being built: it says so each time it's opened. It only reads. Anything that changes a
   // job goes through 🔀 Move Jobs, where nothing changes until it's reviewed and the button pressed.
@@ -9756,7 +9788,11 @@
     const noCallIn = raw => {
       const text = norm(String(raw || '').replace(/<br\s*\/?>|<\/p>|<\/div>|<\/li>/gi, '. ').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&#39;|&apos;/gi, '\'').replace(/&quot;/gi, '"')).replace(/\.(\s*\.)+/g, '.');
       if (!text) return null;
+      const lessons = taught.list();
       for (const sen of text.split(/(?<=[.!?;\n])\s+|\s*\n\s*/).map(norm).filter(Boolean)) {
+        // What you've taught 🧠 Toolbox AI: a phrase that means "don't call" (or doesn't).
+        if (lessons.length && taught.says(sen, 'nocall', true, lessons)) continue;
+        if (lessons.length && taught.says(sen, 'nocall', false, lessons)) return sen.length > 140 ? sen.slice(0, 137) + '…' : sen;
         for (let i = 0; i < NO_CALL.length; i++) {
           const m = NO_CALL[i].exec(sen);
           if (!m || (i === 0 && NOT_NO_CALL.test(sen.slice(m.index + m[0].length)))) continue;
@@ -11053,19 +11089,27 @@
     // read(text, at): { sentences, topics: [{ key, sen }] (each topic once, its first sentence),
     //   amounts: [{ n, sen }] (next to price words), when (see whenIn), who (see whoIn),
     //   attempt (a call that didn't reach them), reached (we talked to them) }
-    const read = (text, at) => {
+    // lessons: what you've taught it (see taught, above); read fresh when not given.
+    const read = (text, at, lessons) => {
+      const L = lessons || taught.list();
       const sens = sentencesOf(text), topics = [], seen = new Set(), amounts = [];
       let when = null, who = null, attempt = false, reached = false;
       sens.forEach(sen => {
         TOPICS.forEach(t => {
           if (seen.has(t.key)) return;
+          // Taught: this sentence doesn't mean that (even if the usual words are in it).
+          if (L.length && taught.says(sen, t.key, true, L)) return;
+          let hit = false;
           for (const r of t.re) {
             const m = r.exec(sen);
             if (!m) continue;
             if (t.neg && NEG_BEFORE.test(sen.slice(0, m.index))) continue;
-            seen.add(t.key); topics.push({ key: t.key, sen });
+            hit = true;
             break;
           }
+          // Taught: a phrase of yours that means it.
+          const lesson = !hit && L.length ? taught.says(sen, t.key, false, L) : null;
+          if (hit || lesson) { seen.add(t.key); topics.push({ key: t.key, sen, taught: !!lesson }); }
         });
         if (PRICE_WORDS.test(sen)) moneyIn(sen).forEach(n => amounts.push({ n, sen }));
         if (!when) when = whenIn(sen, at);
@@ -11086,19 +11130,19 @@
     // ---- Learning: which holds get booked (naive Bayes, on words, topics and the job type) ----
     // examples: [{ text, type, label (1 booked, 0 lost) }]. A model of how often each feature shows
     // up on booked and on lost holds, and chance(example) → { p (0–1), why: [{ f, booked, n }] }.
-    const featuresOf = e => {
-      const r = read(e.text || '');
+    const featuresOf = (e, L) => {
+      const r = read(e.text || '', null, L);
       const fam = norm(e.type).split(/\s*-\s*/)[0].toLowerCase();
       return Array.from(new Set(tokens(e.text || '').map(w => 'w:' + w).concat(r.topics.map(t => 't:' + t.key), fam ? ['y:' + fam] : [], e.type ? ['type:' + norm(e.type).toLowerCase()] : [])));
     };
     const train = examples => {
-      const n = [0, 0], f = [new Map(), new Map()];
-      examples.forEach(e => { const L = e.label ? 1 : 0; n[L]++; featuresOf(e).forEach(x => f[L].set(x, (f[L].get(x) || 0) + 1)); });
+      const n = [0, 0], f = [new Map(), new Map()], lessons = taught.list();
+      examples.forEach(e => { const L = e.label ? 1 : 0; n[L]++; featuresOf(e, lessons).forEach(x => f[L].set(x, (f[L].get(x) || 0) + 1)); });
       const chance = e => {
         if (!n[0] || !n[1]) return null;
         let logit = Math.log(n[1] / n[0]);
         const why = [];
-        featuresOf(e).forEach(x => {
+        featuresOf(e, lessons).forEach(x => {
           const b = f[1].get(x) || 0, l = f[0].get(x) || 0;
           if (b + l < 3) return;   // too rare to go by
           const w = Math.log((b + 1) / (n[1] + 2)) - Math.log((l + 1) / (n[0] + 2));
@@ -11582,7 +11626,32 @@
     const agoText = d => { const n = daysAgo(d); return n <= 0 ? 'today' : n === 1 ? 'yesterday' : n < 14 ? n + ' days ago' : n < 60 ? Math.round(n / 7) + ' weeks ago' : n < 730 ? Math.round(n / 30.4) + ' months ago' : Math.round(n / 365) + ' years ago'; };
     const inText = d => { const n = -daysAgo(d); return n === 0 ? 'today' : n === 1 ? 'tomorrow' : n > 1 ? 'in ' + n + ' days' : agoText(d); };
     const clock = d => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    const partOfDay = h => h < 12 ? 'morning' : h < 15 ? 'middle of the day' : 'afternoon';
+    // Times of day, for when customers pick up: [key, word, said as, from hour, to hour].
+    const SLOTS = [['morning', 'morning', 'in the morning (before noon)', 0, 12], ['midday', 'middle of the day', 'in the middle of the day (12–3)', 12, 15],
+      ['afternoon', 'afternoon', 'in the afternoon (3–6)', 15, 18], ['evening', 'evening', 'in the evening (after 6)', 18, 24]];
+    const slotOf = h => SLOTS.find(x => h >= x[3] && h < x[4]) || SLOTS[0];
+    const partOfDay = h => slotOf(h)[1];
+    // Calls you logged: 'shown' marks a call script you were shown (not a call); 'vm' a call that
+    // didn't reach them; booked, later and no, calls that did.
+    const isCall = c => c && c.out && c.out !== 'shown';
+    const reachedOn = c => isCall(c) && c.out !== 'vm';
+    // When customers pick up, from every call logged with its hour: { best (slot), per: { key: { tries,
+    // reached } }, n } once there are PICKUP_MIN calls and a clear best time (at least 15 points better
+    // than the worst, counting times with 3 or more calls); else null.
+    const PICKUP_MIN = 10;
+    const pickupOf = calls => {
+      const per = {};
+      let n = 0;
+      calls.filter(c => isCall(c) && typeof c.hour === 'number').forEach(c => { const k = slotOf(c.hour)[0], x = per[k] || (per[k] = { tries: 0, reached: 0 }); x.tries++; n++; if (reachedOn(c)) x.reached++; });
+      if (n < PICKUP_MIN) return null;
+      const rate = k => (per[k].reached + 1) / (per[k].tries + 2), ok = SLOTS.filter(x => per[x[0]] && per[x[0]].tries >= 3);
+      if (ok.length < 2) return null;
+      const best = ok.reduce((a, b) => (rate(b[0]) > rate(a[0]) ? b : a)), worst = ok.reduce((a, b) => (rate(b[0]) < rate(a[0]) ? b : a));
+      if (rate(best[0]) - rate(worst[0]) < 0.15) return null;
+      return { best, per, n, rate };
+    };
+    const pickupText = P => 'Customers pick up most ' + P.best[2] + ': ' + P.per[P.best[0]].reached + ' of ' + P.per[P.best[0]].tries + ' calls' +
+      SLOTS.filter(x => x !== P.best && P.per[x[0]] && P.per[x[0]].tries >= 3).map(x => '; ' + x[1] + 's ' + P.per[x[0]].reached + ' of ' + P.per[x[0]].tries).join('');
     const zip5 = z => (/\b(\d{5})/.exec(String(z == null ? '' : z)) || [])[1] || '';
     const idOf = v => (v == null || v === '' ? null : S(v));
     const STATUS = ['Scheduled', 'Dispatched', 'Working', 'Hold', 'Done', 'Canceled'];
@@ -11915,10 +11984,11 @@
       const notes = R.notes.slice().sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.at || 0) - (a.at || 0));
       const sources = notes.map(n => ({ text: n.text, at: n.at, src: 'a ' + n.src + ' note' + (n.at ? ' from ' + dText(n.at) : ''), note: n }))
         .concat(R.summary ? [{ text: R.summary, at: J.created || null, src: 'the job summary' }] : []);
-      sources.forEach(x => { x.r = lang.read(x.text, x.at || now); });
-      const A = { J, R, M, type, now, sources, topics: new Map(), notes, isHold: J.where === 'hold' || /^hold$/i.test(J.status || '') };
+      const lessons = taught.list();
+      sources.forEach(x => { x.r = lang.read(x.text, x.at || now, lessons); });
+      const A = { J, R, M, type, now, sources, topics: new Map(), notes, isHold: J.where === 'hold' || /^hold$/i.test(J.status || ''), model, callsIn: calls };
       // Each topic once: where it was said last.
-      sources.forEach(x => x.r.topics.forEach(t => { if (!A.topics.has(t.key)) A.topics.set(t.key, { key: t.key, sen: t.sen, src: x.src, at: x.at }); }));
+      sources.forEach(x => x.r.topics.forEach(t => { if (!A.topics.has(t.key)) A.topics.set(t.key, { key: t.key, sen: t.sen, src: x.src, at: x.at, taught: t.taught }); }));
       const memberTag = J.tags.find(t => /club|member|agreement/i.test(t));
       if (memberTag && !A.topics.has('member')) A.topics.set('member', { key: 'member', sen: 'Tagged ' + memberTag, src: 'its tags' });
       for (const x of sources) { const a = x.r.amounts.slice().sort((p, q) => q.n - p.n)[0]; if (a) { A.amount = { n: a.n, sen: a.sen, src: x.src }; break; } }
@@ -11929,11 +11999,17 @@
       A.attempts = sources.filter(x => x.note && x.r.attempt).map(x => x.at).filter(Boolean);
       A.reached = (sources.find(x => x.note && x.r.reached && x.at) || {}).at || null;
       if (A.reached) A.attempts = A.attempts.filter(t => t > A.reached);
+      // When they've picked up, and when they haven't: the notes' times, and the calls you logged.
+      const mineCalls = (calls || []).filter(isCall);
+      const reaches = sources.filter(x => x.note && x.r.reached && x.at).map(x => x.at).concat(mineCalls.filter(reachedOn).map(c => new Date(c.at))).sort((a, b) => b - a);
+      A.missedAt = sources.filter(x => x.note && x.r.attempt && x.at).map(x => x.at).concat(mineCalls.filter(c => c.out === 'vm').map(c => new Date(c.at)));
+      A.theirTime = reaches.length ? { at: reaches[0], slot: slotOf(reaches[0].getHours()) } : null;
+      A.pickup = pickupOf(allCalls);
       // Texts.
       const T = R.texts || {};
       const ours = (T.msgs || []).filter(m => m.out && !m.auto), theirs = (T.msgs || []).filter(m => !m.out);
       A.lastOut = ours[ours.length - 1] || null; A.lastIn = theirs[theirs.length - 1] || null;
-      theirs.slice(-5).reverse().forEach(m => lang.read(m.body, m.at).topics.forEach(t => { if (!A.topics.has(t.key)) A.topics.set(t.key, { key: t.key, sen: m.body, src: 'their text from ' + dText(m.at), at: m.at }); }));
+      theirs.slice(-5).reverse().forEach(m => lang.read(m.body, m.at, lessons).topics.forEach(t => { if (!A.topics.has(t.key)) A.topics.set(t.key, { key: t.key, sen: m.body, src: 'their text from ' + dText(m.at), at: m.at }); }));
       // Tech Router's reading: a customer who doesn't want calls, and a time they asked for.
       for (const x of sources) { const sen = router.noCallIn(x.text); if (sen) { A.noCall = { sen, src: x.src }; break; } }
       for (const x of sources) { const a = router.askOf(x.text, A.isHold ? null : (J.start || J.day || null)); if (a) { A.ask = Object.assign({ src: x.src }, a); break; } }
@@ -11990,9 +12066,14 @@
       if (t('lost')) return { tone: 'a', text: '❓ The notes say they may not want it. Ask if they still do; if not, close it out.' };
       if (A.when && A.when.after && A.when.at > day0(A.now)) return { tone: 'a', text: '⏳ Wait: they asked to hear from us after ' + dText(A.when.at, true) + ' (' + inText(A.when.at) + ').' };
       if (t('parts')) return { tone: 'b', text: '📦 Check the part is in, then call to book it.' };
-      const today = A.calls.filter(c => daysAgo(new Date(c.at)) === 0);
+      const today = A.calls.filter(c => isCall(c) && daysAgo(new Date(c.at)) === 0);
       if (today.length) return { tone: 'a', text: '📞 Already called today (' + today.map(c => OUT_WORDS[c.out] || c.out).join(', ') + '). Try again another day.' };
       if (A.attempts.length >= 3 && !(A.lastOut && daysAgo(A.lastOut.at) <= 3)) return { tone: 'b', text: '📱 Try a text: ' + plural(A.attempts.length, 'call') + ' haven\'t reached them.' };
+      // The best time to call: when they've picked up before, else when customers pick up most, if
+      // calls at this time of day haven't reached them.
+      const nowSlot = slotOf(new Date().getHours()), missedNow = A.missedAt.filter(d => slotOf(d.getHours()) === nowSlot).length;
+      if (missedNow && A.theirTime && A.theirTime.slot !== nowSlot) return { tone: 'b', text: '🕑 Try ' + A.theirTime.slot[2] + ': they picked up then on ' + dText(A.theirTime.at) + ', and calls in the ' + nowSlot[1] + ' haven\'t reached them.' };
+      if (missedNow && A.pickup && A.pickup.best !== nowSlot) return { tone: 'b', text: '🕑 Try ' + A.pickup.best[2] + ': customers pick up most then (' + A.pickup.per[A.pickup.best[0]].reached + ' of ' + A.pickup.per[A.pickup.best[0]].tries + ' calls), and calls in the ' + nowSlot[1] + ' haven\'t reached them.' };
       const hours = A.attempts.map(d => d.getHours());
       if (hours.length >= 2 && hours.every(h => partOfDay(h) === partOfDay(hours[0])) && partOfDay(new Date().getHours()) === partOfDay(hours[0])) return { tone: 'b', text: '🕑 The last calls were all in the ' + partOfDay(hours[0]) + '. Try another time of day.' };
       return { tone: 'g', text: '📞 Call to book it. The script is below.' };
@@ -12048,10 +12129,25 @@
       return '';
     };
     // How each angle has done on holds of this kind: talked = calls where you reached them.
-    // { angleKey: { talked, booked, later } }. A voicemail doesn't count (nobody heard the angle).
-    const angleStats = (calls, sit) => {
-      const m = {};
-      calls.filter(c => c.sit === sit && c.out !== 'vm').forEach(c => { const s = m[c.angle] || (m[c.angle] = { talked: 0, booked: 0, later: 0 }); s.talked++; if (c.out === 'booked') s.booked++; if (c.out === 'later') s.later++; });
+    // { angleKey: { talked, booked, later, auto } }. A voicemail doesn't count (nobody heard the angle).
+    // Credit without a tap (auto): when a hold is booked (it left the Hold list, see brain.watchHolds)
+    // within CREDIT_DAYS of a call, the call counts as booked: the last "📅 Call back later" before
+    // it, or else (no call logged at all) the last approach you were shown for it.
+    const CREDIT_DAYS = 14;
+    const angleStats = (calls, sit, holds) => {
+      const m = {}, rec = k => m[k] || (m[k] = { talked: 0, booked: 0, later: 0, auto: 0 }), byJob = new Map();
+      calls.filter(c => c.sit === sit && c.angle).forEach(c => { if (!byJob.has(c.j)) byJob.set(c.j, []); byJob.get(c.j).push(c); });
+      byJob.forEach((list, j) => {
+        list.sort((a, b) => a.at - b.at);
+        const talks = list.filter(c => reachedOn(c));
+        talks.forEach(c => { const x = rec(c.angle); x.talked++; if (c.out === 'booked') x.booked++; if (c.out === 'later') x.later++; });
+        const h = holds && holds.get(S(j)), at = h && h.out === 'booked' ? h.outAt : null;
+        if (!at || talks.some(c => c.out === 'booked')) return;
+        const before = list.filter(c => c.at <= at && at - c.at <= CREDIT_DAYS * DAY);
+        const later = before.filter(c => c.out === 'later').pop(), shown = before.filter(c => c.out === 'shown').pop();
+        if (later) { const x = rec(later.angle); x.later--; x.booked++; x.auto++; }
+        else if (shown && !before.some(c => c.out === 'no')) { const x = rec(shown.angle); x.talked++; x.booked++; x.auto++; }
+      });
       return m;
     };
     // The best record (booked, and a little for "call back later"), with one booking's worth of benefit
@@ -12091,7 +12187,7 @@
     const scriptFor = (A, angleKey) => {
       const S0 = SCRIPTS[A.sit] || SCRIPTS.general;
       const angles = S0.angles.filter(a => a.needs !== 'finance' || offersFinance());
-      const stats = angleStats(allCalls, A.sit);   // every hold like this, not just this one
+      const stats = angleStats(allCalls, A.sit, allHolds);   // every hold like this, not just this one
       const angle = angles.find(a => a.key === angleKey) || pickAngle(angles, stats);
       const F = fillsFor(A), t = k => A.topics.has(k);
       const parts = [['👋 Open', fillLine(OPEN, F)], ['🎯 Why you\'re calling', fillLine(angle.why, F)]];
@@ -12109,7 +12205,7 @@
     };
 
     // ---------- Explain ----------
-    let runId = 0, last = null, allCalls = [], memOff = '', lastHolds = null;
+    let runId = 0, last = null, allCalls = [], allHolds = new Map(), memOff = '', lastHolds = null;
     const safe = p => Promise.resolve(p).catch(e => { memOff = errText(e); return null; });
     // fromHolds: opened from ⏸️ Holds to call (the write-up gets a ← back to the list).
     const explain = async (raw, fromHolds) => {
@@ -12133,9 +12229,10 @@
         if (stale()) return;
         say('Thinking…');
         memOff = '';
-        const [M, model, calls] = await Promise.all([safe(brain.aboutJob(J.j, J.customerId, J.locationId, J.customer)), safe(brain.getModel()), safe(mem.all('calls'))]);
+        const [M, model, calls, holds0] = await Promise.all([safe(brain.aboutJob(J.j, J.customerId, J.locationId, J.customer)), safe(brain.getModel()), safe(mem.all('calls')), safe(mem.all('holds'))]);
         if (stale()) return;
         allCalls = calls || [];
+        allHolds = new Map((holds0 || []).map(h => [h.j, h]));
         const A = await analyze(J, R, M, model, allCalls.filter(c => c.j === J.j));
         if (stale()) return;
         A.fromHolds = !!(fromHolds && lastHolds);
@@ -12209,6 +12306,8 @@
         L.push('📵 Called ' + plural(A.attempts.length, 'time') + ' without reaching them (' + A.attempts.slice(0, 4).map(d => dText(d)).join(', ') + (A.attempts.length > 4 ? '…' : '') + (same ? ', all in the ' + partOfDay(hours[0]) : '') + ').');
       }
       if (A.reached) L.push('☎️ Last talked with them ' + dText(A.reached) + ' (' + agoText(A.reached) + ').');
+      if (A.isHold && A.theirTime) L.push('🕑 They picked up ' + A.theirTime.slot[2] + ' last time (' + dText(A.theirTime.at) + ', ' + clock(A.theirTime.at) + ').');
+      if (A.isHold && A.pickup) L.push('🕑 ' + pickupText(A.pickup) + '.');
       const T = A.R.texts;
       if (T && T.unread) L.push('💬 They have an unread text reply. Read it in the Chat Center before you call (the AI left it unread).');
       else if (A.lastIn && (!A.lastOut || A.lastIn.at > A.lastOut.at)) L.push('💬 They texted ' + agoText(A.lastIn.at) + ': "' + lang.clip(A.lastIn.body || '(a picture)', 140) + '"');
@@ -12244,11 +12343,11 @@
       if (A.ask) box.appendChild(chip('🕑 ' + (A.ask.words || 'a time request'), 'p', A.ask.src + ': "' + (A.ask.text || '') + '"'));
       lang.TOPICS.filter(t => t.group === 'flag' || t.group === 'good' || t.group === 'lost').forEach(t => {
         const x = A.topics.get(t.key);
-        if (x) { const c = chip(t.icon + ' ' + t.label, t.tone, x.src + ': "' + x.sen + '"'); c.setAttribute('data-topic', t.key); box.appendChild(c); }
+        if (x) { const c = chip(t.icon + ' ' + t.label + (x.taught ? ' 📖' : ''), t.tone, x.src + ': "' + x.sen + '"' + (x.taught ? ' (you taught it this)' : '')); c.setAttribute('data-topic', t.key); box.appendChild(c); }
       });
       lang.TOPICS.filter(t => t.group === 'why').forEach(t => {
         const x = A.topics.get(t.key);
-        if (x) { const c = chip(t.icon + ' ' + t.label, t.tone || 'b', x.src + ': "' + x.sen + '"'); c.setAttribute('data-topic', t.key); box.appendChild(c); }
+        if (x) { const c = chip(t.icon + ' ' + t.label + (x.taught ? ' 📖' : ''), t.tone || 'b', x.src + ': "' + x.sen + '"' + (x.taught ? ' (you taught it this)' : '')); c.setAttribute('data-topic', t.key); box.appendChild(c); }
       });
       if (A.amount) box.appendChild(chip('💲 ' + lang.money(A.amount.n), '', A.amount.src + ': "' + A.amount.sen + '"'));
       return box;
@@ -12278,12 +12377,17 @@
       const sec = section('📋 What\'s going on', 'st-ai-story');
       story(A).forEach(t => sec.appendChild(line(t)));
       sec.appendChild(chipsFor(A));
+      const teachBtn = pill(A.teachOpen ? '👎 Close' : '👎 Something\'s wrong?', 'Teach it: what it read wrong, or what it missed. It remembers, for every job.', () => { A.teachOpen = !A.teachOpen; render(A); });
+      teachBtn.className = 'st-ai-teach-open';
+      teachBtn.style.justifySelf = 'start';
+      sec.appendChild(teachBtn);
       out.appendChild(sec);
+      if (A.teachOpen) out.appendChild(renderTeach(A));
       if (A.R.missed.length) out.appendChild(small('⚠️ Couldn\'t read ' + A.R.missed.join(', ') + ', so it may be missing something.', 'color:var(--st-amber)'));
       if (memOff) out.appendChild(small('⚠️ The AI\'s memory is off in this browser (' + memOff + '), so it only knows what it read just now.', 'color:var(--st-amber)'));
       // The call script, for a hold.
       A.script = null;
-      if (A.isHold && !A.noCall) { A.script = scriptFor(A, A.angleKey); out.appendChild(renderScript(A)); }
+      if (A.isHold && !A.noCall) { A.script = scriptFor(A, A.angleKey); out.appendChild(renderScript(A)); noteShown(A); }
       // Buttons.
       const act = el('div', 'display:flex;gap:4px;flex-wrap:wrap');
       act.className = 'st-ai-actions';
@@ -12316,6 +12420,104 @@
       out.style.display = 'grid';
       paint(); fit();
     };
+    // ---------- 👎 Teaching it ----------
+    // What it read wrong (✕ on a chip: which words say it isn't so), what it missed (a sentence, what
+    // it means, and the words that say it), and the lessons so far (↩ takes one back). Each lesson is
+    // used right away: the job is read again from what was already read (nothing is asked again).
+    const meaning = k => k === 'nocall' ? '🚫 Doesn\'t want calls' : ((lang.TOPIC.get(k) || {}).icon || '') + ' ' + ((lang.TOPIC.get(k) || {}).label || k);
+    let teachSay = '';
+    const relearn = async (A, said) => {
+      brain.changed();
+      teachSay = said;
+      const A2 = await analyze(A.J, A.R, A.M, A.model, A.callsIn);
+      Object.assign(A2, { teachOpen: true, fromHolds: A.fromHolds, angleKey: A.angleKey });
+      last = A2;
+      render(A2);
+      say(A2.next.text);
+    };
+    const renderTeach = A => {
+      const box = section('👎 Teach it', 'st-ai-teach');
+      box.appendChild(small('Fix what it read. It remembers in this browser, for every job from now on (and Tech Router\'s "don\'t call" uses it too).'));
+      const note = el('div', 'min-height:14px;font-size:12px;font-weight:700;color:var(--st-green-d)', teachSay);
+      note.id = 'st-ai-teach-msg';
+      teachSay = '';
+      const bad = t => { note.style.color = 'var(--st-red-d)'; note.textContent = t; };
+      const has = (sen, phrase) => taught.squash(sen).indexOf(taught.squash(phrase)) > -1;
+      const check = (sen, phrase) => {
+        phrase = norm(phrase);
+        if (phrase.replace(/[^a-z0-9]/gi, '').length < 2) return bad('⚠️ Type the words that say it.') && false;
+        if (phrase.length > 120) return bad('⚠️ Shorter, please: just the words that say it.') && false;
+        if (!has(sen, phrase)) return bad('⚠️ Those words aren\'t in that sentence (they have to be, side by side).') && false;
+        return true;
+      };
+      // ✕: it read something that isn't there.
+      const wrong = el('div', 'display:grid;gap:4px');
+      wrong.appendChild(el('div', 'font-size:11px;font-weight:800;color:var(--st-ink-3)', 'Read wrong? Press ✕ on what isn\'t right:'));
+      const chipsRow = el('div', 'display:flex;gap:4px;flex-wrap:wrap');
+      const form = el('div', 'display:none;gap:4px');
+      const items = Array.from(A.topics.values()).filter(t => t.src !== 'its tags').map(t => ({ key: t.key, sen: t.sen }));
+      if (A.noCall) items.unshift({ key: 'nocall', sen: A.noCall.sen });
+      items.forEach(it => {
+        const c = pill(meaning(it.key) + ' ✕', 'It isn\'t this', () => {
+          form.textContent = '';
+          const inp = el('input', FULL + FIELD); inp.type = 'text'; inp.value = it.sen; inp.className = 'st-ai-teach-not-phrase';
+          const save = pill('Save: these words don\'t mean that', 'Saves the lesson', () => {
+            if (!check(it.sen, inp.value)) return;
+            const ph = norm(inp.value);
+            taught.add(it.key, ph, true);
+            relearn(A, '✓ Learned: "' + ph + '" doesn\'t mean ' + meaning(it.key).replace(/^\S+\s/, '') + '.');
+          }, PRIMARY);
+          save.className = 'st-ai-teach-not-save';
+          form.append(el('div', 'font-size:12px;color:var(--st-ink-2)', 'Which words make it look like "' + meaning(it.key).replace(/^\S+\s/, '') + '"? Keep just those (the whole sentence is fine too):'), inp, save);
+          form.style.display = 'grid';
+          fit();
+        });
+        c.className = 'st-ai-teach-not';
+        c.setAttribute('data-topic', it.key);
+        chipsRow.appendChild(c);
+      });
+      if (!items.length) chipsRow.appendChild(small('(nothing it read)'));
+      wrong.append(chipsRow, form);
+      box.appendChild(wrong);
+      // It missed something.
+      const sens = [];
+      A.sources.forEach(x => lang.sentencesOf(x.text).forEach(sen => { if (sens.length < 40 && !sens.some(y => y.sen === sen)) sens.push({ sen, src: x.src }); }));
+      const missed = el('div', 'display:grid;gap:4px;margin-top:4px');
+      missed.appendChild(el('div', 'font-size:11px;font-weight:800;color:var(--st-ink-3)', 'Missed something? Pick the sentence and what it means:'));
+      if (sens.length) {
+        const senSel = el('select', FULL + FIELD); senSel.id = 'st-ai-teach-sen';
+        sens.forEach((x, i) => { const o = el('option', '', lang.clip(x.sen, 90) + '  (' + x.src.replace(/ from .*/, '') + ')'); o.value = String(i); senSel.appendChild(o); });
+        const topSel = el('select', FULL + FIELD); topSel.id = 'st-ai-teach-topic';
+        const o0 = el('option', '', 'It means…'); o0.value = ''; topSel.appendChild(o0);
+        ['nocall'].concat(lang.TOPICS.map(t => t.key)).forEach(k => { const o = el('option', '', meaning(k)); o.value = k; topSel.appendChild(o); });
+        const phrase = el('input', FULL + FIELD); phrase.type = 'text'; phrase.id = 'st-ai-teach-phrase';
+        phrase.value = sens[0].sen;
+        senSel.onchange = () => { phrase.value = sens[Number(senSel.value)].sen; };
+        const save = pill('Save the lesson', 'It reads these words this way on every job from now on', () => {
+          const x = sens[Number(senSel.value)];
+          if (!topSel.value) return bad('⚠️ Pick what it means.');
+          if (!check(x.sen, phrase.value)) return;
+          const ph = norm(phrase.value);
+          taught.add(topSel.value, ph, false);
+          relearn(A, '✓ Learned: "' + ph + '" means ' + meaning(topSel.value).replace(/^\S+\s/, '') + '.');
+        }, PRIMARY);
+        save.id = 'st-ai-teach-save';
+        save.style.justifySelf = 'start';
+        missed.append(senSel, topSel, el('div', 'font-size:12px;color:var(--st-ink-2)', 'The words that say it (keep only those, like "pt on order" or "TCC", so it works on other jobs too):'), phrase, save);
+      } else missed.appendChild(small('(no summary or notes to pick from)'));
+      box.appendChild(missed);
+      box.appendChild(note);
+      // The lessons so far.
+      const L = taught.list();
+      if (L.length) box.appendChild(fold('📖 What you\'ve taught it (' + L.length + ')', inner => L.slice().reverse().forEach(l => {
+        const r = el('div', 'display:flex;gap:6px;align-items:center;font-size:12px;border-top:1px solid var(--st-line);padding-top:2px');
+        r.className = 'st-ai-lesson'; r.setAttribute('data-id', l.id);
+        r.append(el('span', 'flex:1;min-width:0;overflow-wrap:anywhere', '"' + l.phrase + '" ' + (l.not ? 'doesn\'t mean ' : 'means ') + meaning(l.topic).replace(/^\S+\s/, '')),
+          pill('↩', 'Forget this lesson', () => { taught.remove(l.id); relearn(A, '✓ Forgotten: "' + l.phrase + '".'); }));
+        inner.appendChild(r);
+      }), 'st-ai-lessons'));
+      return box;
+    };
     const renderScript = A => {
       const s = A.script, sec = section('📞 Call script: ' + s.name, 'st-ai-script');
       if (s.angles.length > 1) {
@@ -12333,7 +12535,9 @@
         sec.appendChild(tabs);
       }
       const rec = s.stats[s.angle.key];
-      sec.appendChild(small(rec && rec.talked ? '🏆 This approach booked ' + rec.booked + ' of ' + rec.talked + ' "' + s.name + '" calls where you reached them.' : 'Log how each call goes (below) and the AI will learn which approach books the most holds like this.'));
+      sec.appendChild(small(rec && rec.talked ? '🏆 This approach booked ' + rec.booked + ' of ' + rec.talked + ' "' + s.name + '" calls where you reached them' +
+        (rec.auto ? ' (' + rec.auto + ' counted on ' + (rec.auto === 1 ? 'its' : 'their') + ' own: the hold got booked within ' + CREDIT_DAYS + ' days)' : '') + '.' :
+        'Log how each call goes (below), or just call: when a hold gets booked, the AI credits the approach you were shown.'));
       if (s.check) sec.appendChild(line('🔍 ' + s.check, 'color:var(--st-amber);font-weight:700'));
       s.parts.forEach(([label, text]) => {
         const p = el('div', 'display:grid;gap:1px');
@@ -12366,13 +12570,22 @@
       sec.appendChild(how);
       return sec;
     };
+    // A call script you were shown (once a day per hold and approach), so a hold booked soon after
+    // credits the approach even if nobody said how the call went. Not a call: it's never counted as one.
+    const noteShown = A => {
+      const s = A.script, t0 = +day0(new Date());
+      if (memOff || allCalls.some(c => c.j === A.J.j && c.angle === s.angle.key && c.out === 'shown' && c.at >= t0)) return;
+      const x = { j: A.J.j, sit: s.sit, angle: s.angle.key, out: 'shown' };
+      allCalls.push(Object.assign({ at: Date.now(), hour: new Date().getHours() }, x));
+      brain.logCall(x).catch(() => {});
+    };
     const logOutcome = async (A, k, after) => {
       const s = A.script;
       after.textContent = '';
       try { await brain.logCall({ j: A.J.j, sit: s.sit, angle: s.angle.key, out: k, by: myName() || undefined }); }
       catch (e) { after.appendChild(document.createTextNode('⚠️ Couldn\'t save it (' + errText(e) + ').')); return; }
-      allCalls.push({ j: A.J.j, sit: s.sit, angle: s.angle.key, out: k, at: Date.now() });
-      A.calls.push({ j: A.J.j, sit: s.sit, angle: s.angle.key, out: k, at: Date.now() });
+      allCalls.push({ j: A.J.j, sit: s.sit, angle: s.angle.key, out: k, at: Date.now(), hour: new Date().getHours() });
+      A.calls.push({ j: A.J.j, sit: s.sit, angle: s.angle.key, out: k, at: Date.now(), hour: new Date().getHours() });
       after.appendChild(el('span', 'font-weight:700;color:var(--st-green-d)', '✓ Saved: ' + OUT_WORDS[k] + '.'));
       if (k === 'booked') after.appendChild(pill('🎯 Put it on a tech', 'Tech Router\'s 🎯 Place a job, for the best tech and day', () => { showView('router'); router.placeJob(A.J.j); }));
       if (k === 'vm') {
@@ -12405,7 +12618,7 @@
         memOff = '';
         const [model, calls, jobs] = await Promise.all([safe(brain.getModel()), safe(mem.all('calls')), safe(mem.all('jobs'))]);
         if (stale()) return;
-        const seen = new Map((jobs || []).map(x => [x.j, x])), now = new Date();
+        const seen = new Map((jobs || []).map(x => [x.j, x])), now = new Date(), lessons = taught.list();
         let dnc = 0, skipped = 0;
         const list = [];
         rows.forEach(x => {
@@ -12414,9 +12627,9 @@
           if (list.some(h => h.j === j)) return;
           if (router.isSkipped(j)) { skipped++; return; }
           if (router.noCallIn(f.summary)) { dnc++; return; }
-          const r = lang.read(f.summary, f.created || now), topics = new Set(r.topics.map(t => t.key).concat(rec.topics || []));
+          const r = lang.read(f.summary, f.created || now, lessons), topics = new Set(r.topics.map(t => t.key).concat(rec.topics || []));
           const when = r.when ? r.when.at : rec.when ? new Date(rec.when) : null;
-          const mine = (calls || []).filter(c => c.j === j).sort((a, b) => b.at - a.at), lastCall = mine[0] || null;
+          const mine = (calls || []).filter(c => c.j === j && isCall(c)).sort((a, b) => b.at - a.at), lastCall = mine[0] || null;
           const p = model && model.ok ? model.chance({ text: [lang.plain(f.summary), rec.digest].filter(Boolean).join('. '), type: f.type }) : null;
           let score = p ? p.p : 0.5;
           const why0 = [];
@@ -12433,7 +12646,7 @@
           list.push(Object.assign(f, { j, score, why: why0 }));
         });
         list.sort((a, b) => b.score - a.score || (a.created || 0) - (b.created || 0));
-        renderHolds(list, { dnc, skipped, model });
+        renderHolds(list, { dnc, skipped, model, pickup: pickupOf(calls || []) });
         say(list.length ? 'Best to call first. 🧠 explains one and gives its call script.' : 'No holds to call on your branches\' Hold list.');
       } catch (e) {
         if (stale()) return;
@@ -12443,6 +12656,7 @@
     const renderHolds = (list, info, all) => {
       lastHolds = { list, info };
       holdsOut.textContent = '';
+      if (info.pickup) { const t = small('🕑 ' + pickupText(info.pickup) + '.', 'color:var(--st-ink-2)'); t.className = 'st-ai-pickup'; holdsOut.appendChild(t); }
       const show = all ? list : list.slice(0, HOLDS_SHOW);
       show.forEach((h, i) => {
         const r = el('div', 'display:grid;gap:2px;padding:6px 8px;border:1px solid var(--st-line);border-radius:8px;background:var(--st-bg)');
@@ -12469,7 +12683,7 @@
     // ---------- 📚 Memory ----------
     let learnStop = false;
     const renderMem = async () => {
-      const [learned, totals, holds, calls, jobs, appts] = await Promise.all([mem.meta('learned', null), mem.meta('totals', null), mem.all('holds'), mem.count('calls'), mem.all('jobs'), mem.count('appts')].map(p => p.catch(e => { memOff = errText(e); return null; })));
+      const [learned, totals, holds, calls, jobs, appts] = await Promise.all([mem.meta('learned', null), mem.meta('totals', null), mem.all('holds'), mem.all('calls').then(v => v.filter(isCall).length), mem.all('jobs'), mem.count('appts')].map(p => p.catch(e => { memOff = errText(e); return null; })));
       memText.textContent = '';
       if (appts == null) {
         memHead.textContent = '📚 Memory: off in this browser' + (memBox.style.display === 'none' ? '  ▸' : '  ▾');
