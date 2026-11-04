@@ -129,10 +129,33 @@ Still being built: it says so each time it's opened, so check its suggestions be
 - **Windows:** the appointment's arrival window (it moves with the job and is what the customer is told), with the window tag beside it when it says something else; the tag when the appointment has no window.
 - Drive times come from Mapbox (a public key is built in; ⚙️ Drive times can use your own). Jobs are measured to their street address (looked up with Mapbox; only the address is sent, and kept only while the page is open), else the middle of their zip code. No names or anything else about a job are sent. If drive times can't be had, straight-line miles are used and marked ~.
 
+**🧠 Toolbox AI (Beta)**
+A small AI that lives in your browser and learns from your own ServiceTitan data. It doesn't chat: it reads and it suggests. It never changes a job, sends a text or adds a note by itself.
+
+- **🔎 Explain a job:** press 🖱️ and click a job on the board (or a row in the Jobs Tray), or type its number, then **🧠 Explain**. It reads the job summary, the job's, customer's and location's notes, its appointments and the customer's texts, and writes up **📋 What's going on**: where it stands, why a hold is waiting (thinking over the price, talking it over with someone, financing, parts, an approval, away, asked us to call back, a permit), the calls that didn't reach them and at what time of day, their texts, a call-back day they named, this job's visits and the last tech out, the customer's other jobs and their usual tech. Chips flag what to watch out for: 🚫 don't call, 🕑 a time they asked for, 🔥 no heat or AC / leak / gas, 🧓 elderly, baby or a health need, 😠 upset, 🔁 same problem again, 🛡️ warranty, 💬 prefers texts, 🗣️ Spanish, 🔑 gate code / dog / tenant, ⭐ club member, ✅ ready, ❌ may not want it, 💲 the amount. One line at the top says what to do next (call, don't call, read their unread text first, wait until the day they named, check the part is in, try a text, try another time of day…).
+- A conversation with an **unread** reply isn't read at all, so it stays unread for you.
+- **📞 Call script (holds):** an opener, why you're calling, a line to show you care when it's urgent, the offer (*Jake was out there on Oct 14, so I can try to get Jake back out to you*), the close, **🛡️ If they say…** answers and a **📬 voicemail**. It's filled in with the customer's first name, your name, the company, what the job is, the last tech out, the amount and the day they named, and it fits the kind of hold (talking it over, waiting on parts, financing, approval, away, call back, the price, a permit, hard to reach, ready, may not want it).
+- **How did the call go?** ✅ Booked it, 📅 Call back later, 📬 No answer or ❌ Not interested. Each kind of hold has one to three approaches. The one that has booked the most is used next time, and the tabs show how each one did. Afterwards: 🎯 put it on a tech, 📱 text them, 📝 a note, or 🚫 stop suggesting it.
+- **⏸️ Holds to call:** the Hold list, best to call first (a call-back day that has come, ready to book, its chance, high priority). Holds that say not to call, and ones marked 🚫, are left out.
+- **🔮 Chance it books:** once it has seen 20 holds booked or lost, it gives each hold a chance, and how holds of the same type went (*31 of 48 got booked, usually within 9 days*).
+- **⚙️ Call script:** your name, the company and the number to call back. Financing and club members' priority are only mentioned if you tick them.
+- **📚 Memory:** **📚 Learn** reads 3 months to 3 years of schedules a week at a time: for each appointment, the job, customer, location, job type, techs, status and tags (no phone numbers, emails or street addresses). Each day is read once it can't change any more (14 days old), so pressing **Learn** again only reads new days, the last 14 and the next 30. Nothing is ever kept twice. It also watches the Hold list and learns which holds got booked and which were lost. After 6 hours it catches up by itself when you open it. **🗑️ Forget everything** wipes it.
+
 **🩺 Health check**
 If ServiceTitan changes something a tool relies on, a yellow bar at the top of the Toolbox says which tool is affected and what's missing, instead of the tool failing quietly. Use **Copy report** to pass the details along, or **🩺 Check** in the menu to check any time.
 
 If ServiceTitan signs you out during a run, the run stops and says so. If ServiceTitan is slow or failing, the Toolbox eases off and stops asking after a few failed answers in a row, and the **Stop** button always works right away.
+
+## Teaching the AI with outside data
+
+Learn already reads your schedules. To teach it more (years of job summaries, hold reasons and totals), give it a CSV report:
+
+1. In ServiceTitan, open **Reports** and make (or open) a **Jobs** report for the date range you want (a year or more is fine).
+2. Add the columns it can read: **Job #** (the only one it needs), Customer Name, Customer ID, Location ID, Job Type, Job Status, Hold Reason, Job Summary, Created Date, Completed Date, Jobs Total, Technician, Business Unit, Tags, City, Zip. It finds them by name, in any order.
+3. Export it to **CSV**. For an Excel file, open it in Excel and use Save As → CSV.
+4. In 🧠 Toolbox AI, open **📚 Memory**, press **📥 Add outside data (CSV)** and pick the file.
+
+It says how many jobs were new, updated or already known. Adding the same report again (or a newer one) never makes copies. Rows with a Hold Reason and a final status (Completed, Canceled…) teach it which holds get booked. The rest add to each customer's other jobs. Phone numbers and emails in the file are never kept.
 
 ## Install
 
@@ -159,6 +182,7 @@ The `tests` folder has automatic checks that run the Toolbox on fake copies of t
 - Tech Messages only sends on its own in Auto-send mode, after you confirm.
 - Business Unit only saves jobs after you confirm, and checks each one afterwards.
 - Customer Texts only sends on its own in Auto-send mode, after you type how many customers it will text. 📥 Check replies never sends anything, and only confirms appointments after you press Confirm.
+- 🧠 Toolbox AI keeps what it learns in this browser (IndexedDB): appointments (customer, job type, techs, status), holds it has seen, your call answers and any CSV you add. No phone numbers, emails or street addresses. Nothing is sent anywhere, and 🗑️ Forget everything wipes it. It never reads a conversation with an unread reply.
 - Not affiliated with or endorsed by ServiceTitan.
 
 ## License

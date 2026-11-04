@@ -13,8 +13,9 @@
 //   appts(): [{ id, job, n, techs: [ids], customer, customerId, start, end, status, jobStatus,
 //               confirmed, bu, buName, jobType, jobTypeId, city, zip, tags: [{ name, color }], windowStart, windowEnd, hidden }]
 //   shifts(techId), events(techId): a tech's shifts ({ start, end, type }) and other events ({ start, end }) that day
-//   past(): appointments before the board's day ({ id, job, techs, start, end, status, jobType, jobTypeId }),
-//           for any other range asked for (Tech Router's last 4 weeks)
+//   past(): appointments before the board's day ({ id, job, techs, start, end, status, jobType, jobTypeId, and
+//           optionally customerId, customer, locationId, jobStatus, buName, city, zip, tags }),
+//           for any other range asked for (Tech Router's last 4 weeks, 🧠 Toolbox AI's months)
 //   tray(): [{ job, n, customer, customerId, appt, tags }]   (the Jobs Tray rows), trayTab: 'Unassigned'
 //   history(): [{ tech, appt, job, status, at }]
 //   onCard(job, appt, el), onTech(id, el), onTray(job, el)   (what a normal click does)
@@ -93,17 +94,24 @@
       if (u.indexOf('/dispatch-center/daily-assignments') === 0) {
         // Another single day than the board's, when the page has one: NB.cfg.other(dayIso) gives
         // { appts, shifts(id), events(id) } or null (🧭 Tech Router's 🎯 Place a job reads the days after).
-        const other = body.startDate !== iso(NB.day()) && NB.cfg.other ? NB.cfg.other(body.startDate) : null;
+        // One day (the board reads a day at a time), or a longer range (the past, read a week at a time).
+        const from0 = new Date(body.startDate + 'T00:00:00'), single = body.endDate === iso(new Date(from0.getFullYear(), from0.getMonth(), from0.getDate() + 1));
+        const boardDay = single && body.startDate === iso(NB.day());
+        const other = !boardDay && single && NB.cfg.other ? NB.cfg.other(body.startDate) : null;
         if (other) NB.otherCalls = (NB.otherCalls || []).concat([body.startDate]);
-        // Another range than the board's day: the past (NB.cfg.past(), for Tech Router's 4 weeks).
-        if (body.startDate !== iso(NB.day()) && !other) {
+        // Another range than the board's day: the past (NB.cfg.past(), for Tech Router's 4 weeks and
+        // 🧠 Toolbox AI's months, which can reach into the next days too).
+        if (!boardDay && !other) {
           NB.pastCalls = (NB.pastCalls || 0) + 1;
           if (window.PAST_BAD) return json({ nope: true });
           const from = new Date(body.startDate + 'T00:00:00'), to = new Date(body.endDate + 'T00:00:00');
           const past = (NB.cfg.past ? NB.cfg.past() : []).filter(a => new Date(a.start) >= from && new Date(a.start) < to);
           return json({ items: body.technicianIds.map(id => ({ technicianId: id, technicianSchedule: [{ dateTime: body.startDate + 'T00:00:00', shifts: [], nonJobEvents: [],
             assignments: past.filter(a => (a.techs || []).indexOf(id) > -1).map(a => ({ appointmentId: a.id, appointmentStart: new Date(a.start).toISOString(), appointmentEnd: new Date(a.end || a.start).toISOString(),
-              appointmentStatus: a.status || 'Done', jobId: a.job, jobTypeId: a.jobTypeId, jobTypeName: a.jobType })) }] })), page: 1, pageSize: body.pageSize, totalCount: body.technicianIds.length });
+              appointmentStatus: a.status || 'Done', jobId: a.job, jobTypeId: a.jobTypeId, jobTypeName: a.jobType,
+              // Like the real board's, when the page gives them (🧠 Toolbox AI's memory keeps them).
+              customerId: a.customerId, customerName: a.customer, locationId: a.locationId, jobStatus: a.jobStatus, businessUnitName: a.buName, city: a.city, zip: a.zip,
+              tags: a.tags ? a.tags.map((t, i) => ({ tagTypeId: i + 1, name: t.name || t, color: '#cccccc' })) : undefined })) }] })), page: 1, pageSize: body.pageSize, totalCount: body.technicianIds.length });
         }
         if (!other) NB.lastDaily = body;
         const list = other ? (other.appts || []) : appts().filter(live);

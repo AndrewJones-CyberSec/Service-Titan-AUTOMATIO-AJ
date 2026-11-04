@@ -1,0 +1,132 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Mock ServiceTitan: Toolbox AI</title>
+<style>body{font:13px sans-serif;margin:0}</style>
+<script src="newboard.js"></script>
+<script>
+  // A stand-in for ServiceTitan for 🧠 Toolbox AI: the new board (newboard.js) for today, the Hold
+  // and Unassigned lists, job summaries, notes, appointments and the job panel, customers' phone
+  // numbers and texts (the Chat Center's data), the tech list, and months of past schedules.
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const at = (h, m) => { const d = new Date(today); d.setHours(h, m || 0, 0, 0); return d; };
+  const ago = (days, h, m) => { const d = new Date(today); d.setDate(d.getDate() - days); d.setHours(h == null ? 9 : h, m || 0, 0, 0); return d; };
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const md = d => MONTHS[d.getMonth()] + ' ' + d.getDate();
+  window.IN5 = ago(-5, 0);   // five days from today (Cara is away until then)
+  window.App = { Notifications: { store: { userId: 42 } }, Data: { Employees: [{ UserId: 42, Name: 'Andy Dispatcher' }], BusinessUnits: [{ Id: 1, Name: 'Mendenhall Branch', Active: true }] } };
+
+  const L1 = 'Level 1 Service';
+  window.TECHS = [{ id: 301, name: 'Mike M', team: L1 }, { id: 302, name: 'Jake J', team: L1 }, { id: 303, name: 'Owen Office', team: 'Office' }];
+  // Someone who has left: not on the board, but his old jobs are in the schedules.
+  const ALL_TECHS = TECHS.concat([{ id: 304, name: 'Old Otto', team: L1, active: false }]);
+  const AM = [{ name: '8-12 MORNING ', color: '#fff2a8' }];
+  window.APPTS = [
+    { id: 9801, job: 8001, techs: [301], customer: 'Ann Board', customerId: 90001, locationId: 91001, start: at(8), end: at(10), windowStart: at(8), windowEnd: at(12), jobType: 'Service - HVAC', jobTypeId: 31, tags: AM, city: 'Magee', zip: '39111' }
+  ];
+  // The Hold list: [appointment, job, customer, customer id, job type, type id, summary, created (days ago), priority, tags].
+  window.HOLDS = [
+    [9901, 8101, 'Mary Smith', 90101, 'Quote - HVAC - Central Home System', 11, '<p>AC not cooling upstairs. Went over replacement options.</p>', 20, 'Normal', ['Total Care Club Member']],
+    [9902, 8102, 'Bob Jones', 90102, 'Repair - Plumbing - Water Heater', 21, 'Water heater leaking. Waiting on parts, the tank is on back order.', 9, 'Normal', []],
+    [9903, 8103, 'Cara Late', 90103, 'Quote - Generator', 12, 'Customer said to call back after ' + md(IN5) + ', she is out of town until then.', 12, 'Normal', []],
+    [9904, 8104, 'Dee NoCall', 90104, 'Service - HVAC', 31, 'Customer says do NOT call, text only.', 6, 'Normal', []],
+    [9905, 8105, 'Eve Unread', 90105, 'Service - HVAC', 31, 'Customer called about the system.', 4, 'Normal', []],
+    [9906, 8106, 'Fay Ready', 90106, 'Quote - HVAC - Central Home System', 11, 'Customer approved the estimate and wants to schedule the install.', 3, 'High', []]
+  ];
+  window.UNASSIGNED = [[9931, 8301, 'Uma Unassigned', 90301, 'Service - HVAC', 31, 'Thermostat blank.', 1]];
+  const rowOf = (x, kind) => {
+    const [id, job, customer, cid, type, typeId, summary, created, prio, tags] = x;
+    const s = kind === 'Hold' ? ago(created, 9) : at(13), e = new Date(+s + 2 * 3600000);
+    return { Id: id, JobId: job, Customer: customer, CustomerId: cid, LocationId: cid + 1000, CustomerPhone: '(601) 555-' + String(cid).slice(-4), Type: type, TypeId: typeId,
+      Priority: prio || 'Normal', Duration: 7200, Start: s.toISOString(), End: e.toISOString(), Summary: summary, AppointmentSpecialInstructions: '', CreatedOn: ago(created).toISOString(),
+      JobStatus: kind === 'Hold' ? 'Hold' : 'Scheduled', AppointmentStatus: kind === 'Hold' ? 'Hold' : 'Scheduled', City: 'Magee', Zip: '39111', Street: id + ' Oak Ave', State: 'MS',
+      Tags: (tags || []).map(t => ({ Id: 1, TypeId: 1, TypeName: t, Color: '#d6f5d6', TextColor: null })), Technicians: [], Latitude: 31.87, Longitude: -89.73 };
+  };
+  // Job summaries (the job panel's overview), and notes on jobs, customers and locations.
+  window.SUMMARIES = { 8001: '<p>Furnace making a loud noise. Elderly customer, no heat.</p>', 8201: '<p>Annual maintenance.</p>' };
+  window.NOTES = {
+    8101: [{ text: 'Customer is thinking over the $8,900 quote and needs to talk it over with her husband.', createdOn: ago(5, 10).toISOString() },
+      { text: 'Attempted to contact customer. No answer. Left voicemail requesting call back.', createdOn: ago(3, 9).toISOString() },
+      { text: 'Called, no answer. LVM.', createdOn: ago(2, 10).toISOString() }],
+    90101: [{ text: 'Dog in the back yard, use the side gate.', createdOn: ago(200).toISOString() }],
+    8102: [{ text: 'Spoke with Bob. Tank should be in next week.', createdOn: ago(4, 14).toISOString() }]
+  };
+  // Appointments of jobs that aren't on the board or the lists (holds have none here), and their job panel.
+  window.JOB_APPTS = { 8201: [{ id: 9921, status: 4, start: ago(30, 9).toISOString() }] };
+  window.FLYOUT = { 9921: { jobId: 8201, customer: { id: 90201, name: 'Gus Gone' }, locationAddress: { city: 'Magee', zip: '39111' }, jobTotal: 189, technicians: [{ id: 301, name: 'Mike M' }], start: ago(30, 9) } };
+  // Customers' texts by number: { unread, msgs: [{ Body, out, auto, CreatedOn }] }.
+  window.CHATS = {
+    '6015550101': { msgs: [{ Body: 'Hey, this is Andy with AirSouth. Just checking in about your estimate.', out: true, CreatedOn: ago(2, 11).toISOString() }, { Body: 'Your appointment reminder', out: true, auto: true, CreatedOn: ago(1, 8).toISOString() }] },
+    '6015550105': { unread: true, msgs: [{ Body: 'Can you come after 3?', CreatedOn: ago(0, 7).toISOString() }] },
+    '6015550106': { msgs: [{ Body: 'Hi Fay, ready when you are!', out: true, CreatedOn: ago(3, 11).toISOString() }, { Body: 'Yes please, Tuesday works', CreatedOn: ago(1, 15).toISOString() }] }
+  };
+  // Months of past schedules (and a few upcoming days), for the AI's memory.
+  const past = [];
+  const did = (id, job, techs, days, type, typeId, cust, status) => past.push({ id, job, techs, start: ago(days, 9), end: ago(days, 11), jobType: type, jobTypeId: typeId, status: status || 'Done',
+    customerId: cust ? cust[0] : 95000 + id % 500, customer: cust ? cust[1] : 'Filler ' + id, locationId: cust ? cust[0] + 1000 : 96000 + id % 500, city: 'Magee', zip: '39111', buName: 'Mendenhall Branch' });
+  const MARY = [90101, 'Mary Smith'], ANN = [90001, 'Ann Board'];
+  did(70001, 8101, [302], 21, 'Quote - HVAC - Central Home System', 11, MARY);     // the visit that made the quote
+  did(70002, 7101, [301], 200, 'Maintenance - HVAC', 41, MARY);
+  did(70003, 7102, [301], 120, 'Service - HVAC', 31, MARY, 'Canceled');
+  did(70004, 7201, [304], 300, 'Service - HVAC', 31, ANN);
+  did(70005, 7202, [301], 100, 'Maintenance - HVAC', 41, ANN);
+  did(70006, 7203, [301], 60, 'Service - HVAC', 31, ANN);
+  for (let i = 0; i < 60; i++) did(71000 + i, 7300 + i, [[301, 302, 304][i % 3]], 3 + i, ['Service - HVAC', 'Maintenance - HVAC', 'Repair - Plumbing - Drain'][i % 3], [31, 41, 22][i % 3]);
+  did(70900, 7900, [301], 6, 'Service - HVAC', 31);      // a recent one (the tests take it away)
+  did(70901, 7901, [302], 40, 'Service - HVAC', 31);     // an older one (the tests take it away too)
+  for (let i = 0; i < 3; i++) did(72000 + i, 7600 + i, [302], -(2 + i), 'Service - HVAC', 31);   // upcoming
+  window.PAST = past;
+
+  window.apiLog = [];
+  window.msgReads = {};
+  const realFetch = window.fetch;
+  window.fetch = async (url, opts) => {
+    const u = String(url);
+    const json = (o, st) => new Response(JSON.stringify(o), { status: st || 200, headers: { 'Content-Type': 'application/json' } });
+    const body = opts && opts.body ? JSON.parse(opts.body) : null;
+    window.apiLog.push(u.split(/[?&]_=/)[0]);
+    await new Promise(r => setTimeout(r, window.API_DELAY || 5));
+    if (/^\/(Job|dispatch\/job-edit-flyout)\/(?:Assign|Unassign|UpdateJob)/.test(u) || (opts && opts.method === 'PUT')) (window.WRITES = window.WRITES || []).push(u);
+    if (u.indexOf('/app/api/data/technicians') === 0) return json(ALL_TECHS.map(t => ({ id: t.id, name: t.name, active: t.active !== false, isManagedTechnician: true, skillIds: [], houseLatitude: 0, houseLongitude: 0, houseAddress: '' })));
+    if (u.indexOf('/Dispatch/GetJobs') === 0) {
+      window.lastGetJobs = body;
+      if (body.JobType === 'Hold' && window.HOLD_DOWN) return json({ error: 'down' }, 500);
+      const rows = body.JobType === 'Hold' ? HOLDS.map(x => rowOf(x, 'Hold')) : UNASSIGNED.map(x => rowOf(x, 'Unassigned'));
+      return json({ Jobs: rows.slice(body.QueryFilter.Skip, body.QueryFilter.Skip + body.QueryFilter.Take), Count: rows.length });
+    }
+    let m;
+    if ((m = /\/dispatch\/job-edit-flyout\/GetJobAppointments\?jobId=(\d+)/.exec(u))) return json(JOB_APPTS[m[1]] || []);
+    if ((m = /GetJobEditFlyoutData\?appointmentId=(\d+)/.exec(u))) {
+      const f = FLYOUT[m[1]];
+      if (!f) return json({}, 404);
+      return json({ jobId: f.jobId, jobTotal: f.jobTotal, businessUnitId: 1, customer: f.customer, locationAddress: f.locationAddress,
+        jobAppointments: [{ id: Number(m[1]), start: f.start.toISOString(), end: new Date(+f.start + 3600000).toISOString(), technicians: f.technicians, jobAppointmentStatus: 4, isConfirmed: false }] });
+    }
+    if ((m = /GetJobOverviewData\?jobId=(\d+)/.exec(u))) return json({ jobSummary: SUMMARIES[m[1]] || '', skills: [] });
+    if ((m = /^\/app\/api\/notes\/Find\?ownerId=(\d+)/.exec(u))) {
+      if (window.NOTES_DOWN) return json({}, 500);
+      const list = (NOTES[m[1]] || []).map((n, i) => Object.assign({ id: Number(m[1]) * 100 + i, archived: false, active: true, isPinned: false }, n));
+      return json({ pinnedNotes: list.filter(n => n.isPinned), notes: list.filter(n => !n.isPinned), count: list.length });
+    }
+    if ((m = /^\/app\/api\/contact-methods\/getContactMethods\?ownerId=(\d+)&ownerType=Customer/.exec(u))) return json([{ id: 1, type: 1, value: 'x@y.z' }, { id: 2, type: 3, value: '(601) 555-' + m[1].slice(-4) }]);
+    if ((m = /^\/GrowthChatCenter\/ChatThread\?number=(\d+)/.exec(u))) {
+      const c = CHATS[m[1]];
+      if (!c) return json({ Threads: [], HasNoMore: true });
+      return json({ Threads: [{ ThreadId: Number(m[1]), ContactNumber: m[1], ReadStatus: c.unread ? -10 : 0, BlockedStatus: 0, Messages: [] }], HasNoMore: true });
+    }
+    if ((m = /^\/GrowthChatCenter\/Messages\?threadId=(\d+)/.exec(u))) {
+      const c = CHATS[m[1]];
+      window.msgReads[m[1]] = (window.msgReads[m[1]] || 0) + 1;
+      return json({ Messages: (c ? c.msgs : []).map((x, i) => ({ SmsId: i + 1, Body: x.Body, CreatedOn: x.CreatedOn, SmsDirection: x.out ? 1 : 0, Channel: x.auto ? 7 : x.out ? 3 : 0, SmsDeliveryStatus: 0 })), HasNoMore: true });
+    }
+    return realFetch(url, opts);
+  };
+  NB.setup({
+    bus: [1],
+    techs: () => TECHS.map(t => ({ id: t.id, name: t.name, team: t.team, teamId: t.team === L1 ? 1 : 2 })),
+    appts: () => APPTS.map(a => Object.assign({ n: 1, status: 'Scheduled', bu: 1 }, a)),
+    shifts: id => [{ start: at(8), end: at(17) }],
+    events: () => [],
+    past: () => PAST,
+    tray: () => []
+  });
+</script>
+</head><body><div id="root"></div></body></html>
