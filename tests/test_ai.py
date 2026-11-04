@@ -194,7 +194,9 @@ with sync_playwright() as p:
     check('set up a time when you\'re both home' in script(page), 'another approach: "both of you there"')
     page.click('#st-ai-out .st-ai-how [data-out=booked]')
     page.wait_for_selector('#st-ai-out .st-ai-after :text("Saved")')
-    c = idb(page, 'calls')
+    allc = idb(page, 'calls')
+    c = [x for x in allc if x['out'] != 'shown']
+    check(any(x['out'] == 'shown' and x['j'] == '8101' and x['angle'] == 'together' for x in allc), 'the approach shown is noted (not as a call)')
     check(len(c) == 1 and c[0]['sit'] == 'decide' and c[0]['angle'] == 'together' and c[0]['out'] == 'booked' and c[0]['by'] == 'Andy', 'saved: a talking-it-over hold, that approach, booked, by Andy')
     explain(page, 8101)
     check(ev(page, "() => document.querySelector('#st-ai-out .st-ai-angles button.on').getAttribute('data-angle')") == 'together', 'next time, the approach that booked is picked')
@@ -264,6 +266,115 @@ with sync_playwright() as p:
     page.evaluate(TOOLBOX)
     check(page.inner_text('#st-toolbox').startswith('🧠 Toolbox AI (Beta)'), 'closed and opened again, it comes back to the AI')
     check(not errors, 'no page errors after closing (%s)' % errors[:2])
+    page.close()
+
+    # ================= 👎 Teaching it, crediting calls on their own, the best time to call =================
+    page, errors = start(b, """() => {
+      HOLDS.push([9907, 8107, 'Gil General', 90107, 'Service - HVAC', 31, 'Customer called about the system. Do not solicit.', 5, 'Normal', []]);
+      HOLDS.push([9908, 8108, 'Hal Husband', 90108, 'Quote - Water Heater', 13, 'Needs to talk it over with his wife.', 7, 'Normal', []]);
+      HOLDS.push([9909, 8109, 'Ivy Refund', 90109, 'Repair - Plumbing - Drain', 22, 'Customer is waiting on tax refund before booking.', 8, 'Normal', []]);
+      HOLDS.push([9910, 8110, 'Joe Refund', 90110, 'Repair - Plumbing - Drain', 22, 'Same as before: waiting on TAX refund.', 2, 'Normal', []]);
+      HOLDS.push([9911, 8111, 'Kim Kind', 90111, 'Service - HVAC', 31, 'Customer called about the system.', 3, 'Normal', []]);
+    }""")
+    explain(page, 8101)
+    page.click('#st-ai-out .st-ai-teach-open')
+    check(page.is_visible('#st-ai-out .st-ai-teach'), '👎 Something\'s wrong? opens Teach it')
+    page.click('#st-ai-out .st-ai-teach-not[data-topic=urgent]')
+    page.fill('#st-ai-out .st-ai-teach-not-phrase', 'not cooling upstairs')
+    page.click('#st-ai-out .st-ai-teach-not-save')
+    page.wait_for_function("() => /Learned/.test((document.getElementById('st-ai-teach-msg') || {}).textContent || '')", timeout=10000)
+    check('urgent' not in topics(page) and 'decide' in topics(page), '✕ on "no heat or AC": taught that "not cooling upstairs" isn\'t urgent, and it\'s gone (%s)' % topics(page))
+    check('doesn\'t mean No heat or AC' in page.inner_text('#st-ai-teach-msg'), 'it says what it learned (%r)' % page.inner_text('#st-ai-teach-msg'))
+    check('💛 Show you care' not in script(page), 'the script follows: no "show you care" line now')
+    explain(page, 8101)
+    check('urgent' not in topics(page), 'the lesson stays (explained again)')
+    # A phrase it missed.
+    explain(page, 8109)
+    check('price' not in topics(page) and 'Book the hold' in script(page), 'Ivy is waiting on a tax refund: it doesn\'t know that yet')
+    page.click('#st-ai-out .st-ai-teach-open')
+    page.select_option('#st-ai-teach-sen', index=0)
+    page.select_option('#st-ai-teach-topic', 'price')
+    page.fill('#st-ai-teach-phrase', 'waiting refund')
+    page.click('#st-ai-teach-save')
+    check('aren\'t in that sentence' in page.inner_text('#st-ai-teach-msg') and 'price' not in topics(page), 'words that aren\'t side by side in the sentence are refused')
+    page.fill('#st-ai-teach-phrase', 'waiting on tax refund')
+    page.click('#st-ai-teach-save')
+    page.wait_for_function("() => /Learned/.test((document.getElementById('st-ai-teach-msg') || {}).textContent || '')", timeout=10000)
+    check('price' in topics(page) and 'Call script: Thinking it over' in script(page), 'taught: "waiting on tax refund" means thinking over the price, and the script follows')
+    check('📖' in page.inner_text('#st-ai-out .st-ai-chips'), 'the chip says you taught it that')
+    explain(page, 8110)
+    check('price' in topics(page), 'and another job saying "waiting on TAX refund" is read the same way')
+    # Don't call, taught: the AI and Tech Router both leave it out.
+    explain(page, 8107)
+    check('Don\'t call' not in msg(page), 'Gil\'s summary says "Do not solicit": not read as don\'t call yet')
+    page.click('#st-ai-out .st-ai-teach-open')
+    sens = ev(page, "() => Array.from(document.querySelectorAll('#st-ai-teach-sen option')).map(o => o.textContent)")
+    page.select_option('#st-ai-teach-sen', index=[i for i, t in enumerate(sens) if 'solicit' in t][0])
+    page.select_option('#st-ai-teach-topic', 'nocall')
+    page.fill('#st-ai-teach-phrase', 'do not solicit')
+    page.click('#st-ai-teach-save')
+    page.wait_for_function("() => /Learned/.test((document.getElementById('st-ai-teach-msg') || {}).textContent || '')", timeout=10000)
+    check(msg(page).startswith('🚫 Don\'t call') and script(page) == '', 'taught "do not solicit" means don\'t call: no script now')
+    order = holds(page)
+    check('8107' not in order, 'and ⏸️ Holds to call (Tech Router\'s reading) leaves Gil out (%s)' % order)
+    lessons = ev(page, "() => JSON.parse(localStorage.getItem('stAiTaught'))")
+    check(len(lessons) == 3 and {(l['topic'], l['not']) for l in lessons} == {('urgent', True), ('price', False), ('nocall', False)}, 'three lessons saved in this browser')
+    # ↩ takes one back.
+    explain(page, 8101)
+    page.click('#st-ai-out .st-ai-teach-open')
+    page.click('#st-ai-out .st-ai-lessons button')
+    lid = [l['id'] for l in lessons if l['topic'] == 'urgent'][0]
+    page.click('#st-ai-out .st-ai-lesson[data-id="%s"] button' % lid)
+    page.wait_for_function("() => /Forgotten/.test((document.getElementById('st-ai-teach-msg') || {}).textContent || '')", timeout=10000)
+    check('urgent' in topics(page) and len(ev(page, "() => JSON.parse(localStorage.getItem('stAiTaught'))")) == 2, '↩ forgets a lesson: no heat or AC is back')
+
+    # Credit on their own: Eve's hold is booked after you were shown "Checking in" (nobody tapped anything).
+    explain(page, 8105)
+    page.click('#st-ai-out .st-ai-angles [data-angle=checkin]')
+    # Hal's: you said "call back later", then it got booked.
+    explain(page, 8108)
+    page.click('#st-ai-out .st-ai-how [data-out=later]')
+    page.wait_for_selector('#st-ai-out .st-ai-after :text("Saved")')
+    holds(page)
+    ev(page, """() => { const t = new Date(); t.setDate(t.getDate() + 2); t.setHours(9, 0, 0, 0);
+      [8105, 8108].forEach(j => { HOLDS.splice(HOLDS.findIndex(x => x[1] === j), 1); JOB_APPTS[j] = [{ id: j + 1800, status: 0, start: t.toISOString() }]; }); }""")
+    holds(page)
+    h = {x['j']: x for x in idb(page, 'holds')}
+    check(h['8105'].get('out') == 'booked' and h['8108'].get('out') == 'booked', 'Eve\'s and Hal\'s holds were booked')
+    explain(page, 8101)
+    check(ev(page, "() => document.querySelector('#st-ai-out .st-ai-angles button.on').getAttribute('data-angle')") == 'talked' and 'This approach booked 1 of 1' in script(page) and 'counted on its own' in script(page),
+          'Hal\'s "call back later" turned into a booking: Did you talk it over? booked 1 of 1, counted on its own (%r)' % script(page)[:300])
+    explain(page, 8104)   # do not call: no script, so nothing is shown
+    explain(page, 8103)
+    explain(page, 8102)
+    # Another plain hold (Kim's): "Checking in" booked Eve's, so it's picked.
+    explain(page, 8111)
+    check(ev(page, "() => document.querySelector('#st-ai-out .st-ai-angles button.on').getAttribute('data-angle')") == 'checkin' and 'counted on its own' in script(page),
+          'Eve got booked after you were shown "Checking in" (no tap): it\'s picked for the next plain hold')
+    check(len([x for x in idb(page, 'calls') if x['out'] != 'shown']) == 1, 'scripts shown aren\'t counted as calls (one call logged)')
+
+    # The best time to call: when customers pick up, and when this one did.
+    ev(page, """() => new Promise(res => { const r = indexedDB.open('stToolboxAI'); r.onsuccess = () => { const d = r.result, t = d.transaction('calls', 'readwrite'), st = t.objectStore('calls'), at = Date.now() - 3 * 86400000;
+      for (let i = 0; i < 10; i++) st.put({ j: '1', sit: 'zz', angle: 'x', out: i < 9 ? 'later' : 'vm', hour: 16, at });
+      for (let i = 0; i < 8; i++) st.put({ j: '2', sit: 'zz', angle: 'x', out: i < 1 ? 'later' : 'vm', hour: 9, at });
+      t.oncomplete = () => { d.close(); res(); }; }; })""")
+    explain(page, 8102)
+    s = story(page)
+    # (Hal's "call back later", above, counts too: at this hour.)
+    check(re.search(r'Customers pick up most in the afternoon \(3–6\): (9 of 10|10 of 11) calls; mornings (1 of 8|2 of 9)', s) is not None, 'from the calls logged: customers pick up most in the afternoon (%r)' % s)
+    check('They picked up in the middle of the day (12–3) last time' in s, 'Bob picked up in the middle of the day last time ("Spoke with Bob" at 2 PM)')
+    nx = msg(page)
+    check('Check the part is in' in nx, 'the next step for Bob is still the part (%r)' % nx)
+    order = holds(page)
+    check('Customers pick up most in the afternoon' in page.inner_text('#st-ai-holds-out .st-ai-pickup'), '⏸️ Holds to call says when customers pick up')
+    explain(page, 8101)
+    nx = msg(page)
+    now_h = datetime.datetime.now().hour
+    if now_h < 12:
+        check('Try in the afternoon (3–6): customers pick up most then (9 of 10 calls)' in nx, 'Mary\'s morning calls didn\'t reach her: try in the afternoon (%r)' % nx)
+    else:
+        check('Call to book it' in nx, 'no call has missed Mary at this time of day: call (%r)' % nx)
+    check(not errors, 'no page errors (%s)' % errors[:2])
     page.close()
 
     # ================= No IndexedDB (a private window, blocked site data) =================
