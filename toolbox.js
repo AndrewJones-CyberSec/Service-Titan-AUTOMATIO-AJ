@@ -35,8 +35,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.4.2';
+  const VERSION = '2.4.3';
   const WHATS_NEW = {
+    '2.4.3': '📱 Customer Texts\' Hold list gets 🔎 Filter too: tick the kinds as before, then text only the holds in your 📍 areas (the same ones you teach 🧠 Toolbox AI), with a tag, in a state, with a hold reason, or created between two dates. Both filters now have 🗺️ State, 🗂️ Hold reason or status (from the Hold list, or a 📥 report\'s Hold Reason) and 📅 Created between two dates. 📌 Saved filters work in Customer Texts too.',
     '2.4.2': 'New in 🧠 Toolbox AI\'s ⏸️ Holds to call: 🔎 Filter. Teach it your areas (＋ New area: a name, a color like 🔴 Red or 🟡 Yellow, and its cities or zip codes), then show only their holds. Or filter by tags (in ServiceTitan\'s colors), job types (one, or every Quote), what the AI reads they\'re waiting on (parts, price, financing…), high or urgent, or how old. 📌 Save a filter to use again with one click. Each hold shows its area, and so does its write-up. It all stays in this browser.',
     '2.4.1': 'Smarter 🧠 Toolbox AI. 👎 Something\'s wrong? teaches it how your notes are written: ✕ on what it read wrong, or pick a sentence it missed and what it means ("pt on order", "TCC", "waiting on tax refund"); it reads it that way on every job from then on, and a phrase you teach means "don\'t call" in 🧭 Tech Router too. It also learns without taps: a hold booked within 14 days after a call (or after you were shown its script) credits that approach, and it learns when customers pick up ("Customers pick up most in the afternoon (3–6): 9 of 10 calls") and when this one did, to say when to call.',
     '2.4': 'New: 🧠 Toolbox AI (Beta). Click a job (or type its number) and 🧠 Explain writes up what\'s going on: why a hold is waiting (the price, who has to say yes, parts, financing, away until a day), the calls that didn\'t reach them, their texts (an unread one is left unread), a call-back day, their other jobs and usual tech, and what to watch out for. For a hold it gives a call script to book it (opener, why you\'re calling, the offer, answers for what they\'ll say, a voicemail), and learns which approach books the most from "How did the call go?". ⏸️ Holds to call puts the Hold list in order. 📚 Learn reads months or years of schedules into this browser (each day once, nothing kept twice), and 📥 adds a CSV report from ServiceTitan. It only reads and suggests.',
@@ -4197,6 +4198,334 @@
   })();
 
   // ===================================================================
+  // Hold filters: shared by 📱 Customer Texts' Hold list and 🧠 Toolbox AI's ⏸️ Holds to call
+  // Only the holds you want: 📍 your areas (a name, a color, and the cities and zip codes in it,
+  // taught once and used by both tools), 🏷️ tags (in ServiceTitan's colors), 🧰 job types (a whole
+  // family, every Quote, or single types; Customer Texts has its own job-type ticks), 🧠 what the AI
+  // reads in each hold's summary, 🗺️ state, 🗂️ hold reason or status, ⭐ high or urgent, ⏳ age, and
+  // 📅 created between two dates. Within each part any one counts (Red or Yellow); every part used
+  // has to pass (Red and every Quote). 📌 saves a filter as a button, to use again with one click.
+  // Each tool keeps its own filter in use and its own saved filters; the areas are shared. All of it
+  // is kept in this browser.
+  //   facts(row): what a Hold list row says, the way the filters read it: { type, tags, tagObjs, city,
+  //     zip, state, reason, status, created, priority, summary }. reason: the row's own hold reason, if
+  //     ServiceTitan sends one (any field with "reason" in its name); the caller can fill one in from
+  //     somewhere else (a CSV report's Hold Reason, in 🧠 Toolbox AI's memory).
+  //   make(o): one tool's filter. o: { id (prefix for its parts' ids and classes), key (where its
+  //     filter in use is saved), viewsKey (its saved filters), types (show job types), say(text),
+  //     rerender() (the tool draws its list again) }.
+  // ===================================================================
+  const holdFilter = (() => {
+    const AREA_KEY = 'stAiAreas';
+    const COLORS = [['red', '🔴', 'Red', 'r'], ['orange', '🟠', 'Orange', 'a'], ['yellow', '🟡', 'Yellow', 'a'], ['green', '🟢', 'Green', 'g'], ['blue', '🔵', 'Blue', 'b'], ['purple', '🟣', 'Purple', 'p'], ['gray', '⚪', 'Gray', '']];
+    const colorOf = k => COLORS.find(c => c[0] === k) || COLORS[COLORS.length - 1];
+    const lc = s => norm(s).toLowerCase();
+    const cityText = c => { c = norm(c); return /[a-z]/.test(c) ? c : c.toLowerCase().replace(/(^|[\s'-])([a-z])/g, (m, a, b) => a + b.toUpperCase()); };
+    const toDate = v => { if (v == null || v === '') return null; const d = v instanceof Date ? v : new Date(v); return isNaN(d) ? null : d; };
+    const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const daysAgo = d => Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
+    const shortDate = s => { const d = new Date(s + 'T00:00:00'); return isNaN(d) ? s : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined }); };
+    // ---- 📍 Areas ----
+    const areas = () => { const v = readSaved(AREA_KEY, [], []); return Array.isArray(v) ? v.filter(a => a && a.id && norm(a.name)).map(a => Object.assign({}, a, { cities: Array.isArray(a.cities) ? a.cities : [], zips: Array.isArray(a.zips) ? a.zips : [] })) : []; };
+    const inArea = (a, h) => (!!h.zip && a.zips.indexOf(h.zip) > -1) || (!!h.city && a.cities.indexOf(lc(h.city)) > -1);
+    const areasOf = h => areas().filter(a => inArea(a, h));
+    const chip = (text, tone, title) => { const c = el('span', '', text); c.className = 'st-chip' + (tone ? ' ' + tone : ''); if (title) c.title = title; return c; };
+    const areaChip = a => { const c = colorOf(a.color), x = chip(c[1] + ' ' + a.name, c[3], 'Your area: ' + a.cities.map(cityText).concat(a.zips).join(', ')); x.setAttribute('data-area', a.id); return x; };
+    // ---- What a Hold list row says ----
+    const reasonOf = x => {
+      for (const k of Object.keys(x || {})) {
+        if (!/reason/i.test(k)) continue;
+        const v = x[k], s = typeof v === 'string' ? v : v && typeof v === 'object' ? (v.Name || v.name || v.Text || v.text || '') : '';
+        if (norm(s)) return norm(s);
+      }
+      return '';
+    };
+    const facts = x => ({ type: norm(x.Type), tags: (Array.isArray(x.Tags) ? x.Tags : []).map(t => norm(t && (t.name || t.TypeName))).filter(Boolean),
+      tagObjs: (Array.isArray(x.Tags) ? x.Tags : []).map(board.tagOf).filter(Boolean), city: norm(x.City), zip: (/\b(\d{5})/.exec(String(x.Zip == null ? '' : x.Zip)) || [])[1] || '',
+      state: norm(x.State).toUpperCase(), reason: reasonOf(x), status: norm(x.JobStatus), created: toDate(x.CreatedOn), priority: norm(x.Priority),
+      summary: [x.Summary, x.AppointmentSpecialInstructions].filter(v => typeof v === 'string' && norm(v)).join('<br>') });
+    // What the AI reads in a hold (its summary, and anything the tool adds): a Set of topic keys, worked out once.
+    const topicsOf = h => {
+      if (h.topics) return h.topics;
+      if (!h._topics) h._topics = new Set(typeof lang !== 'undefined' ? lang.read(h.summary || '', h.created || new Date()).topics.map(t => t.key) : []);
+      return h._topics;
+    };
+    // ---- The filter ----
+    const AGES = { new: ['under a week old', d => d < 7], mid: ['1 to 4 weeks old', d => d >= 7 && d <= 30], old: ['over a month old', d => d > 30] };
+    const EMPTY = () => ({ areas: [], tags: [], types: [], fams: [], kinds: [], states: [], reasons: [], prio: false, age: '', from: '', to: '' });
+    const cleanF = f => {
+      const e = EMPTY();
+      f = f && typeof f === 'object' ? f : {};
+      ['areas', 'tags', 'types', 'fams', 'kinds', 'states', 'reasons'].forEach(k => { e[k] = Array.isArray(f[k]) ? f[k].filter(x => typeof x === 'string' && x) : []; });
+      e.prio = !!f.prio; e.age = AGES[f.age] ? f.age : '';
+      ['from', 'to'].forEach(k => { e[k] = /^\d{4}-\d{2}-\d{2}$/.test(f[k] || '') ? f[k] : ''; });
+      return e;
+    };
+    const famOf = t => norm(t).split(/\s*-\s*/)[0];
+    const KINDS = () => typeof lang === 'undefined' ? [] : lang.TOPICS.filter(t => t.group !== 'flag' || ['urgent', 'vulnerable', 'member'].indexOf(t.key) > -1);
+    const used = f => f.areas.length + f.tags.length + f.types.length + f.fams.length + f.kinds.length + f.states.length + f.reasons.length + (f.prio ? 1 : 0) + (f.age ? 1 : 0) + (f.from || f.to ? 1 : 0);
+    const passes = (f, h) => {
+      if (f.areas.length && !areasOf(h).some(a => f.areas.indexOf(a.id) > -1)) return false;
+      if (f.tags.length && !(h.tags || []).some(t => f.tags.some(x => lc(x) === lc(t)))) return false;
+      if ((f.types.length || f.fams.length) && !(f.types.indexOf(h.type) > -1 || f.fams.indexOf(famOf(h.type)) > -1)) return false;
+      if (f.kinds.length && !f.kinds.some(k => topicsOf(h).has(k))) return false;
+      if (f.states.length && f.states.indexOf(h.state || '') < 0) return false;
+      if (f.reasons.length && !f.reasons.some(r => (h.reason && r === 'r:' + lc(h.reason)) || (h.status && r === 's:' + lc(h.status)))) return false;
+      if (f.prio && !/^(urgent|high)$/i.test(h.priority || '')) return false;
+      if (f.age && !(h.created && AGES[f.age][1](daysAgo(h.created)))) return false;
+      if (f.from && !(h.created && ymd(new Date(h.created)) >= f.from)) return false;
+      if (f.to && !(h.created && ymd(new Date(h.created)) <= f.to)) return false;
+      return true;
+    };
+    const words = f => {
+      const A = areas(), parts = [];
+      if (f.areas.length) parts.push(f.areas.map(id => { const a = A.find(x => x.id === id); return a ? colorOf(a.color)[1] + ' ' + a.name : null; }).filter(Boolean).join(' or '));
+      if (f.tags.length) parts.push('🏷️ ' + f.tags.join(' or '));
+      if (f.fams.length || f.types.length) parts.push(f.fams.map(x => 'every ' + x).concat(f.types).join(' or '));
+      if (f.kinds.length) parts.push(f.kinds.map(k => { const t = typeof lang !== 'undefined' && lang.TOPIC.get(k); return t ? t.icon + ' ' + t.label : k; }).join(' or '));
+      if (f.states.length) parts.push('🗺️ ' + f.states.map(s => s || 'no state').join(' or '));
+      if (f.reasons.length) parts.push('🗂️ ' + f.reasons.map(r => r.slice(2)).join(' or '));
+      if (f.prio) parts.push('⭐ high or urgent');
+      if (f.age) parts.push('⏳ ' + AGES[f.age][0]);
+      if (f.from || f.to) parts.push('📅 created ' + (f.from && f.to ? shortDate(f.from) + ' to ' + shortDate(f.to) : f.from ? 'since ' + shortDate(f.from) : 'until ' + shortDate(f.to)));
+      return parts.filter(Boolean).join(' · ');
+    };
+    // Of the holds 🧠 Toolbox AI watched in each area, how many got booked (once 3 were booked or lost).
+    const areaStats = recs => {
+      const out = {};
+      areas().forEach(a => {
+        const r = (recs || []).filter(h => (h.out === 'booked' || h.out === 'lost') && inArea(a, { city: h.city, zip: h.zip }));
+        if (r.length >= 3) out[a.id] = { n: r.length, booked: r.filter(h => h.out === 'booked').length };
+      });
+      return out;
+    };
+    const pill = (label, title, onClick, extra) => { const b = smallBtn(label, onClick, 'padding:2px 7px;min-height:24px;font-size:11.5px;' + (extra || '')); b.title = title; b.addEventListener('mousedown', e => e.preventDefault()); return b; };
+    const setOn = (b, on) => { b.style.background = on ? 'var(--st-blue)' : ''; b.style.color = on ? '#fff' : ''; b.style.borderColor = on ? 'var(--st-blue)' : ''; };
+    const section = (title, cls) => {
+      const s = el('div', 'display:grid;gap:4px;padding:8px;border:1px solid var(--st-line);border-radius:8px;background:var(--st-bg);min-width:0');
+      if (cls) s.className = cls;
+      s.appendChild(el('div', 'font-weight:800;font-size:12px;color:var(--st-ink)', title));
+      return s;
+    };
+
+    const make = o => {
+      const id = o.id, say = o.say || (() => {}), redo = () => o.rerender();
+      let f = cleanF(readSaved(o.key, null, null)), open = false, typesOpen = false, editing = null;
+      const save = () => set(o.key, JSON.stringify(f));
+      const views = () => { const v = readSaved(o.viewsKey, [], []); return Array.isArray(v) ? v.filter(x => x && x.id && norm(x.name)) : []; };
+      const toggleIn = (arr, v) => { const i = arr.indexOf(v); if (i > -1) arr.splice(i, 1); else arr.push(v); save(); redo(); };
+      const clear = () => { f = EMPTY(); save(); redo(); };
+      // The bar: All holds, the 📌 saved filters, and 🔎 Filter.
+      const bar = () => {
+        const b0 = el('div', 'display:flex;gap:4px;flex-wrap:wrap;align-items:center');
+        b0.className = id + '-filter-bar';
+        const allB = pill('All holds', 'Every hold, no filter', clear);
+        allB.id = id + '-filter-all';
+        setOn(allB, !used(f));
+        b0.appendChild(allB);
+        views().forEach(v => {
+          const b = pill('📌 ' + v.name, words(cleanF(v.f)) || 'Every hold', () => { f = cleanF(v.f); save(); redo(); });
+          b.className = id + '-view'; b.setAttribute('data-view', v.name);
+          setOn(b, JSON.stringify(cleanF(v.f)) === JSON.stringify(f));
+          const x = pill('✕', 'Delete the saved filter "' + v.name + '"', () => { set(o.viewsKey, JSON.stringify(views().filter(y => y.id !== v.id))); redo(); }, 'padding:2px 5px');
+          x.className = id + '-view-del'; x.setAttribute('data-view', v.name);
+          b0.append(b, x);
+        });
+        const fb = pill('🔎 Filter' + (used(f) ? ' (' + used(f) + ')' : ''), 'Only some holds: your areas, tags, state, hold reason, dates…', () => { open = !open; redo(); });
+        fb.id = id + '-filter-go';
+        if (open) setOn(fb, true);
+        b0.appendChild(fb);
+        return b0;
+      };
+      // 🔎 Filter: every choice, from the holds on the list (with how many have each).
+      const box = (cands, info) => {
+        info = info || {};
+        const bx = el('div', 'display:grid;gap:7px;padding:7px;border:1px solid var(--st-line);border-radius:8px;background:var(--st-soft)');
+        bx.id = id + '-filter';
+        const group = title => {
+          const g = el('div', 'display:grid;gap:3px');
+          g.appendChild(el('div', 'font-size:11px;font-weight:800;color:var(--st-ink-3)', title));
+          const r = el('div', 'display:flex;gap:4px;flex-wrap:wrap;align-items:center');
+          g.appendChild(r); bx.appendChild(g);
+          return r;
+        };
+        const opt = (r, label, on, title, click, attr) => { const b = pill(label, title, click); setOn(b, on); if (attr) b.setAttribute(attr[0], attr[1]); r.appendChild(b); return b; };
+        const count = fn => { const m = new Map(); cands.forEach(h => fn(h).forEach(k => { if (k != null && k !== '') m.set(k, (m.get(k) || 0) + 1); })); return m; };
+        // 📍 Your areas.
+        const ar = group('📍 Your areas (shared by 🧠 Toolbox AI and 📱 Customer Texts)');
+        const stats = areaStats(info.recs);
+        areas().forEach(a => {
+          const c = colorOf(a.color), n = cands.filter(h => inArea(a, h)).length, sx = stats[a.id];
+          opt(ar, c[1] + ' ' + a.name + ' (' + n + ')' + (sx ? ' · ' + Math.round(100 * sx.booked / sx.n) + '% book' : ''), f.areas.indexOf(a.id) > -1,
+            (a.cities.map(cityText).concat(a.zips).join(', ') || 'No cities or zip codes yet') + (sx ? '. Learned: ' + sx.booked + ' of ' + sx.n + ' holds here got booked.' : ''), () => toggleIn(f.areas, a.id), ['data-area', a.name]);
+          const ed = pill('✏️', 'Change ' + a.name + ' (its cities, zip codes, color)', () => { editing = a.id; redo(); }, 'padding:2px 5px');
+          ed.setAttribute('data-area-edit', a.name);
+          ar.appendChild(ed);
+        });
+        const na = pill('＋ New area', 'Teach it an area: a name, a color, and its cities or zip codes', () => { editing = 'new'; redo(); });
+        na.id = id + '-area-new';
+        ar.appendChild(na);
+        // 🏷️ Tags, in ServiceTitan's colors.
+        const tagN = new Map();
+        cands.forEach(h => (h.tagObjs || []).forEach(t => { const k = lc(t.name), x = tagN.get(k) || { t, n: 0 }; x.n++; tagN.set(k, x); }));
+        if (tagN.size) {
+          const tr = group('🏷️ Tags');
+          Array.from(tagN.values()).sort((a, b) => b.n - a.n || a.t.name.localeCompare(b.t.name)).forEach(({ t, n }) => {
+            const on = f.tags.some(x => lc(x) === lc(t.name));
+            const b = opt(tr, t.name + ' (' + n + ')', on, 'Holds tagged ' + t.name, () => { const i = f.tags.findIndex(x => lc(x) === lc(t.name)); if (i > -1) f.tags.splice(i, 1); else f.tags.push(t.name); save(); redo(); }, ['data-tag', t.name]);
+            if (!on) { b.style.background = t.color; b.style.color = t.text; }
+          });
+        }
+        // 🧰 Job types: a whole family (every Quote), or single types.
+        if (o.types) {
+          const fam = count(h => h.type ? [famOf(h.type)] : []), typ = count(h => h.type ? [h.type] : []);
+          if (fam.size) {
+            const fr = group('🧰 Job types');
+            Array.from(fam.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).forEach(([k, n]) => opt(fr, 'Every ' + k + ' (' + n + ')', f.fams.indexOf(k) > -1, 'Every job type that starts with "' + k + '"', () => toggleIn(f.fams, k), ['data-fam', k]));
+            const more = pill(typesOpen ? '▾ Single job types' : '▸ Single job types (' + typ.size + ')', 'One job type at a time', () => { typesOpen = !typesOpen; redo(); });
+            more.id = id + '-filter-types';
+            fr.appendChild(more);
+            if (typesOpen) {
+              const tr2 = el('div', 'display:flex;gap:4px;flex-wrap:wrap');
+              Array.from(typ.entries()).sort((a, b) => a[0].localeCompare(b[0])).forEach(([k, n]) => opt(tr2, k + ' (' + n + ')', f.types.indexOf(k) > -1, k, () => toggleIn(f.types, k), ['data-type', k]));
+              bx.appendChild(tr2);
+            }
+          }
+        }
+        // 🗺️ State.
+        const stN = count(h => [h.state || '']);
+        if (stN.size && !(stN.size === 1 && stN.has(''))) {
+          const sr = group('🗺️ State');
+          Array.from(stN.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).forEach(([k, n]) => opt(sr, (k || 'No state') + ' (' + n + ')', f.states.indexOf(k) > -1, k ? 'Holds in ' + k : 'Holds with no state on them', () => toggleIn(f.states, k), ['data-state', k]));
+        }
+        // 🗂️ Hold reason or status.
+        const rsN = count(h => h.reason ? ['r:' + lc(h.reason)] : []), rsLabel = new Map();
+        cands.forEach(h => { if (h.reason) rsLabel.set('r:' + lc(h.reason), h.reason); if (h.status) rsLabel.set('s:' + lc(h.status), h.status); });
+        const stsN = count(h => h.status ? ['s:' + lc(h.status)] : []);
+        const rr = group('🗂️ Hold reason or status');
+        Array.from(rsN.entries()).sort((a, b) => b[1] - a[1]).forEach(([k, n]) => opt(rr, rsLabel.get(k) + ' (' + n + ')', f.reasons.indexOf(k) > -1, 'Why it\'s on hold: ' + rsLabel.get(k), () => toggleIn(f.reasons, k), ['data-reason', rsLabel.get(k)]));
+        if (stsN.size > 1) Array.from(stsN.entries()).sort((a, b) => b[1] - a[1]).forEach(([k, n]) => opt(rr, 'Status: ' + rsLabel.get(k) + ' (' + n + ')', f.reasons.indexOf(k) > -1, 'The job\'s status on the Hold list', () => toggleIn(f.reasons, k), ['data-status', rsLabel.get(k)]));
+        if (!rsN.size) rr.appendChild(el('span', 'font-size:11px;color:var(--st-ink-3)', 'The Hold list doesn\'t say why these are on hold. A 📥 CSV report with a Hold Reason column (🧠 Toolbox AI → 📚 Memory) fills it in.'));
+        // 🧠 What the AI reads in them.
+        const kn = count(h => Array.from(topicsOf(h)));
+        const ks = KINDS().filter(t => kn.has(t.key));
+        if (ks.length) {
+          const kr = group('🧠 What the AI reads in them');
+          ks.forEach(t => opt(kr, t.icon + ' ' + t.label + ' (' + kn.get(t.key) + ')', f.kinds.indexOf(t.key) > -1, 'Holds whose summary says: ' + t.label, () => toggleIn(f.kinds, t.key), ['data-kind', t.key]));
+        }
+        // 📅 Created between two dates.
+        const dr = group('📅 Created between (the job\'s Created date)');
+        const dIn = (k, label) => {
+          const i = el('input', FIELD + 'padding:3px 6px');
+          i.type = 'date'; i.value = f[k]; i.id = id + '-filter-' + k; i.title = label;
+          i.onchange = () => { f[k] = /^\d{4}-\d{2}-\d{2}$/.test(i.value) ? i.value : ''; if (f.from && f.to && f.from > f.to) { const t = f.from; f.from = f.to; f.to = t; } save(); redo(); };
+          return i;
+        };
+        dr.append(dIn('from', 'From (the first day it can have been created)'), el('span', 'font-size:12px;color:var(--st-ink-2)', 'and'), dIn('to', 'To (the last day it can have been created)'));
+        if (f.from || f.to) { const x = pill('✕ Any date', 'Clear the dates', () => { f.from = f.to = ''; save(); redo(); }); x.id = id + '-filter-nodates'; dr.appendChild(x); }
+        // ⭐ Priority and ⏳ age.
+        const pr = group('⭐ Priority and ⏳ age');
+        opt(pr, '⭐ High or urgent only', f.prio, 'Only holds with High or Urgent priority', () => { f.prio = !f.prio; save(); redo(); }, ['data-prio', '1']);
+        Object.keys(AGES).forEach(k => opt(pr, '⏳ ' + AGES[k][0], f.age === k, 'How long ago the job was created', () => { f.age = f.age === k ? '' : k; save(); redo(); }, ['data-age', k]));
+        // 📌 Save it, or clear it.
+        const sv = el('div', 'display:flex;gap:4px;flex-wrap:wrap;align-items:center');
+        const nm = el('input', 'flex:1;min-width:110px;' + FIELD);
+        nm.type = 'text'; nm.placeholder = 'Name it (Red quotes…)'; nm.id = id + '-view-name';
+        const sb = pill('📌 Save this filter', 'Keeps it as a button above the list, to use again with one click', () => {
+          const name = norm(nm.value);
+          if (!used(f)) return say('Pick something to filter by first.');
+          if (!name) { nm.focus(); return say('Give the filter a name, then 📌 Save.'); }
+          const v = views().filter(x => lc(x.name) !== lc(name));
+          v.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name, f: cleanF(f) });
+          set(o.viewsKey, JSON.stringify(v.slice(-30)));
+          redo();
+          say('📌 Saved "' + name + '". It\'s above the list now.');
+        }, PRIMARY);
+        sb.id = id + '-view-save';
+        const cl = pill('Clear', 'Back to every hold', clear);
+        cl.id = id + '-filter-clear';
+        sv.append(nm, sb, cl);
+        bx.appendChild(sv);
+        return bx;
+      };
+      // Teaching an area: its name, color, and the cities and zip codes in it (from the holds on the
+      // list, with how many each has, or typed in).
+      const editor = cands => {
+        const A = areas(), a0 = editing === 'new' ? { id: '', name: '', color: 'red', cities: [], zips: [] } : A.find(x => x.id === editing);
+        if (!a0) { editing = null; return el('div'); }
+        const bx = section(a0.id ? '📍 Change ' + a0.name : '📍 New area', id + '-area-edit');
+        const row1 = el('div', 'display:flex;gap:5px');
+        const name = el('input', 'flex:1;min-width:0;' + FIELD);
+        name.type = 'text'; name.placeholder = 'Name (Red, North, Jackson side…)'; name.value = a0.name; name.id = id + '-area-name';
+        const color = el('select', 'flex:none;' + FIELD);
+        color.id = id + '-area-color';
+        COLORS.forEach(c => { const op = el('option', '', c[1] + ' ' + c[2]); op.value = c[0]; color.appendChild(op); });
+        color.value = a0.color || 'red';
+        row1.append(name, color);
+        bx.appendChild(row1);
+        const list = (title, items, has, attr) => {
+          if (!items.length) return;
+          bx.appendChild(el('div', 'font-size:11px;font-weight:800;color:var(--st-ink-3)', title));
+          const r = el('div', 'display:flex;gap:4px 10px;flex-wrap:wrap;font-size:12px');
+          items.forEach(([k, label, n]) => {
+            const l = el('label', 'display:flex;gap:4px;align-items:center;cursor:pointer');
+            const c = el('input'); c.type = 'checkbox'; c.checked = has(k); c.setAttribute(attr, k);
+            l.append(c, document.createTextNode(label + (n ? ' (' + n + ')' : '')));
+            r.appendChild(l);
+          });
+          bx.appendChild(r);
+        };
+        const cities = new Map(), zips = new Map();
+        cands.forEach(h => { if (h.city) cities.set(lc(h.city), [lc(h.city), cityText(h.city), ((cities.get(lc(h.city)) || [])[2] || 0) + 1]); if (h.zip) zips.set(h.zip, [h.zip, h.zip, ((zips.get(h.zip) || [])[2] || 0) + 1]); });
+        a0.cities.forEach(c => { if (!cities.has(c)) cities.set(c, [c, cityText(c), 0]); });
+        a0.zips.forEach(z => { if (!zips.has(z)) zips.set(z, [z, z, 0]); });
+        list('Cities (on the Hold list now, with how many holds)', Array.from(cities.values()).sort((a, b) => a[1].localeCompare(b[1])), k => a0.cities.indexOf(k) > -1, 'data-city');
+        list('Zip codes', Array.from(zips.values()).sort((a, b) => a[0].localeCompare(b[0])), k => a0.zips.indexOf(k) > -1, 'data-zip');
+        const more = el('input', FULL + FIELD);
+        more.type = 'text'; more.placeholder = 'More cities or zip codes, with commas (Florence, 39073…)'; more.id = id + '-area-more';
+        bx.appendChild(more);
+        const note = el('div', 'min-height:14px;font-size:12px;color:var(--st-red-d)');
+        const btns = el('div', 'display:flex;gap:5px;flex-wrap:wrap');
+        const sv = pill('Save the area', 'Holds in these cities or zip codes are in it', () => {
+          const nmv = norm(name.value);
+          const cs = Array.from(bx.querySelectorAll('input[data-city]')).filter(c => c.checked).map(c => c.getAttribute('data-city'));
+          const zs = Array.from(bx.querySelectorAll('input[data-zip]')).filter(c => c.checked).map(c => c.getAttribute('data-zip'));
+          more.value.split(/[,;\n]+/).map(norm).filter(Boolean).forEach(x => { if (/^\d{5}$/.test(x)) { if (zs.indexOf(x) < 0) zs.push(x); } else if (cs.indexOf(lc(x)) < 0) cs.push(lc(x)); });
+          if (!nmv) { note.textContent = '⚠️ Give it a name.'; return; }
+          if (!cs.length && !zs.length) { note.textContent = '⚠️ Tick (or type) at least one city or zip code.'; return; }
+          if (A.some(x => x.id !== a0.id && lc(x.name) === lc(nmv))) { note.textContent = '⚠️ There\'s already an area called ' + nmv + '.'; return; }
+          const a = { id: a0.id || 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name: nmv, color: color.value, cities: cs, zips: zs };
+          set(AREA_KEY, JSON.stringify(A.filter(x => x.id !== a.id).concat([a])));
+          editing = null;
+          redo();
+          say('📍 ' + colorOf(a.color)[1] + ' ' + a.name + ' saved: ' + cs.map(cityText).concat(zs).join(', ') + '. Tap it in 🔎 Filter to see only its holds.');
+        }, PRIMARY);
+        sv.id = id + '-area-save';
+        btns.appendChild(sv);
+        if (a0.id) {
+          const del = pill('Delete the area', 'Forget this area (filters using it lose it too)', () => {
+            set(AREA_KEY, JSON.stringify(A.filter(x => x.id !== a0.id)));
+            f.areas = f.areas.filter(x => x !== a0.id); save();
+            set(o.viewsKey, JSON.stringify(views().map(v => Object.assign({}, v, { f: Object.assign(cleanF(v.f), { areas: cleanF(v.f).areas.filter(x => x !== a0.id) }) }))));
+            editing = null; redo();
+          }, DANGER);
+          del.id = id + '-area-delete';
+          btns.appendChild(del);
+        }
+        btns.appendChild(pill('Cancel', 'Leave it as it was', () => { editing = null; redo(); }));
+        bx.append(note, btns);
+        return bx;
+      };
+      return {
+        bar, box, editor,
+        passes: h => passes(f, h), used: () => used(f), words: () => words(f),
+        isOpen: () => open, isEditing: () => !!editing
+      };
+    };
+    return { make, facts, areasOf, areaChip, cityText, colorOf, topicsOf };
+  })();
+
+  // ===================================================================
   // Tool 5: Customer Texts
   // Texts customers a saved message through ServiceTitan's Chat Center, one at a time.
   // Messages are sorted into folders (Holds, Tech Updates, Reschedule, plus your own) and
@@ -4398,10 +4727,11 @@
         return d;
       };
       const seen = new Set(), jobs = [];
+      // What the 🔎 filter reads (holdFilter.facts: tags, city, zip, state, hold reason, created, priority, summary) too.
       const take = d => d.Jobs.forEach(j => {
         if (!j || !j.JobId || seen.has(j.JobId)) return;
         seen.add(j.JobId);
-        jobs.push({ jobId: j.JobId, customer: norm(j.Customer), customerId: j.CustomerId, type: norm(j.Type) || '(no type)', status: norm(j.JobStatus) });
+        jobs.push(Object.assign(holdFilter.facts(j), { jobId: j.JobId, customer: norm(j.Customer), customerId: j.CustomerId, type: norm(j.Type) || '(no type)', status: norm(j.JobStatus) }));
       });
       const firstPage = await page(0);
       const total = firstPage.Count || 0;
@@ -4412,6 +4742,10 @@
       if (rest.halted) throw rest.haltError;
       rest.forEach(d => { if (d && d.error) throw d.error; take(d); });
       health.clear(TOOL);
+      // A hold reason from a 📥 report added to 🧠 Toolbox AI, for a hold the list doesn't give one for.
+      if (jobs.some(h => !h.reason)) {
+        try { const why = new Map((await mem.all('jobs')).filter(x => x.hold).map(x => [x.j, x.hold])); jobs.forEach(h => { if (!h.reason && why.has(String(h.jobId))) h.reason = why.get(String(h.jobId)); }); } catch (e) {}
+      }
       return { jobs, total, bus: buNames(ids), at: new Date() };
     };
 
@@ -4504,6 +4838,9 @@
     });
     let mode = get(K.mode) === 'auto' ? 'auto' : 'type';
     const openGroups = new Set();
+    // 🔎 Filter on the Hold list (the same one as 🧠 Toolbox AI's Holds to call, with the same areas): only
+    // the ticked kinds' holds that pass it are texted. Its own filter in use and saved filters.
+    const holdF = holdFilter.make({ id: 'st-ct', key: 'stCtHoldFilter', viewsKey: 'stCtHoldViews', types: false, say: t => say(t), rerender: () => renderMain() });
 
     // Who gets texted: one entry per customer (the first job found for them).
     const recipients = () => {
@@ -4511,7 +4848,7 @@
       const addOne = r => { const key = r.customerId ? 'c' + r.customerId : 'j' + r.jobId; if (seen.has(key)) return; seen.add(key); out.push(r); };
       if (source === 'holds') {
         if (!holds) return out;
-        holds.jobs.forEach(h => { if (typeSel.has(h.type)) addOne({ jobId: h.jobId, customer: h.customer, customerId: h.customerId, tech: '', hold: true, listStatus: h.status }); });
+        holds.jobs.forEach(h => { if (typeSel.has(h.type) && holdF.passes(h)) addOne({ jobId: h.jobId, customer: h.customer, customerId: h.customerId, tech: '', hold: true, listStatus: h.status }); });
       } else {
         picker.ids().forEach(j => { const b = jobInfo(j) || {}; addOne({ jobId: j, customer: b.customer || picker.label(j) || '', customerId: b.customerId || null, tech: b.tech || '', day: jobDay(j) }); });
       }
@@ -4553,10 +4890,16 @@
         }
       });
       whoBox.appendChild(box);
+      const fbar = holdF.bar();
+      fbar.style.marginTop = '6px';
+      whoBox.appendChild(fbar);
+      if (holdF.isOpen()) { const fb = holdF.box(holds.jobs, {}); fb.style.maxHeight = '230px'; fb.style.overflow = 'auto'; fb.style.marginTop = '4px'; whoBox.appendChild(fb); }
+      if (holdF.isEditing()) { const ed = holdF.editor(holds.jobs); ed.style.marginTop = '4px'; whoBox.appendChild(ed); }
       const r = recipients();
-      const ticked = holds.jobs.filter(h => typeSel.has(h.type)).length;
+      const ticked = holds.jobs.filter(h => typeSel.has(h.type)).length, kept = holds.jobs.filter(h => typeSel.has(h.type) && holdF.passes(h)).length;
       const btns = el('div', 'display:flex;gap:6px;align-items:center;margin-top:4px;font-size:12px');
-      btns.append(el('span', 'flex:1', s1(ticked, 'hold') + ' ticked → ' + s1(r.length, 'customer')),
+      btns.className = 'st-ct-ticked';
+      btns.append(el('span', 'flex:1', s1(ticked, 'hold') + ' ticked' + (holdF.used() ? ', ' + kept + ' in the filter (🔎 ' + holdF.words() + ')' : '') + ' → ' + s1(r.length, 'customer')),
         smallBtn('None', () => { typeSel.clear(); saveTypes(); renderMain(); }, 'padding:2px 6px'));
       whoBox.appendChild(btns);
     };
@@ -11865,7 +12208,8 @@
     // (null: not read yet), phone, created, priority, city, zip, day, start, end, ws, we, status,
     // techIds, techNames, total } or null.
     const fromRow = x => ({ customer: norm(x.Customer), customerId: idOf(x.CustomerId), locationId: idOf(x.LocationId), type: norm(x.Type), typeId: idOf(x.TypeId) || '',
-      tags: (Array.isArray(x.Tags) ? x.Tags : []).map(t => norm(t && (t.name || t.TypeName))).filter(Boolean), tagObjs: (Array.isArray(x.Tags) ? x.Tags : []).map(board.tagOf).filter(Boolean), summary: [x.Summary, x.AppointmentSpecialInstructions].filter(v => typeof v === 'string' && norm(v)).join('<br>'),
+      tags: (Array.isArray(x.Tags) ? x.Tags : []).map(t => norm(t && (t.name || t.TypeName))).filter(Boolean), tagObjs: (Array.isArray(x.Tags) ? x.Tags : []).map(board.tagOf).filter(Boolean),
+      state: norm(x.State).toUpperCase(), reason: holdFilter.facts(x).reason, status: norm(x.JobStatus), summary: [x.Summary, x.AppointmentSpecialInstructions].filter(v => typeof v === 'string' && norm(v)).join('<br>'),
       phone: last10(x.CustomerPhone), created: toDate(x.CreatedOn), priority: norm(x.Priority), city: norm(x.City), zip: zip5(x.Zip), start: toDate(x.Start), end: toDate(x.End), ws: toDate(x.ArrivalWindowStart), we: toDate(x.ArrivalWindowEnd) });
     const findJob = async (j, stale) => {
       const base = { j, where: '', customer: '', customerId: null, locationId: null, type: '', typeId: '', tags: [], summary: null, phone: '', created: null, priority: '', city: '', zip: '', techIds: [], techNames: [] };
@@ -12601,245 +12945,11 @@
       fit();
     };
 
-    // ---------- 📍 Areas and 🔎 filters, for ⏸️ Holds to call ----------
-    // Areas you teach it: a name, a color, and the cities and zip codes in it (🔴 Red: Mendenhall,
-    // Magee, 39111…). A hold is in an area when its city or zip code is. The filter: areas, tags (in
-    // ServiceTitan's colors), job types (one, or a whole family: every Quote), what the AI reads it's
-    // waiting on, high or urgent only, and how old it is. Within each part any one counts (Red or
-    // Yellow); every part used has to pass (Red and Quotes). 📌 saves a filter to use again with one
-    // click. Areas, the filter in use and the saved filters are kept in this browser.
-    const AREA_KEY = 'stAiAreas', FILTER_KEY = 'stAiHoldFilter', VIEWS_KEY = 'stAiHoldViews';
-    const COLORS = [['red', '🔴', 'Red', 'r'], ['orange', '🟠', 'Orange', 'a'], ['yellow', '🟡', 'Yellow', 'a'], ['green', '🟢', 'Green', 'g'], ['blue', '🔵', 'Blue', 'b'], ['purple', '🟣', 'Purple', 'p'], ['gray', '⚪', 'Gray', '']];
-    const colorOf = k => COLORS.find(c => c[0] === k) || COLORS[COLORS.length - 1];
-    const lc = s => norm(s).toLowerCase();
-    const cityText = c => { c = norm(c); return /[a-z]/.test(c) ? c : c.toLowerCase().replace(/(^|[\s'-])([a-z])/g, (m, a, b) => a + b.toUpperCase()); };
-    const areas = () => { const v = readSaved(AREA_KEY, [], []); return Array.isArray(v) ? v.filter(a => a && a.id && norm(a.name)).map(a => Object.assign({}, a, { cities: Array.isArray(a.cities) ? a.cities : [], zips: Array.isArray(a.zips) ? a.zips : [] })) : []; };
-    const inArea = (a, h) => (!!h.zip && a.zips.indexOf(h.zip) > -1) || (!!h.city && a.cities.indexOf(lc(h.city)) > -1);
-    const areasOf = h => areas().filter(a => inArea(a, h));
-    const areaChip = a => { const c = colorOf(a.color), x = chip(c[1] + ' ' + a.name, c[3], 'Your area: ' + a.cities.map(cityText).concat(a.zips).join(', ')); x.setAttribute('data-area', a.id); return x; };
-    const EMPTY = () => ({ areas: [], tags: [], types: [], fams: [], kinds: [], prio: false, age: '' });
-    const AGES = { new: ['under a week old', d => d < 7], mid: ['1 to 4 weeks old', d => d >= 7 && d <= 30], old: ['over a month old', d => d > 30] };
-    const cleanF = f => {
-      const e = EMPTY();
-      f = f && typeof f === 'object' ? f : {};
-      ['areas', 'tags', 'types', 'fams', 'kinds'].forEach(k => { e[k] = Array.isArray(f[k]) ? f[k].filter(x => typeof x === 'string' && x) : []; });
-      e.prio = !!f.prio; e.age = AGES[f.age] ? f.age : '';
-      return e;
-    };
-    let filt = cleanF(readSaved(FILTER_KEY, null, null)), filterOpen = false, typesOpen = false, areaEdit = null;
-    const saveFilt = () => set(FILTER_KEY, JSON.stringify(filt));
-    const views = () => { const v = readSaved(VIEWS_KEY, [], []); return Array.isArray(v) ? v.filter(x => x && x.id && norm(x.name)) : []; };
-    const famOf = t => norm(t).split(/\s*-\s*/)[0];
-    const KINDS = () => lang.TOPICS.filter(t => t.group !== 'flag' || ['urgent', 'vulnerable', 'member'].indexOf(t.key) > -1);
-    const used = f => f.areas.length + f.tags.length + f.types.length + f.fams.length + f.kinds.length + (f.prio ? 1 : 0) + (f.age ? 1 : 0);
-    const passes = (f, h) => {
-      if (f.areas.length && !areasOf(h).some(a => f.areas.indexOf(a.id) > -1)) return false;
-      if (f.tags.length && !h.tags.some(t => f.tags.some(x => lc(x) === lc(t)))) return false;
-      if ((f.types.length || f.fams.length) && !(f.types.indexOf(h.type) > -1 || f.fams.indexOf(famOf(h.type)) > -1)) return false;
-      if (f.kinds.length && !f.kinds.some(k => h.topics.has(k))) return false;
-      if (f.prio && !/^(urgent|high)$/i.test(h.priority)) return false;
-      if (f.age && !(h.created && AGES[f.age][1](daysAgo(h.created)))) return false;
-      return true;
-    };
-    // The filter in words: "🔴 Red or 🟡 Yellow · every Quote · 📦 Waiting on parts".
-    const filterWords = f => {
-      const A = areas(), parts = [];
-      if (f.areas.length) parts.push(f.areas.map(id => { const a = A.find(x => x.id === id); return a ? colorOf(a.color)[1] + ' ' + a.name : null; }).filter(Boolean).join(' or '));
-      if (f.tags.length) parts.push('🏷️ ' + f.tags.join(' or '));
-      if (f.fams.length || f.types.length) parts.push(f.fams.map(x => 'every ' + x).concat(f.types).join(' or '));
-      if (f.kinds.length) parts.push(f.kinds.map(k => { const t = lang.TOPIC.get(k); return t ? t.icon + ' ' + t.label : k; }).join(' or '));
-      if (f.prio) parts.push('⭐ high or urgent');
-      if (f.age) parts.push('⏳ ' + AGES[f.age][0]);
-      return parts.filter(Boolean).join(' · ');
-    };
-    // What the AI has learned about each area: of the holds it watched there, how many got booked
-    // (shown once 3 have been booked or lost).
-    const areaStats = recs => {
-      const outS = {};
-      areas().forEach(a => {
-        const r = (recs || []).filter(h => (h.out === 'booked' || h.out === 'lost') && inArea(a, { city: h.city, zip: h.zip }));
-        if (r.length >= 3) outS[a.id] = { n: r.length, booked: r.filter(h => h.out === 'booked').length };
-      });
-      return outS;
-    };
+    // ---------- 🔎 The filter for ⏸️ Holds to call (shared with 📱 Customer Texts: see holdFilter) ----------
+    const HF = holdFilter.make({ id: 'st-ai', key: 'stAiHoldFilter', viewsKey: 'stAiHoldViews', types: true, say: t => say(t), rerender: () => refilter() });
+    const areasOf = holdFilter.areasOf, areaChip = holdFilter.areaChip, cityText = holdFilter.cityText;
     // The list again through the filter as it is now (nothing is read again), and the line above it.
     const refilter = () => { if (!lastHolds) return; renderHolds(); say(holdsMsg()); };
-    const toggleIn = (arr, v) => { const i = arr.indexOf(v); if (i > -1) arr.splice(i, 1); else arr.push(v); saveFilt(); refilter(); };
-    // The bar above the list: All holds, your 📌 saved filters, and 🔎 Filter.
-    const filterBar = () => {
-      const bar = el('div', 'display:flex;gap:4px;flex-wrap:wrap;align-items:center');
-      bar.className = 'st-ai-filter-bar';
-      const allB = pill('All holds', 'Every hold, no filter', () => { filt = EMPTY(); saveFilt(); refilter(); });
-      allB.id = 'st-ai-filter-all';
-      setOn(allB, !used(filt));
-      bar.appendChild(allB);
-      views().forEach(v => {
-        const b = pill('📌 ' + v.name, filterWords(cleanF(v.f)) || 'Every hold', () => { filt = cleanF(v.f); saveFilt(); refilter(); });
-        b.className = 'st-ai-view'; b.setAttribute('data-view', v.name);
-        setOn(b, JSON.stringify(cleanF(v.f)) === JSON.stringify(filt));
-        const x = pill('✕', 'Delete the saved filter "' + v.name + '"', () => { set(VIEWS_KEY, JSON.stringify(views().filter(y => y.id !== v.id))); refilter(); }, 'padding:2px 5px');
-        x.className = 'st-ai-view-del'; x.setAttribute('data-view', v.name);
-        bar.append(b, x);
-      });
-      const fb = pill('🔎 Filter' + (used(filt) ? ' (' + used(filt) + ')' : ''), 'Only some holds: your areas, tags, job types, what they\'re waiting on…', () => { filterOpen = !filterOpen; refilter(); });
-      fb.id = 'st-ai-filter-go';
-      if (filterOpen) setOn(fb, true);
-      bar.appendChild(fb);
-      return bar;
-    };
-    // 🔎 Filter: every choice, from what's on the Hold list right now (with how many of each).
-    const filterBox = (cands, info) => {
-      const box = el('div', 'display:grid;gap:7px;padding:7px;border:1px solid var(--st-line);border-radius:8px;background:var(--st-soft)');
-      box.id = 'st-ai-filter';
-      const group = title => {
-        const g = el('div', 'display:grid;gap:3px');
-        g.appendChild(el('div', 'font-size:11px;font-weight:800;color:var(--st-ink-3)', title));
-        const r = el('div', 'display:flex;gap:4px;flex-wrap:wrap;align-items:center');
-        g.appendChild(r); box.appendChild(g);
-        return r;
-      };
-      const opt = (r, label, on, title, click, attr) => { const b = pill(label, title, click); setOn(b, on); if (attr) b.setAttribute(attr[0], attr[1]); r.appendChild(b); return b; };
-      // 📍 Your areas.
-      const ar = group('📍 Your areas');
-      const stats = areaStats(info.recs);
-      areas().forEach(a => {
-        const c = colorOf(a.color), n = cands.filter(h => inArea(a, h)).length, sx = stats[a.id];
-        opt(ar, c[1] + ' ' + a.name + ' (' + n + ')' + (sx ? ' · ' + Math.round(100 * sx.booked / sx.n) + '% book' : ''), filt.areas.indexOf(a.id) > -1,
-          (a.cities.map(cityText).concat(a.zips).join(', ') || 'No cities or zip codes yet') + (sx ? '. Learned: ' + sx.booked + ' of ' + sx.n + ' holds here got booked.' : ''), () => toggleIn(filt.areas, a.id), ['data-area', a.name]);
-        const ed = pill('✏️', 'Change ' + a.name + ' (its cities, zip codes, color)', () => { areaEdit = a.id; refilter(); }, 'padding:2px 5px');
-        ed.setAttribute('data-area-edit', a.name);
-        ar.appendChild(ed);
-      });
-      const na = pill('＋ New area', 'Teach it an area: a name, a color, and its cities or zip codes', () => { areaEdit = 'new'; refilter(); });
-      na.id = 'st-ai-area-new';
-      ar.appendChild(na);
-      // 🏷️ Tags, in ServiceTitan's colors.
-      const tagN = new Map();
-      cands.forEach(h => h.tagObjs.forEach(t => { const k = lc(t.name), x = tagN.get(k) || { t, n: 0 }; x.n++; tagN.set(k, x); }));
-      if (tagN.size) {
-        const tr = group('🏷️ Tags');
-        Array.from(tagN.values()).sort((a, b) => b.n - a.n || a.t.name.localeCompare(b.t.name)).forEach(({ t, n }) => {
-          const on = filt.tags.some(x => lc(x) === lc(t.name));
-          const b = opt(tr, t.name + ' (' + n + ')', on, 'Holds tagged ' + t.name, () => { const i = filt.tags.findIndex(x => lc(x) === lc(t.name)); if (i > -1) filt.tags.splice(i, 1); else filt.tags.push(t.name); saveFilt(); refilter(); }, ['data-tag', t.name]);
-          if (!on) { b.style.background = t.color; b.style.color = t.text; }
-        });
-      }
-      // 🧰 Job types: a whole family (every Quote), or single types.
-      const fam = new Map(), typ = new Map();
-      cands.forEach(h => { if (!h.type) return; fam.set(famOf(h.type), (fam.get(famOf(h.type)) || 0) + 1); typ.set(h.type, (typ.get(h.type) || 0) + 1); });
-      if (fam.size) {
-        const fr = group('🧰 Job types');
-        Array.from(fam.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).forEach(([k, n]) => opt(fr, 'Every ' + k + ' (' + n + ')', filt.fams.indexOf(k) > -1, 'Every job type that starts with "' + k + '"', () => toggleIn(filt.fams, k), ['data-fam', k]));
-        const more = pill(typesOpen ? '▾ Single job types' : '▸ Single job types (' + typ.size + ')', 'One job type at a time', () => { typesOpen = !typesOpen; refilter(); });
-        more.id = 'st-ai-filter-types';
-        fr.appendChild(more);
-        if (typesOpen) {
-          const tr2 = el('div', 'display:flex;gap:4px;flex-wrap:wrap');
-          Array.from(typ.entries()).sort((a, b) => a[0].localeCompare(b[0])).forEach(([k, n]) => opt(tr2, k + ' (' + n + ')', filt.types.indexOf(k) > -1, k, () => toggleIn(filt.types, k), ['data-type', k]));
-          box.appendChild(tr2);
-        }
-      }
-      // 🧠 What it's waiting on (the AI's reading of each hold's summary, and what it read explaining it).
-      const kn = new Map();
-      cands.forEach(h => h.topics.forEach(k => kn.set(k, (kn.get(k) || 0) + 1)));
-      const ks = KINDS().filter(t => kn.has(t.key));
-      if (ks.length) {
-        const kr = group('🧠 What the AI reads in them');
-        ks.forEach(t => opt(kr, t.icon + ' ' + t.label + ' (' + kn.get(t.key) + ')', filt.kinds.indexOf(t.key) > -1, 'Holds whose summary (or notes, once explained) say: ' + t.label, () => toggleIn(filt.kinds, t.key), ['data-kind', t.key]));
-      }
-      // ⭐ Priority and ⏳ age.
-      const pr = group('⭐ Priority and ⏳ age');
-      opt(pr, '⭐ High or urgent only', filt.prio, 'Only holds with High or Urgent priority', () => { filt.prio = !filt.prio; saveFilt(); refilter(); }, ['data-prio', '1']);
-      Object.keys(AGES).forEach(k => opt(pr, '⏳ ' + AGES[k][0], filt.age === k, 'How long ago the job was created', () => { filt.age = filt.age === k ? '' : k; saveFilt(); refilter(); }, ['data-age', k]));
-      // 📌 Save it, or clear it.
-      const sv = el('div', 'display:flex;gap:4px;flex-wrap:wrap;align-items:center');
-      const nm = el('input', 'flex:1;min-width:110px;' + FIELD);
-      nm.type = 'text'; nm.placeholder = 'Name it (Red quotes…)'; nm.id = 'st-ai-view-name';
-      const sb = pill('📌 Save this filter', 'Keeps it as a button above the list, to use again with one click', () => {
-        const name = norm(nm.value);
-        if (!used(filt)) return say('Pick something to filter by first.');
-        if (!name) { nm.focus(); return say('Give the filter a name, then 📌 Save.'); }
-        const v = views().filter(x => lc(x.name) !== lc(name));
-        v.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name, f: cleanF(filt) });
-        set(VIEWS_KEY, JSON.stringify(v.slice(-30)));
-        refilter();
-        say('📌 Saved "' + name + '". It\'s above the list now.');
-      }, PRIMARY);
-      sb.id = 'st-ai-view-save';
-      const cl = pill('Clear', 'Back to every hold', () => { filt = EMPTY(); saveFilt(); refilter(); });
-      cl.id = 'st-ai-filter-clear';
-      sv.append(nm, sb, cl);
-      box.appendChild(sv);
-      return box;
-    };
-    // Teaching an area: its name, color, and the cities and zip codes in it (from the Hold list, with
-    // how many holds each has, or typed in).
-    const areaEditor = cands => {
-      const A = areas(), a0 = areaEdit === 'new' ? { id: '', name: '', color: 'red', cities: [], zips: [] } : A.find(x => x.id === areaEdit);
-      if (!a0) { areaEdit = null; return el('div'); }
-      const box = section(a0.id ? '📍 Change ' + a0.name : '📍 New area', 'st-ai-area-edit');
-      const row1 = el('div', 'display:flex;gap:5px');
-      const name = el('input', 'flex:1;min-width:0;' + FIELD);
-      name.type = 'text'; name.placeholder = 'Name (Red, North, Jackson side…)'; name.value = a0.name; name.id = 'st-ai-area-name';
-      const color = el('select', 'flex:none;' + FIELD);
-      color.id = 'st-ai-area-color';
-      COLORS.forEach(c => { const o = el('option', '', c[1] + ' ' + c[2]); o.value = c[0]; color.appendChild(o); });
-      color.value = a0.color || 'red';
-      row1.append(name, color);
-      box.appendChild(row1);
-      const list = (title, items, has, attr) => {
-        if (!items.length) return;
-        box.appendChild(el('div', 'font-size:11px;font-weight:800;color:var(--st-ink-3)', title));
-        const r = el('div', 'display:flex;gap:4px 10px;flex-wrap:wrap;font-size:12px');
-        items.forEach(([k, label, n]) => {
-          const l = el('label', 'display:flex;gap:4px;align-items:center;cursor:pointer');
-          const c = el('input'); c.type = 'checkbox'; c.checked = has(k); c.setAttribute(attr, k);
-          l.append(c, document.createTextNode(label + (n ? ' (' + n + ')' : '')));
-          r.appendChild(l);
-        });
-        box.appendChild(r);
-      };
-      const cities = new Map(), zips = new Map();
-      cands.forEach(h => { if (h.city) cities.set(lc(h.city), [lc(h.city), cityText(h.city), ((cities.get(lc(h.city)) || [])[2] || 0) + 1]); if (h.zip) zips.set(h.zip, [h.zip, h.zip, ((zips.get(h.zip) || [])[2] || 0) + 1]); });
-      a0.cities.forEach(c => { if (!cities.has(c)) cities.set(c, [c, cityText(c), 0]); });
-      a0.zips.forEach(z => { if (!zips.has(z)) zips.set(z, [z, z, 0]); });
-      list('Cities (on the Hold list now, with how many holds)', Array.from(cities.values()).sort((a, b) => a[1].localeCompare(b[1])), k => a0.cities.indexOf(k) > -1, 'data-city');
-      list('Zip codes', Array.from(zips.values()).sort((a, b) => a[0].localeCompare(b[0])), k => a0.zips.indexOf(k) > -1, 'data-zip');
-      const more = el('input', FULL + FIELD);
-      more.type = 'text'; more.placeholder = 'More cities or zip codes, with commas (Florence, 39073…)'; more.id = 'st-ai-area-more';
-      box.appendChild(more);
-      const note = el('div', 'min-height:14px;font-size:12px;color:var(--st-red-d)');
-      const btns = el('div', 'display:flex;gap:5px;flex-wrap:wrap');
-      const save = pill('Save the area', 'Holds in these cities or zip codes are in it', () => {
-        const nmv = norm(name.value);
-        const cs = Array.from(box.querySelectorAll('input[data-city]')).filter(c => c.checked).map(c => c.getAttribute('data-city'));
-        const zs = Array.from(box.querySelectorAll('input[data-zip]')).filter(c => c.checked).map(c => c.getAttribute('data-zip'));
-        more.value.split(/[,;\n]+/).map(norm).filter(Boolean).forEach(x => { const z = /^\d{5}$/.exec(x); if (z) { if (zs.indexOf(x) < 0) zs.push(x); } else if (cs.indexOf(lc(x)) < 0) cs.push(lc(x)); });
-        if (!nmv) { note.textContent = '⚠️ Give it a name.'; return; }
-        if (!cs.length && !zs.length) { note.textContent = '⚠️ Tick (or type) at least one city or zip code.'; return; }
-        if (A.some(x => x.id !== a0.id && lc(x.name) === lc(nmv))) { note.textContent = '⚠️ There\'s already an area called ' + nmv + '.'; return; }
-        const a = { id: a0.id || 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name: nmv, color: color.value, cities: cs, zips: zs };
-        set(AREA_KEY, JSON.stringify(A.filter(x => x.id !== a.id).concat([a])));
-        areaEdit = null;
-        refilter();
-        say('📍 ' + colorOf(a.color)[1] + ' ' + a.name + ' saved: ' + cs.map(cityText).concat(zs).join(', ') + '. Tap it in 🔎 Filter to see only its holds.');
-      }, PRIMARY);
-      save.id = 'st-ai-area-save';
-      btns.appendChild(save);
-      if (a0.id) {
-        const del = pill('Delete the area', 'Forget this area (saved filters using it lose it too)', () => {
-          set(AREA_KEY, JSON.stringify(A.filter(x => x.id !== a0.id)));
-          filt.areas = filt.areas.filter(id => id !== a0.id); saveFilt();
-          set(VIEWS_KEY, JSON.stringify(views().map(v => Object.assign({}, v, { f: Object.assign(cleanF(v.f), { areas: cleanF(v.f).areas.filter(id => id !== a0.id) }) }))));
-          areaEdit = null; refilter();
-        }, DANGER);
-        del.id = 'st-ai-area-delete';
-        btns.appendChild(del);
-      }
-      btns.appendChild(pill('Cancel', 'Leave it as it was', () => { areaEdit = null; refilter(); }));
-      box.append(note, btns);
-      return box;
-    };
 
     // ---------- ⏸️ Holds to call ----------
     // The Hold list, best to call first: a call-back day that has come, signs it'll book (ready,
@@ -12887,6 +12997,7 @@
           if (lastCall && daysAgo(new Date(lastCall.at)) === 0) { score -= 1; why0.push(['📞 Called today: ' + OUT_WORDS[lastCall.out], '']); }
           else if (lastCall) why0.push(['📞 Last called ' + agoText(new Date(lastCall.at)) + ': ' + OUT_WORDS[lastCall.out], '']);
           if (lastCall && lastCall.out === 'no') score -= 0.5;
+          if (!f.reason && rec.hold) f.reason = rec.hold;   // a 📥 report's Hold Reason, when the list has none
           list.push(Object.assign(f, { j, score, why: why0, topics }));
         });
         list.sort((a, b) => b.score - a.score || (a.created || 0) - (b.created || 0));
@@ -12899,19 +13010,19 @@
       } finally { if (run === runId) setBusy(false); }
     };
     const holdsMsg = () => {
-      const { cands } = lastHolds, n = cands.filter(h => passes(filt, h)).length;
+      const { cands } = lastHolds, n = cands.filter(h => HF.passes(h)).length;
       if (!cands.length) return 'No holds to call on your branches\' Hold list.';
-      if (used(filt)) return n ? 'Showing ' + n + ' of ' + plural(cands.length, 'hold') + ' (🔎 ' + filterWords(filt) + '), best to call first.' : 'No holds match the filter (🔎 ' + filterWords(filt) + '). Press All holds to see every one.';
+      if (HF.used()) return n ? 'Showing ' + n + ' of ' + plural(cands.length, 'hold') + ' (🔎 ' + HF.words() + '), best to call first.' : 'No holds match the filter (🔎 ' + HF.words() + '). Press All holds to see every one.';
       return 'Best to call first. 🧠 explains one and gives its call script.';
     };
     // The list, through the filter (cands: every hold read, best first). all: every one, not the first HOLDS_SHOW.
     const renderHolds = all => {
-      const { cands, info } = lastHolds, list = cands.filter(h => passes(filt, h));
+      const { cands, info } = lastHolds, list = cands.filter(h => HF.passes(h));
       holdsOut.textContent = '';
-      holdsOut.appendChild(filterBar());
-      if (filterOpen) holdsOut.appendChild(filterBox(cands, info));
-      if (areaEdit) holdsOut.appendChild(areaEditor(cands));
-      if (used(filt)) { const t = el('div', 'font-size:12px;font-weight:700;color:var(--st-blue-d)', '🔎 ' + list.length + ' of ' + plural(cands.length, 'hold') + ': ' + filterWords(filt)); t.id = 'st-ai-filter-count'; holdsOut.appendChild(t); }
+      holdsOut.appendChild(HF.bar());
+      if (HF.isOpen()) holdsOut.appendChild(HF.box(cands, info));
+      if (HF.isEditing()) holdsOut.appendChild(HF.editor(cands));
+      if (HF.used()) { const t = el('div', 'font-size:12px;font-weight:700;color:var(--st-blue-d)', '🔎 ' + list.length + ' of ' + plural(cands.length, 'hold') + ': ' + HF.words()); t.id = 'st-ai-filter-count'; holdsOut.appendChild(t); }
       if (info.pickup) { const t = small('🕑 ' + pickupText(info.pickup) + '.', 'color:var(--st-ink-2)'); t.className = 'st-ai-pickup'; holdsOut.appendChild(t); }
       const show = all ? list : list.slice(0, HOLDS_SHOW);
       show.forEach((h, i) => {

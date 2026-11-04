@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.4.3
+
+- **📱 Customer Texts: 🔎 Filter on the Hold list.** Under the kinds you tick (Quote, Service…), **🔎 Filter** narrows who gets texted: only the ticked kinds' holds that pass the filter. *6 holds ticked, 2 in the filter (🔎 🔴 Red) → 2 customers*, and Start says the same. It's the same filter as 🧠 Toolbox AI's ⏸️ Holds to call (without job types, which the ticks already do): **📍 your areas** (the same ones, taught in either tool), 🏷️ tags, 🧠 what the AI reads in them, ⭐ high or urgent, ⏳ age, and the new ones below. **📌 Saved filters** work here too. Customer Texts keeps its own filter in use and saved filters; the AI's are separate.
+- **New in both filters:**
+  - **🗺️ State:** the state on each hold (*MS (5)*, *AL (1)*).
+  - **🗂️ Hold reason or status:** why it's on hold, when the Hold list says (any reason it sends), or from a 📥 report added to 🧠 Toolbox AI with a *Hold Reason* column, for a hold the list gives none for. And the job's status, when the Hold list has more than one. When there's no reason anywhere, it says how to add them.
+  - **📅 Created between** two dates (the job's Created date), or just a start or an end. **✕ Any date** clears them.
+- The two filters are one shared piece (`holdFilter` in `toolbox.js`), so they work the same way.
+- Tests: `tests/test_ai.py` adds state, the list's hold reason and a report's, dates (both, and only an end), and Customer Texts' filter (an area taught in the AI, state, reason, dates, a saved filter, Start checking only the filter's customers, its own filter kept apart). The fake Hold list has a state and hold reasons.
+
 ## 2.4.2
 
 - **🧠 Toolbox AI → ⏸️ Holds to call: 🔎 Filter, 📍 your areas and 📌 saved filters.** Only the holds you want to work:
