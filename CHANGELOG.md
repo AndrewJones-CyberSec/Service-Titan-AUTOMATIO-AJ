@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.4.2
+
+- **🧠 Toolbox AI → ⏸️ Holds to call: 🔎 Filter, 📍 your areas and 📌 saved filters.** Only the holds you want to work:
+  - **📍 Your areas:** ＋ New area, then a name, a color (🔴 Red, 🟠 Orange, 🟡 Yellow, 🟢 Green, 🔵 Blue, 🟣 Purple, ⚪ Gray), and its cities and zip codes: ticked from the ones on the Hold list (with how many holds each has), or typed in. A hold is in an area when its city or zip code is (*MENDENHALL* and *Mendenhall* are the same city). ✏️ changes one; deleting one takes it out of saved filters too. Once the AI has seen 3 holds booked or lost in an area, it says how many got booked there (*🔴 Red (8) · 67% book*).
+  - **🏷️ Tags** (in ServiceTitan's colors), **🧰 job types** (*Every Quote*, *Every Repair*… or ▸ single job types), **🧠 what the AI reads in them** (ready to book, waiting on parts, thinking over the price, financing, away, asked us to call back, no heat or AC…), **⭐ high or urgent only**, and **⏳ age** (under a week, 1 to 4 weeks, over a month). Each one shows how many holds have it.
+  - Within each part any one counts (*Red or Yellow*); every part used has to pass (*Red and every Quote*). The line above the list says what's showing (*🔎 2 of 5 holds: 🔴 Red*), and when nothing matches it says so.
+  - **📌 Save this filter** with a name: it's a button above the list from then on (✕ deletes it). **All holds** clears the filter.
+  - Each hold in the list shows its area, and so does its 🧠 write-up.
+  - The filter in use, your areas and your saved filters are kept in this browser. Nothing is read again when the filter changes.
+- Tests: `tests/test_ai.py` adds the filter (an area by city, another by a typed zip code, the two together, every Quote, Red and Quotes with nothing left, waiting on parts, a tag, high or urgent, age, a saved filter, kept after closing, an area changed and deleted). The fake Hold list's holds are in different towns, with tags.
+
 ## 2.4.1
 
 - **🧠 Toolbox AI: 👎 Something's wrong? (teach it).** The AI reads notes with a list of the ways dispatchers write things, which misses shorthand and your own words. Now you can teach it, right in the write-up:

@@ -22,23 +22,24 @@
   window.APPTS = [
     { id: 9801, job: 8001, techs: [301], customer: 'Ann Board', customerId: 90001, locationId: 91001, start: at(8), end: at(10), windowStart: at(8), windowEnd: at(12), jobType: 'Service - HVAC', jobTypeId: 31, tags: AM, city: 'Magee', zip: '39111' }
   ];
-  // The Hold list: [appointment, job, customer, customer id, job type, type id, summary, created (days ago), priority, tags].
+  // The Hold list: [appointment, job, customer, customer id, job type, type id, summary, created (days ago), priority, tags,
+  // city, zip]. Tags are [name, color] (or just a name).
   window.HOLDS = [
-    [9901, 8101, 'Mary Smith', 90101, 'Quote - HVAC - Central Home System', 11, '<p>AC not cooling upstairs. Went over replacement options.</p>', 20, 'Normal', ['Total Care Club Member']],
-    [9902, 8102, 'Bob Jones', 90102, 'Repair - Plumbing - Water Heater', 21, 'Water heater leaking. Waiting on parts, the tank is on back order.', 9, 'Normal', []],
-    [9903, 8103, 'Cara Late', 90103, 'Quote - Generator', 12, 'Customer said to call back after ' + md(IN5) + ', she is out of town until then.', 12, 'Normal', []],
-    [9904, 8104, 'Dee NoCall', 90104, 'Service - HVAC', 31, 'Customer says do NOT call, text only.', 6, 'Normal', []],
-    [9905, 8105, 'Eve Unread', 90105, 'Service - HVAC', 31, 'Customer called about the system.', 4, 'Normal', []],
-    [9906, 8106, 'Fay Ready', 90106, 'Quote - HVAC - Central Home System', 11, 'Customer approved the estimate and wants to schedule the install.', 3, 'High', []]
+    [9901, 8101, 'Mary Smith', 90101, 'Quote - HVAC - Central Home System', 11, '<p>AC not cooling upstairs. Went over replacement options.</p>', 20, 'Normal', [['Total Care Club Member', '#d6f5d6']], 'Magee', '39111'],
+    [9902, 8102, 'Bob Jones', 90102, 'Repair - Plumbing - Water Heater', 21, 'Water heater leaking. Waiting on parts, the tank is on back order.', 9, 'Normal', [['RED ZONE', '#f2aaa2']], 'MENDENHALL', '39114'],
+    [9903, 8103, 'Cara Late', 90103, 'Quote - Generator', 12, 'Customer said to call back after ' + md(IN5) + ', she is out of town until then.', 12, 'Normal', [], 'Florence', '39073'],
+    [9904, 8104, 'Dee NoCall', 90104, 'Service - HVAC', 31, 'Customer says do NOT call, text only.', 6, 'Normal', [], 'Magee', '39111'],
+    [9905, 8105, 'Eve Unread', 90105, 'Service - HVAC', 31, 'Customer called about the system.', 4, 'Normal', [['RED ZONE', '#f2aaa2']], 'Mendenhall', '39114'],
+    [9906, 8106, 'Fay Ready', 90106, 'Quote - HVAC - Central Home System', 11, 'Customer approved the estimate and wants to schedule the install.', 3, 'High', [], 'Pinola', '39149']
   ];
   window.UNASSIGNED = [[9931, 8301, 'Uma Unassigned', 90301, 'Service - HVAC', 31, 'Thermostat blank.', 1]];
   const rowOf = (x, kind) => {
-    const [id, job, customer, cid, type, typeId, summary, created, prio, tags] = x;
+    const [id, job, customer, cid, type, typeId, summary, created, prio, tags, city, zip] = x;
     const s = kind === 'Hold' ? ago(created, 9) : at(13), e = new Date(+s + 2 * 3600000);
     return { Id: id, JobId: job, Customer: customer, CustomerId: cid, LocationId: cid + 1000, CustomerPhone: '(601) 555-' + String(cid).slice(-4), Type: type, TypeId: typeId,
       Priority: prio || 'Normal', Duration: 7200, Start: s.toISOString(), End: e.toISOString(), Summary: summary, AppointmentSpecialInstructions: '', CreatedOn: ago(created).toISOString(),
-      JobStatus: kind === 'Hold' ? 'Hold' : 'Scheduled', AppointmentStatus: kind === 'Hold' ? 'Hold' : 'Scheduled', City: 'Magee', Zip: '39111', Street: id + ' Oak Ave', State: 'MS',
-      Tags: (tags || []).map(t => ({ Id: 1, TypeId: 1, TypeName: t, Color: '#d6f5d6', TextColor: null })), Technicians: [], Latitude: 31.87, Longitude: -89.73 };
+      JobStatus: kind === 'Hold' ? 'Hold' : 'Scheduled', AppointmentStatus: kind === 'Hold' ? 'Hold' : 'Scheduled', City: city || 'Magee', Zip: zip || '39111', Street: id + ' Oak Ave', State: 'MS',
+      Tags: (tags || []).map((t, i) => ({ Id: i + 1, TypeId: i + 1, TypeName: Array.isArray(t) ? t[0] : t, Color: Array.isArray(t) ? t[1] : '#d6f5d6', TextColor: null })), Technicians: [], Latitude: 31.87, Longitude: -89.73 };
   };
   // Job summaries (the job panel's overview), and notes on jobs, customers and locations.
   window.SUMMARIES = { 8001: '<p>Furnace making a loud noise. Elderly customer, no heat.</p>', 8201: '<p>Annual maintenance.</p>' };
