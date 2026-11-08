@@ -35,6 +35,7 @@ def start(b, setup=None):
     ev(page, "() => { localStorage.clear(); localStorage.setItem('stSeenVersion', '2.2'); }")
     if setup: ev(page, setup); ev(page, "() => NB.render()")
     page.evaluate(TOOLBOX)
+    page.evaluate("() => { const h = document.getElementById('st-exp-head'); if (h && document.getElementById('st-exp').style.display === 'none') h.click(); }")
     page.locator('#st-toolbox .st-tile', has_text='Tech Router').click()
     page.wait_for_function("() => document.querySelectorAll('#st-router-tech option').length > 2", timeout=10000)
     page.click('#st-toolbox [data-tab=place]')
@@ -127,6 +128,7 @@ with sync_playwright() as p:
     check(ev(page, 'window.SENT || []') == [] and ev(page, 'window.WRITES') == [], 'nothing texted or changed')
     # 📝: Notes in its Reschedule folder.
     B(page, '← Menu').click()
+    page.evaluate("() => { const h = document.getElementById('st-exp-head'); if (h && document.getElementById('st-exp').style.display === 'none') h.click(); }")
     page.locator('#st-toolbox .st-tile', has_text='Tech Router').click()
     page.click('#st-toolbox [data-tab=place]')
     page.locator('#st-place-out .st-place-note').click()

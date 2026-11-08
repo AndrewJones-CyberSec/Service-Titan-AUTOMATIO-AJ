@@ -39,6 +39,7 @@ def move_by_title(page, dx, dy=0):
     page.mouse.move(box['x'] + 60 + dx, box['y'] + 10 + dy, steps=5); page.mouse.up()
 def open_tool(page, name):
     if B(page, '← Menu').count(): B(page, '← Menu').click()
+    page.evaluate("() => { const h = document.getElementById('st-exp-head'); if (h && document.getElementById('st-exp').style.display === 'none') h.click(); }")
     page.locator('#st-toolbox .st-tile', has_text=name).first.click()
     time.sleep(0.6)
 

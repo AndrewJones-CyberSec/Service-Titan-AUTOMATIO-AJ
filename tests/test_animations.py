@@ -23,6 +23,7 @@ def visible_view(page):
     return "Array.from(document.querySelectorAll('#st-toolbox > .st-view')).find(v => v.style.display !== 'none')"
 def open_tool(page, name):
     if B(page, '← Menu').count(): B(page, '← Menu').click()
+    page.evaluate("() => { const h = document.getElementById('st-exp-head'); if (h && document.getElementById('st-exp').style.display === 'none') h.click(); }")
     page.locator('#st-toolbox .st-tile', has_text=name).first.click()
 
 def start(browser, motion):

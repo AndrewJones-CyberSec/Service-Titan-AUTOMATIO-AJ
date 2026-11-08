@@ -36,7 +36,7 @@
 (() => {
   const VERSION = '2.5';
   const WHATS_NEW = {
-    '2.5': 'New: 📋 Quick Job Info (it replaces 🧠 Toolbox AI). Open it on the board and click any job (holds too), then the next: everything about it on one card. What to do next, watch-outs (🚫 don\'t call, 📵 hard to reach from their call log, ☎️ they called us, 💬 texts back, 🗓️ another job booked, 🔥, 🧓…), the hold or appointment, address (opens Google Maps) and phones, the whole summary and notes, and the customer\'s history read by itself: every other job, club, lifetime total, equipment, who usually goes. Buttons open Customer Texts, Move Jobs and Tech Router with the job, and 📋 Copy job info copies the card. ⏸️ Holds lists the Hold list best to call first, with the 🔎 filter. 🔮 Chances and 👎 teaching stay; call scripts and 📚 Learn are gone (history is read fresh each time).',
+    '2.5': 'New: 📋 Quick Job Info (it replaces 🧠 Toolbox AI). Open it on the board and click any job (holds too), then the next: everything about it on one card. What to do next, watch-outs (🚫 don\'t call, 📵 hard to reach from their call log, ☎️ they called us, 💬 texts back, 🗓️ another job booked, 🔥, 🧓…), the hold or appointment, address (opens Google Maps) and phones, the whole summary and notes, and the customer\'s history read by itself: every other job, club, lifetime total, equipment, who usually goes. Buttons open Customer Texts, Move Jobs and Tech Router with the job, and 📋 Copy job info copies the card. ⏸️ Holds lists the Hold list best to call first, with the 🔎 filter. 🔮 Chances and 👎 teaching stay; call scripts and 📚 Learn are gone (history is read fresh each time). Also: tools still being tested (🧭 Tech Router) are now under 🧪 Experimental tools at the bottom of the menu; tap it to open.',
     '2.4.4': '📱 Customer Texts never texts PHONE CALL ONLY jobs: they\'re a call, not a visit, so they\'re skipped and listed with why (from the board, the Unassigned list, the Hold list, picked or typed). A customer with a phone call and a visit gets texted about the visit. New 🌙 Late jobs: ＋ Everyone on the board and ＋ A department… leave out jobs starting at 6 PM or later (change the time, or turn it off, in ⚙️ Settings). A late job you click on the board or type in yourself is still texted.',
     '2.4.3': '📱 Customer Texts\' Hold list gets 🔎 Filter too: tick the kinds as before, then text only the holds in your 📍 areas (the same ones you teach 🧠 Toolbox AI), with a tag, in a state, with a hold reason, or created between two dates. Both filters now have 🗺️ State, 🗂️ Hold reason or status (from the Hold list, or a 📥 report\'s Hold Reason) and 📅 Created between two dates. 📌 Saved filters work in Customer Texts too.',
     '2.4.2': 'New in 🧠 Toolbox AI\'s ⏸️ Holds to call: 🔎 Filter. Teach it your areas (＋ New area: a name, a color like 🔴 Red or 🟡 Yellow, and its cities or zip codes), then show only their holds. Or filter by tags (in ServiceTitan\'s colors), job types (one, or every Quote), what the AI reads they\'re waiting on (parts, price, financing…), high or urgent, or how old. 📌 Save a filter to use again with one click. Each hold shows its area, and so does its write-up. It all stays in this browser.',
@@ -1826,6 +1826,19 @@
     ['ai', '📋', 'Quick Job Info', 'Everything about a job or a hold, at a glance', '#fde7f3']
   ];
   const tiles = el('div', 'display:grid;gap:6px');
+  // 🧪 Experimental tools: the ones still being built and tested (Beta), below the finished ones,
+  // folded away until opened (it remembers, in this browser).
+  const expHead = el('button', 'display:flex;gap:6px;align-items:center;width:100%;margin-top:10px;padding:6px 10px;border:1px dashed var(--st-amber-l);border-radius:10px;background:var(--st-amber-s);color:var(--st-amber);font:inherit;font-size:12px;font-weight:800;text-align:left;cursor:pointer');
+  expHead.type = 'button'; expHead.id = 'st-exp-head';
+  const expBox = el('div', 'display:none;gap:6px;margin-top:6px');
+  expBox.id = 'st-exp';
+  const expNote = el('div', 'font-size:11px;color:var(--st-ink-3);line-height:1.35', 'Still being built and tested. They can be wrong or change, so check what they suggest.');
+  expBox.appendChild(expNote);
+  const expN = TOOLS.filter(t => t[5]).length;
+  const expShow = open => { expBox.style.display = open ? 'grid' : 'none'; expHead.textContent = (open ? '▾' : '▸') + ' 🧪 Experimental tools (' + expN + ')'; };
+  expHead.addEventListener('mousedown', e => e.preventDefault());
+  expHead.onclick = () => { const open = expBox.style.display === 'none'; set('stExpOpen', open ? '1' : '0'); expShow(open); };
+  expShow(get('stExpOpen') === '1');
   TOOLS.forEach(([key, icon, name, desc, tint, badge]) => {
     const b = el('button', 'display:flex;gap:10px;align-items:center;width:100%;text-align:left;padding:8px 10px;border:1px solid var(--st-line);border-radius:10px;background:var(--st-bg);cursor:pointer;color:var(--st-ink);font:inherit');
     b.type = 'button'; b.className = 'st-tile';
@@ -1838,11 +1851,13 @@
     b.append(ic, tx, el('span', 'margin-left:auto;color:var(--st-ink-3);font-size:16px', '›'));
     b.addEventListener('mousedown', e => e.preventDefault());
     b.onclick = () => showView(key);
-    tiles.appendChild(b);
+    (badge ? expBox : tiles).appendChild(b);
   });
   const checkRow = el('div', 'display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px');
   checkRow.append(el('span', 'font-size:11px;color:var(--st-ink-3)', 'Works on the Dispatch board\'s Day view.'), smallBtn('🩺 Check', () => health.checkBoard(true)));
-  menuPane.append(menuMsg, tiles, checkRow);
+  menuPane.append(menuMsg, tiles);
+  if (expN) menuPane.append(expHead, expBox);
+  menuPane.append(checkRow);
   // Above the tiles: which day and branches the board shows (or what to do to use the tools).
   const renderMenuMsg = () => {
     menuMsg.textContent = '';

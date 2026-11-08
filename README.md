@@ -131,6 +131,9 @@ Still being built: it says so each time it's opened, so check its suggestions be
 - **Windows:** the appointment's arrival window (it moves with the job and is what the customer is told), with the window tag beside it when it says something else; the tag when the appointment has no window.
 - Drive times come from Mapbox (a public key is built in; ⚙️ Drive times can use your own). Jobs are measured to their street address (looked up with Mapbox; only the address is sent, and kept only while the page is open), else the middle of their zip code. No names or anything else about a job are sent. If drive times can't be had, straight-line miles are used and marked ~.
 
+**🧪 Experimental tools**
+Tools still being built and tested (marked Beta, now 🧭 Tech Router) sit at the bottom of the menu under **🧪 Experimental tools**. Tap it to fold them open; it remembers. They can be wrong or change, so check what they suggest.
+
 **📋 Quick Job Info**
 Everything about one job, at a glance. It only reads: it never changes a job, sends a text or adds a note by itself.
 

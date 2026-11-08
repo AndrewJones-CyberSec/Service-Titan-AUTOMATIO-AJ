@@ -41,6 +41,7 @@ def start(b, setup=None):
     ev(page, "() => { localStorage.clear(); localStorage.setItem('stSeenVersion', '2.2'); }")
     if setup: ev(page, setup); ev(page, "() => NB.render()")
     page.evaluate(TOOLBOX)
+    page.evaluate("() => { const h = document.getElementById('st-exp-head'); if (h && document.getElementById('st-exp').style.display === 'none') h.click(); }")
     page.locator('#st-toolbox .st-tile', has_text='Tech Router').click()
     page.wait_for_function("() => document.querySelectorAll('#st-router-tech option').length > 2", timeout=10000)
     time.sleep(0.3)
