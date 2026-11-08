@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.4.4
+
+- **📱 Customer Texts never texts PHONE CALL ONLY jobs.** A phone call isn't a visit, so there's nothing to text the customer about. They're skipped on the check screen with why (*a PHONE CALL ONLY job (a call, not a visit), so it's never texted*), before their numbers are even looked up. It works for jobs on the board, in the Unassigned list, on the Hold list, picked from the Jobs Tray (the type is read from the Hold or Unassigned list) or typed in. Any case counts (*Phone Call Only*), the same test as 🧭 Tech Router's.
+- **A customer with a phone call and a visit** gets texted about the visit (one text each, as before).
+- **🌙 Late jobs:** ＋ Everyone on the board and ＋ A department… leave out jobs starting at **6 PM or later**, and say how many (*🌙 Left out 2 jobs at 6 PM or later*). A late job you click on the board or type in yourself is still texted. ⚙️ Settings → 🌙 Late jobs changes the time (4 PM to 9 PM) or turns it off.
+- Tests: new `tests/test_phone_calls.py` (phone calls on the board, in Unassigned, on the Hold list, tray-picked and typed; a customer with both; auto-send; late jobs left out by ＋ Everyone and ＋ A department…, clicked and typed ones kept, 7 PM and Off). The fake board (`board_texts.html`) takes `JOB_TYPES` and `APPT_HOUR`.
+
 ## 2.4.3
 
 - **📱 Customer Texts: 🔎 Filter on the Hold list.** Under the kinds you tick (Quote, Service…), **🔎 Filter** narrows who gets texted: only the ticked kinds' holds that pass the filter. *6 holds ticked, 2 in the filter (🔎 🔴 Red) → 2 customers*, and Start says the same. It's the same filter as 🧠 Toolbox AI's ⏸️ Holds to call (without job types, which the ticks already do): **📍 your areas** (the same ones, taught in either tool), 🏷️ tags, 🧠 what the AI reads in them, ⭐ high or urgent, ⏳ age, and the new ones below. **📌 Saved filters** work here too. Customer Texts keeps its own filter in use and saved filters; the AI's are separate.
