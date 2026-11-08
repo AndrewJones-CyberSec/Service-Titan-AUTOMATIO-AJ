@@ -76,6 +76,41 @@
   for (let i = 0; i < 3; i++) did(72000 + i, 7600 + i, [302], -(2 + i), 'Service - HVAC', 31);   // upcoming
   window.PAST = past;
 
+  // The customer page's data (📋 Quick Job Info): calls by customer ([days ago, hour, seconds, they called?]),
+  // memberships, what they've paid, equipment and other tags by job. CUST_DOWN = true breaks all of it.
+  const callAt = (days, h, m) => ago(days, h, m).toISOString();
+  window.CALLS = {
+    90101: [[2, 10, 12], [3, 9, 20], [6, 9, 15], [10, 11, 240]].map(([d, h, secs, they]) => ({ createdOn: callAt(d, h), duration: secs, direction: they ? 0 : 1, agentName: 'Andy D' })),
+    90102: [[4, 14, 300]].map(([d, h, secs]) => ({ createdOn: callAt(d, h), duration: secs, direction: 1, agentName: 'Andy D' })),
+    90106: [[1, 15, 95, true]].map(([d, h, secs, they]) => ({ createdOn: callAt(d, h), duration: secs, direction: they ? 0 : 1, agentName: 'Andy D' }))
+  };
+  window.MEMBERS = { 90101: [{ id: 1, type: 'Total Care Club Monthly', from: ago(400).toISOString(), status: 0 }, { id: 2, type: 'Old Club', from: ago(900).toISOString(), status: 2 }] };
+  window.REVENUE = { 90101: 4120.5, 90001: 980 };
+  window.EQUIP = { 8101: [{ name: 'Trane XR14 AC', model: '4TTR4036', installedOn: ago(365 * 12 + 30).toISOString(), serialNumber: 'S1', status: 0 }] };
+  window.OTHER_TAGS = { 8101: [{ id: 5, name: 'Total Care Club Member', color: '#00FF5D', typeId: 1 }, { id: 6, name: 'Elderly', color: '#FF6EDA', typeId: 2 }] };
+  // A customer's jobs, as their customer page lists them: from the past schedules, the board, the Hold
+  // and Unassigned lists, and EXTRA_JOBS (customer id: [{ id, type, days (from today; negative = ago), status, total, tech }]).
+  window.EXTRA_JOBS = { 90101: [{ id: 7999, type: 'Install - HVAC - Standard', days: 6, status: 0, total: 0, tech: 'Jake J' }] };
+  const STATUS_NUM = { Scheduled: 0, Dispatched: 1, Working: 2, Hold: 3, Done: 4, Canceled: 5 };
+  const techNameOf = id => (ALL_TECHS.find(t => t.id === id) || {}).name || '';
+  const customerJobs = cid => {
+    const byJob = new Map();
+    const add = (id, type, start, status, techs, total) => {
+      const x = byJob.get(id) || { id, number: String(id), type, businessUnit: 'Mendenhall Branch', firstAppointmentStart: start, lastAppointmentStart: start, appointmentsCount: 0, technicians: [], priority: 0, status, total: total || 0, summary: '' };
+      x.appointmentsCount++;
+      if (start < x.firstAppointmentStart) x.firstAppointmentStart = start;
+      if (start > x.lastAppointmentStart) x.lastAppointmentStart = start;
+      techs.forEach(n => { if (n && !x.technicians.some(t => t.technicianName === n)) x.technicians.push({ technicianId: 1, technicianName: n }); });
+      x.status = status;
+      byJob.set(id, x);
+    };
+    PAST.filter(a => a.customerId === cid).forEach(a => add(a.job, a.jobType, a.start.toISOString(), STATUS_NUM[a.status] != null ? STATUS_NUM[a.status] : 4, a.techs.map(techNameOf), 150));
+    APPTS.filter(a => a.customerId === cid).forEach(a => add(a.job, a.jobType, a.start.toISOString(), 0, a.techs.map(techNameOf)));
+    HOLDS.filter(h => h[3] === cid).forEach(h => add(h[1], h[4], ago(h[7]).toISOString(), 3, []));
+    UNASSIGNED.filter(h => h[3] === cid).forEach(h => add(h[1], h[4], at(13).toISOString(), 0, []));
+    (EXTRA_JOBS[cid] || []).forEach(x => add(x.id, x.type, ago(-x.days).toISOString(), x.status, x.tech ? [x.tech] : [], x.total));
+    return Array.from(byJob.values()).sort((a, b) => (a.lastAppointmentStart < b.lastAppointmentStart ? 1 : -1));
+  };
   window.apiLog = [];
   window.msgReads = {};
   const realFetch = window.fetch;
@@ -101,7 +136,23 @@
       return json({ jobId: f.jobId, jobTotal: f.jobTotal, businessUnitId: 1, customer: f.customer, locationAddress: f.locationAddress,
         jobAppointments: [{ id: Number(m[1]), start: f.start.toISOString(), end: new Date(+f.start + 3600000).toISOString(), technicians: f.technicians, jobAppointmentStatus: 4, isConfirmed: false }] });
     }
-    if ((m = /GetJobOverviewData\?jobId=(\d+)/.exec(u))) return json({ jobSummary: SUMMARIES[m[1]] || '', skills: [] });
+    if ((m = /GetJobOverviewData\?jobId=(\d+)/.exec(u))) {
+      const h = HOLDS.find(x => String(x[1]) === m[1]);
+      const jobTags = h ? (h[9] || []).map((t, i) => ({ id: i + 1, name: Array.isArray(t) ? t[0] : t, color: Array.isArray(t) ? t[1] : '#d6f5d6', typeId: i + 1 })) : [];
+      return json({ jobSummary: SUMMARIES[m[1]] || (h ? h[6] : ''), skills: [], jobTags, otherTags: OTHER_TAGS[m[1]] || [], businessUnit: { id: 1, name: 'Mendenhall Branch' }, campaign: { id: 9, name: 'Google' },
+        invoice: { id: 1, subtotal: 0 }, recallFor: { id: 0 }, warrantyFor: { id: 0 }, leadGeneratedFrom: { id: 0 }, installedEquipment: EQUIP[m[1]] || [] });
+    }
+    if ((m = /^\/app\/api\/customers\/(search\w+)\?customerId=(\d+)/.exec(u))) {
+      if (window.CUST_DOWN) return json({}, 500);
+      (window.custReads = window.custReads || []).push(m[1] + ':' + m[2]);
+      const cid = Number(m[2]);
+      const data = m[1] === 'searchJobs' ? customerJobs(cid) : m[1] === 'searchCalls' ? (CALLS[cid] || []).slice().sort((a, b) => (a.createdOn < b.createdOn ? 1 : -1)) : m[1] === 'searchMemberships' ? (MEMBERS[cid] || []) : [];
+      return json({ page: 1, pageSize: 100, hasMore: false, totalCount: data.length, data });
+    }
+    if ((m = /^\/app\/api\/customers\/(\d+)\/getLifetimeRevenueData/.exec(u))) {
+      if (window.CUST_DOWN) return json({}, 500);
+      return json({ lifetimeRevenue: REVENUE[m[1]] || 0, latestInvoice: null });
+    }
     if ((m = /^\/app\/api\/notes\/Find\?ownerId=(\d+)/.exec(u))) {
       if (window.NOTES_DOWN) return json({}, 500);
       const list = (NOTES[m[1]] || []).map((n, i) => Object.assign({ id: Number(m[1]) * 100 + i, archived: false, active: true, isPinned: false }, n));
