@@ -66,6 +66,12 @@
   const BOARD_EXTRA = { 6004: { AppointmentStatus: 5 }, 6005: { Start: new Date(today.getTime() - 86400000 + 9 * 3600000).toISOString() } };
   // The day's Unassigned list: job -> [customer, canceled?]. 7102 is Kim Wu again (also on the timeline).
   const UNASSIGNED = [[7101, 31], [7102, 20], [7103, 32, true]];
+  // JOB_TYPES[job] = 'PHONE CALL ONLY' (or any type) changes a job's type on the board, the Hold
+  // list and the Unassigned list (board jobs are 'Service' and unassigned ones 'Service - HVAC' otherwise).
+  window.JOB_TYPES = window.JOB_TYPES || {};
+  // APPT_HOUR[job] = 18.5 starts a board job at 6:30 PM (instead of 9 AM), or gives an Unassigned job that start.
+  window.APPT_HOUR = window.APPT_HOUR || {};
+  const hourOf = j => new Date(today.getTime() + window.APPT_HOUR[j] * 3600000);
   const JOBCUST = {}; HOLDS.forEach(h => { JOBCUST[h[0]] = h[1]; }); Object.keys(BOARD).forEach(j => { JOBCUST[j] = BOARD[j][0]; }); JOBCUST[7001] = 30;
   // Chat history per number (last 10 digits)
   const RUNNING_LATE = 'Hey, this is Andrew with Air South Cooling and Heating. I am reaching out about your appointment. I wanted to update as I know your time is valuable. My expert has ran into a few delays, but is still scheduled to come out to see you. He will send you a text 30 minutes before his arrival. If you have any questions or concerns, please give me a call back at 601-847-9941. Thank you for being the best part of AirSouth!';
@@ -130,11 +136,11 @@
       const b = JSON.parse(opts.body);
       window.lastGetJobs = b;
       if (b.JobType === 'Unassigned') {
-        const rows = UNASSIGNED.map(x => ({ Id: x[0] + 100000, IsConfirmed: !!window.CONFIRMED[x[0] + 100000], JobId: x[0], Customer: C[x[1]].name + ' ', CustomerId: x[1], Type: 'Service - HVAC', JobStatus: x[2] ? 'Canceled' : 'Scheduled', AppointmentStatus: x[2] ? 5 : 0 }));
+        const rows = UNASSIGNED.map(x => ({ Id: x[0] + 100000, IsConfirmed: !!window.CONFIRMED[x[0] + 100000], JobId: x[0], Customer: C[x[1]].name + ' ', CustomerId: x[1], Type: window.JOB_TYPES[x[0]] || 'Service - HVAC', Start: window.APPT_HOUR[x[0]] != null ? hourOf(x[0]).toISOString() : undefined, JobStatus: x[2] ? 'Canceled' : 'Scheduled', AppointmentStatus: x[2] ? 5 : 0 }));
         return json({ Jobs: rows.slice(b.QueryFilter.Skip, b.QueryFilter.Skip + b.QueryFilter.Take), Count: rows.length });
       }
       if (b.JobType !== 'Hold') return json({ Jobs: [], Count: 0 });
-      const rows = HOLDS.map(h => ({ JobId: h[0], Customer: C[h[1]].name + ' ', CustomerId: h[1], Type: h[2], CustomerPhone: C[h[1]].c[0][1], JobStatus: LIST_STATUS[h[0]] || 'Hold', AppointmentStatus: 'Hold' }));
+      const rows = HOLDS.map(h => ({ JobId: h[0], Customer: C[h[1]].name + ' ', CustomerId: h[1], Type: window.JOB_TYPES[h[0]] || h[2], CustomerPhone: C[h[1]].c[0][1], JobStatus: LIST_STATUS[h[0]] || 'Hold', AppointmentStatus: 'Hold' }));
       return json({ Jobs: rows.slice(b.QueryFilter.Skip, b.QueryFilter.Skip + b.QueryFilter.Take), Count: rows.length });
     }
     // The job panel's appointment data and its Confirm / Remove confirmation request.
@@ -190,7 +196,7 @@
   // Otherwise every job is Paxton's except 6003, whose tech has no name (no {tech}).
   // 6004's appointment is Canceled; 6005 is yesterday's. The Jobs Tray shows the Hold tab (5002, 5006).
   const TEAMS_MODE = location.search.indexOf('teams') > -1;
-  const at9 = () => new Date(NB.day().getTime() + 9 * 3600000);
+  const at9 = j => new Date(NB.day().getTime() + (window.APPT_HOUR[j] != null ? window.APPT_HOUR[j] : 9) * 3600000);
   NB.setup({
     techs: () => TEAMS_MODE ? [{ id: 1, name: 'Paxton T', team: 'Level 1 Service', teamId: 1 }, { id: 2, name: 'Ivan I', team: 'Installers', teamId: 2 }]
       : [{ id: 1, name: 'Paxton T', team: 'Install HVAC', teamId: 1 }, { id: 3, name: '', team: 'Install HVAC', teamId: 1 }],
@@ -198,8 +204,8 @@
       j = Number(j);
       const x = BOARD_EXTRA[j] || {};
       const techs = TEAMS_MODE ? ({ 6001: [1], 6002: [2], 6003: [1, 2], 6004: [2], 6005: [1] })[j] : (BOARD[j][1] ? [1] : [3]);
-      return { id: j + 100000, job: j, techs, customer: C[BOARD[j][0]].name, customerId: BOARD[j][0], confirmed: !!window.CONFIRMED[j + 100000],
-        status: x.AppointmentStatus === 5 ? 'Canceled' : 'Scheduled', start: x.Start ? new Date(at9().getTime() - 86400000) : at9(), end: new Date(at9().getTime() + 7200000) };
+      return { id: j + 100000, job: j, techs, customer: C[BOARD[j][0]].name, customerId: BOARD[j][0], jobType: window.JOB_TYPES[j], confirmed: !!window.CONFIRMED[j + 100000],
+        status: x.AppointmentStatus === 5 ? 'Canceled' : 'Scheduled', start: x.Start ? new Date(at9(j).getTime() - 86400000) : at9(j), end: new Date(at9(j).getTime() + 7200000) };
     }),
     tray: () => [5002, 5006].map(j => ({ job: j, customer: C[JOBCUST[j]].name + ' ', customerId: JOBCUST[j], appt: j + 100000 })),
     trayTab: 'Hold',

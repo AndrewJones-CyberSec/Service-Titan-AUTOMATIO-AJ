@@ -35,8 +35,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.4.3';
+  const VERSION = '2.4.4';
   const WHATS_NEW = {
+    '2.4.4': '📱 Customer Texts never texts PHONE CALL ONLY jobs: they\'re a call, not a visit, so they\'re skipped and listed with why (from the board, the Unassigned list, the Hold list, picked or typed). A customer with a phone call and a visit gets texted about the visit. New 🌙 Late jobs: ＋ Everyone on the board and ＋ A department… leave out jobs starting at 6 PM or later (change the time, or turn it off, in ⚙️ Settings). A late job you click on the board or type in yourself is still texted.',
     '2.4.3': '📱 Customer Texts\' Hold list gets 🔎 Filter too: tick the kinds as before, then text only the holds in your 📍 areas (the same ones you teach 🧠 Toolbox AI), with a tag, in a state, with a hold reason, or created between two dates. Both filters now have 🗺️ State, 🗂️ Hold reason or status (from the Hold list, or a 📥 report\'s Hold Reason) and 📅 Created between two dates. 📌 Saved filters work in Customer Texts too.',
     '2.4.2': 'New in 🧠 Toolbox AI\'s ⏸️ Holds to call: 🔎 Filter. Teach it your areas (＋ New area: a name, a color like 🔴 Red or 🟡 Yellow, and its cities or zip codes), then show only their holds. Or filter by tags (in ServiceTitan\'s colors), job types (one, or every Quote), what the AI reads they\'re waiting on (parts, price, financing…), high or urgent, or how old. 📌 Save a filter to use again with one click. Each hold shows its area, and so does its write-up. It all stays in this browser.',
     '2.4.1': 'Smarter 🧠 Toolbox AI. 👎 Something\'s wrong? teaches it how your notes are written: ✕ on what it read wrong, or pick a sentence it missed and what it means ("pt on order", "TCC", "waiting on tax refund"); it reads it that way on every job from then on, and a phrase you teach means "don\'t call" in 🧭 Tech Router too. It also learns without taps: a hold booked within 14 days after a call (or after you were shown its script) credits that approach, and it learns when customers pick up ("Customers pick up most in the afternoon (3–6): 9 of 10 calls") and when this one did, to say when to call.',
@@ -721,14 +722,14 @@
     const jobOfAppt = a => { const x = snap && snap.appts.get(String(a)); return x ? x.jobId : null; };
     const techName = id => { const t = snap && snap.techById.get(String(id)); return t ? t.name : ''; };
     const firstName = name => { const w = norm(name).split(' ')[0] || ''; return w ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : ''; };
-    // A job on the board's day: { jobId, customer, customerId, tech (first name), tags, appts } or null.
+    // A job on the board's day: { jobId, customer, customerId, tech (first name), tags, type (its job type), appts } or null.
     const job = j => {
       const list = apptsOf(j).filter(live);
       if (!list.length) return null;
       const x = list[0];
       const tags = [];
       list.forEach(a => a.tags.forEach(t => { if (!tags.some(y => y.name === t.name)) tags.push(t); }));
-      return { jobId: String(j), customer: x.customer, customerId: x.customerId, tech: firstName(techName(x.techs[0])), tags, appts: list };
+      return { jobId: String(j), customer: x.customer, customerId: x.customerId, tech: firstName(techName(x.techs[0])), tags, type: x.jobType || '', appts: list };
     };
     // A tech's jobs on the board's day (job numbers, canceled left out).
     const techJobs = id => {
@@ -1713,7 +1714,8 @@
     // Unassigned list (all pages, your board's branches). Holds aren't included. Canceled
     // appointments are left out. tool: the tool's name, for the yellow bar if something comes back
     // in a shape the Toolbox doesn't know. One fresh read of the board each time.
-    // Returns { jobs: [{ jobId, customer, customerId, tech, day, teams, tags, unassigned, type (its job type) }], onTimeline,
+    // Returns { jobs: [{ jobId, customer, customerId, tech, day, teams, tags, unassigned, type (its job type),
+    // start (its first appointment's start that day, or null) }], onTimeline,
     // unassigned, canceled }. teams: the job's teams (timeline jobs only).
     const whole = async tool => {
       if (!onBoard()) throw new Error(board.need().replace(/\.$/, '').toLowerCase());
@@ -1726,9 +1728,9 @@
         canceledJobs.delete(a.jobId);   // another visit of it isn't canceled
         const had = byJob.get(a.jobId);
         // A two-tech job, or a job with two visits: one entry, with every team and tag.
-        if (had) { teamsOf(s, a).forEach(t => { if (had.teams.indexOf(t) < 0) had.teams.push(t); }); a.tags.forEach(t => { if (!had.tags.some(y => y.name === t.name)) had.tags.push(t); }); return; }
+        if (had) { teamsOf(s, a).forEach(t => { if (had.teams.indexOf(t) < 0) had.teams.push(t); }); a.tags.forEach(t => { if (!had.tags.some(y => y.name === t.name)) had.tags.push(t); }); if (a.start && (!had.start || a.start < had.start)) had.start = a.start; return; }
         onTimeline++;
-        const x = { jobId: a.jobId, customer: a.customer, customerId: a.customerId, tech: board.firstName(board.techName(a.techs[0])), day: s.day, teams: teamsOf(s, a), tags: a.tags.slice(), unassigned: false, type: a.jobType || '' };
+        const x = { jobId: a.jobId, customer: a.customer, customerId: a.customerId, tech: board.firstName(board.techName(a.techs[0])), day: s.day, teams: teamsOf(s, a), tags: a.tags.slice(), unassigned: false, type: a.jobType || '', start: a.start || null };
         byJob.set(a.jobId, x);
         jobs.push(x);
       });
@@ -1737,7 +1739,7 @@
       un.rows.forEach(r => {
         if (byJob.has(r.jobId) || canceledJobs.has(r.jobId)) return;
         unassignedN++;
-        const x = { jobId: r.jobId, customer: r.customer, customerId: r.customerId, tech: '', day: s.day, teams: [], tags: r.tags, unassigned: true, type: norm(r.raw && r.raw.Type) };
+        const x = { jobId: r.jobId, customer: r.customer, customerId: r.customerId, tech: '', day: s.day, teams: [], tags: r.tags, unassigned: true, type: norm(r.raw && r.raw.Type), start: r.start || null };
         byJob.set(r.jobId, x);
         jobs.push(x);
       });
@@ -4542,7 +4544,7 @@
   const texts = (() => {
     const TOOL = 'Customer Texts';
     const BOX = 'textarea.cht-response-input';
-    const K = { folders: 'stCtFolders', folder: 'stCtFolder', pick: 'stCtPick', mode: 'stCtMode', name: 'stCtName', all: 'stCtAllMobiles', never: 'stCtNever', types: 'stCtTypes', source: 'stCtSource', added: 'stCtAddedFolders', confirm: 'stCtConfirmFolders' };
+    const K = { folders: 'stCtFolders', folder: 'stCtFolder', pick: 'stCtPick', mode: 'stCtMode', name: 'stCtName', all: 'stCtAllMobiles', never: 'stCtNever', types: 'stCtTypes', source: 'stCtSource', added: 'stCtAddedFolders', confirm: 'stCtConfirmFolders', late: 'stCtLateHour' };
     const loadJSON = (k, d) => { try { const v = JSON.parse(get(k)); return v == null ? d : v; } catch (e) { return d; } };
     const showNum = d => d ? '…' + String(d).slice(-4) : '?';
     const s1 = plural;
@@ -4684,6 +4686,13 @@
 
     // ---------- Settings ----------
     let allMobiles = get(K.all) === '1';
+    // 🌙 Late jobs: ＋ Everyone on the board and ＋ A department… leave out jobs that start at or after
+    // this hour (6 PM unless changed in ⚙️ Settings; 'off' adds them all). A late job clicked or typed
+    // in yourself is still texted (Nov 2026).
+    const LATE_HOURS = [16, 17, 18, 19, 20, 21];
+    const lateHour = () => { const v = get(K.late); if (v === 'off') return null; const n = Number(v); return LATE_HOURS.indexOf(n) > -1 ? n : 18; };
+    const hourText = h => (h > 12 ? h - 12 : h) + ' PM';
+    const isLate = x => { const h = lateHour(); const d = x && x.start; return h != null && d instanceof Date && !isNaN(d) && d.getHours() * 60 + d.getMinutes() >= h * 60; };
     let never = (loadJSON(K.never, []) || []).map(last10).filter(n => n.length === 10);
     // The 🚫 never-text list, read again before it's used (Settings, the check before texting, and
     // right before each text), so a number blocked in another tab is never texted from this one.
@@ -4752,15 +4761,19 @@
     // ---------- Jobs picked on the board ----------
     // Customer and tech: from the board's data if the job is on it, else from the Jobs Tray row it was picked from,
     // else from what ＋ Everyone on the board loaded (it also loads Unassigned jobs that aren't showing).
-    const boardInfo = new Map();   // job -> { jobId, customer, customerId, tech }
+    const boardInfo = new Map();   // job -> { jobId, customer, customerId, tech, type }
     const jobInfo = j => {
       const b = board.job(j);
-      if (b) return { customer: b.customer, customerId: b.customerId, tech: b.tech };
+      if (b) return { customer: b.customer, customerId: b.customerId, tech: b.tech, type: b.type };
       const loaded = boardInfo.get(String(j));
       if (loaded) return loaded;
       const p = picker.info(j);
-      return p ? { customer: p.label, customerId: p.customerId || null, tech: '' } : null;
+      return p ? { customer: p.label, customerId: p.customerId || null, tech: '', type: '' } : null;
     };
+    // PHONE CALL ONLY jobs are a call, not a visit: nothing to text the customer about, so they're
+    // never texted (Nov 2026). The same test as 🧭 Tech Router's.
+    const PHONE_ONLY = /\bphone call\b/i;
+    const isPhoneCall = r => PHONE_ONLY.test((r && r.type) || '');
 
     // ---------- ＋ Everyone on the board ----------
     // Every job on the day the board shows: the timeline (with your board's filters) plus the whole
@@ -4842,15 +4855,21 @@
     // the ticked kinds' holds that pass it are texted. Its own filter in use and saved filters.
     const holdF = holdFilter.make({ id: 'st-ct', key: 'stCtHoldFilter', viewsKey: 'stCtHoldViews', types: false, say: t => say(t), rerender: () => renderMain() });
 
-    // Who gets texted: one entry per customer (the first job found for them).
+    // Who gets texted: one entry per customer (the first job found for them, but not a PHONE CALL
+    // ONLY job when they have another one: that one is texted about instead).
     const recipients = () => {
-      const out = [], seen = new Set();
-      const addOne = r => { const key = r.customerId ? 'c' + r.customerId : 'j' + r.jobId; if (seen.has(key)) return; seen.add(key); out.push(r); };
+      const out = [], seen = new Map();
+      const addOne = r => {
+        const key = r.customerId ? 'c' + r.customerId : 'j' + r.jobId;
+        if (!seen.has(key)) { seen.set(key, out.length); out.push(r); return; }
+        const i = seen.get(key);
+        if (isPhoneCall(out[i]) && !isPhoneCall(r)) out[i] = r;
+      };
       if (source === 'holds') {
         if (!holds) return out;
-        holds.jobs.forEach(h => { if (typeSel.has(h.type) && holdF.passes(h)) addOne({ jobId: h.jobId, customer: h.customer, customerId: h.customerId, tech: '', hold: true, listStatus: h.status }); });
+        holds.jobs.forEach(h => { if (typeSel.has(h.type) && holdF.passes(h)) addOne({ jobId: h.jobId, customer: h.customer, customerId: h.customerId, tech: '', hold: true, listStatus: h.status, type: h.type }); });
       } else {
-        picker.ids().forEach(j => { const b = jobInfo(j) || {}; addOne({ jobId: j, customer: b.customer || picker.label(j) || '', customerId: b.customerId || null, tech: b.tech || '', day: jobDay(j) }); });
+        picker.ids().forEach(j => { const b = jobInfo(j) || {}; addOne({ jobId: j, customer: b.customer || picker.label(j) || '', customerId: b.customerId || null, tech: b.tech || '', day: jobDay(j), type: b.type || '' }); });
       }
       return out;
     };
@@ -4961,16 +4980,20 @@
       try {
         const r = await loadEveryone();
         r.jobs.forEach(x => { boardInfo.set(x.jobId, x); });
-        const jobs = r.jobs.filter(x => name === UNASSIGNED_OPT ? x.unassigned : (x.teams || []).indexOf(name) > -1);
+        const all = r.jobs.filter(x => name === UNASSIGNED_OPT ? x.unassigned : (x.teams || []).indexOf(name) > -1);
+        const jobs = all.filter(x => !isLate(x)), late = all.length - jobs.length;
+        if (!jobs.length && late) { say('All ' + s1(late, 'job') + ' in ' + what + ' start at ' + hourText(lateHour()) + ' or later, so none were added (🌙 ⚙️ Settings). Click one on the board to add it anyway.'); return; }
         if (!jobs.length) { say('No jobs ' + (name === UNASSIGNED_OPT ? 'in the Unassigned list' : 'for ' + name) + ' on ' + boardDay().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + '.'); return; }
         const labels = {};
         jobs.forEach(x => { labels[x.jobId] = { label: x.customer, tags: x.tags, customerId: x.customerId }; });
         const n = picker.addMany(jobs.map(x => x.jobId), labels);
-        say('Added ' + s1(n, 'job') + ' from ' + what + (n < jobs.length ? ' (' + (jobs.length - n) + ' already picked)' : '') +
+        say('Added ' + s1(n, 'job') + ' from ' + what + (n < jobs.length ? ' (' + (jobs.length - n) + ' already picked)' : '') + lateLine(late) +
           '. That\'s ' + s1(recipients().length, 'customer') + ' in the list (one text each). Take anyone off with ✕.');
       } catch (e) { say('⚠️ Couldn\'t load ' + what + ': ' + errText(e)); }
       finally { everyoneLoading = false; deptKey = null; renderMain(); }
     };
+    // What ＋ Everyone / ＋ A department… say about late jobs they left out.
+    const lateLine = n => n ? '. 🌙 Left out ' + s1(n, 'job') + ' at ' + hourText(lateHour()) + ' or later (click one on the board to add it anyway)' : '';
     const addEveryone = async () => {
       if (everyoneLoading || running) return;
       if (!onBoard()) { say(board.need()); return; }
@@ -4980,9 +5003,10 @@
         const r = await loadEveryone();
         const labels = {};
         r.jobs.forEach(x => { boardInfo.set(x.jobId, x); labels[x.jobId] = { label: x.customer, tags: x.tags, customerId: x.customerId }; });
-        const n = picker.addMany(r.jobs.map(x => x.jobId), labels);
+        const jobs = r.jobs.filter(x => !isLate(x)), late = r.jobs.length - jobs.length;
+        const n = picker.addMany(jobs.map(x => x.jobId), labels);
         say('Added ' + s1(n, 'job') + ' from the board (' + r.onTimeline + ' on the timeline, ' + r.unassigned + ' unassigned' +
-          (r.canceled ? ', ' + r.canceled + ' canceled left out' : '') + '). That\'s ' + s1(recipients().length, 'customer') + ' (one text each). Take anyone off with ✕.');
+          (r.canceled ? ', ' + r.canceled + ' canceled left out' : '') + ')' + lateLine(late) + '. That\'s ' + s1(recipients().length, 'customer') + ' (one text each). Take anyone off with ✕.');
       } catch (e) { say('⚠️ Couldn\'t load everyone on the board: ' + errText(e)); }
       finally { everyoneLoading = false; renderMain(); }
     };
@@ -5115,6 +5139,9 @@
     const nameIn = el('input', FULL + 'padding:5px 6px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;color:var(--st-ink);background:var(--st-bg)');
     nameIn.type = 'text';
     const allChk = check('Text every mobile number on the Bill To (not just the primary)', allMobiles, () => {});
+    const lateSel = el('select', 'padding:4px 6px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;color:var(--st-ink);background:var(--st-bg)');
+    lateSel.id = 'st-ct-late';
+    [['off', 'Off (add every job)']].concat(LATE_HOURS.map(h => [String(h), hourText(h) + ' or later'])).forEach(([v, t]) => { const o = el('option', '', t); o.value = v; lateSel.appendChild(o); });
     const neverIn = el('textarea', FULL + 'padding:5px 6px;border:1px solid var(--st-ctl);border-radius:6px;font:inherit;font-size:12px;color:var(--st-ink);background:var(--st-bg);resize:vertical');
     neverIn.rows = 4; neverIn.placeholder = 'One phone number per line';
     const setNav = row();
@@ -5122,6 +5149,7 @@
       smallBtn('Save', () => {
         set(K.name, norm(nameIn.value));
         allMobiles = allChk.c.checked; set(K.all, allMobiles ? '1' : '0');
+        set(K.late, lateSel.value);
         never = Array.from(new Set((neverIn.value.match(/[\d()+.\- ]{10,}/g) || []).map(last10).filter(n => n.length === 10)));
         set(K.never, JSON.stringify(never));
         sub('main'); say('⚙️ Saved.' + (myName() ? ' Texts are signed as ' + myName() + '.' : '')); renderMain();
@@ -5132,6 +5160,8 @@
       label('Your name for {dispatcher}'), nameIn,
       label('Numbers'), allChk.l,
       el('div', 'font-size:11px;color:var(--st-ink-3);margin:2px 0 0 20px', 'Off: the primary number, or their first mobile if the primary is a landline.'),
+      label('🌙 Late jobs: ＋ Everyone on the board and ＋ A department… leave out jobs starting at'), lateSel,
+      el('div', 'font-size:11px;color:var(--st-ink-3);margin:2px 0 0 0', 'A late job you click on the board or type in yourself is still texted. PHONE CALL ONLY jobs are never texted.'),
       label('🚫 Never text these numbers'), neverIn, setNav);
     const openSettings = () => {
       if (running) return;
@@ -5140,6 +5170,7 @@
       nameIn.placeholder = auto ? auto + ' (from your ServiceTitan login)' : 'Your first name';
       setMsg.textContent = 'Leave the name empty to use the first name on your ServiceTitan login' + (auto ? ' (' + auto + ').' : '.');
       allChk.c.checked = allMobiles;
+      lateSel.value = lateHour() == null ? 'off' : String(lateHour());
       syncNever();   // so saving here doesn't undo a number blocked in another tab
       neverIn.value = never.map(n => '(' + n.slice(0, 3) + ') ' + n.slice(3, 6) + '-' + n.slice(6)).join('\n');
       sub('settings');
@@ -5435,10 +5466,23 @@
     // Everyone in the list, checked a few at a time: who gets a text and who's skipped (and why).
     // stop(): true once the check is cancelled. Returns { sends, skips }, or { stopped } or { signedOut }.
     const plan = async (list, f, tmpl, progress, stop) => {
+      // A job whose type isn't known yet (picked from the Jobs Tray, or typed): from the Hold list if
+      // it's loaded, and the day's Unassigned list (one read, kept 30 seconds), so PHONE CALL ONLY
+      // jobs are found.
+      if (list.some(r => !r.type)) {
+        const types = new Map();
+        if (holds) holds.jobs.forEach(h => types.set(String(h.jobId), h.type));
+        if (onBoard()) {
+          try { (await board.unassigned(TOOL)).rows.forEach(x => types.set(x.jobId, norm(x.raw && x.raw.Type))); }
+          catch (e) { if (st.isSignedOut(e)) return { signedOut: true }; }
+        }
+        list.forEach(r => { if (!r.type) r.type = types.get(String(r.jobId)) || ''; });
+      }
       // If the chat data keeps failing, stop asking for it: those numbers get checked on their
       // conversation's page during the run instead (as when it can't be read at all).
       let chatTrouble = 0;
       const results = await st.pool(list, 4, async (r, i, alive) => {
+        if (isPhoneCall(r)) return { skips: [{ why: 'a PHONE CALL ONLY job (a call, not a visit), so it\'s never texted', kind: 'skipped' }] };
         if (uses(tmpl, 'tech') && !r.tech) return { skips: [{ why: 'no tech on the board for {tech}', kind: 'skipped' }] };
         let when = '';
         if (uses(tmpl, 'when')) {
