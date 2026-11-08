@@ -18,12 +18,11 @@
       tech is better placed for (trades), and finds the techs closest to a job, keeping to times
       customers asked for in job summaries and notes. It only reads; Move Jobs makes any change
       (assigning a job or a plan, or setting a better order's times).
-    - Toolbox AI (Beta, still being built): a small AI that learns from your own ServiceTitan data, in
-      this browser. For a job you click, what's going on (why a hold is waiting, the calls that didn't
-      reach them, their texts, their other jobs, what to watch out for); for a hold, a call script to
-      book it, which learns the approach that books the most from how your calls went. Holds to call,
-      best first. It learns months or years of schedules (each day read once) and CSV reports. It only
-      reads and suggests.
+    - Quick Job Info: everything about a job or a hold at a glance (click it on the board, pick it from the
+      Jobs Tray, or type its number): what to do next, watch-outs like don't call or hard to reach, the
+      appointment, address and phone, summary, notes, and the customer's history (other jobs, calls, club,
+      lifetime total), with buttons into the other tools. A Holds tab lists the Hold list best to call
+      first. It only reads.
 
   HOW TO RELEASE AN UPDATE
     1. Edit this file on GitHub.
@@ -35,8 +34,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.4.4';
+  const VERSION = '2.5';
   const WHATS_NEW = {
+    '2.5': 'New: 📋 Quick Job Info (it replaces 🧠 Toolbox AI). Open it on the board and click any job (holds too), then the next: everything about it on one card. What to do next, watch-outs (🚫 don\'t call, 📵 hard to reach from their call log, ☎️ they called us, 💬 texts back, 🗓️ another job booked, 🔥, 🧓…), the hold or appointment, address (opens Google Maps) and phones, the whole summary and notes, and the customer\'s history read by itself: every other job, club, lifetime total, equipment, who usually goes. Buttons open Customer Texts, Move Jobs and Tech Router with the job, and 📋 Copy job info copies the card. ⏸️ Holds lists the Hold list best to call first, with the 🔎 filter. 🔮 Chances and 👎 teaching stay; call scripts and 📚 Learn are gone (history is read fresh each time). Also: tools still being tested (🧭 Tech Router) are now under 🧪 Experimental tools at the bottom of the menu; tap it to open.',
     '2.4.4': '📱 Customer Texts never texts PHONE CALL ONLY jobs: they\'re a call, not a visit, so they\'re skipped and listed with why (from the board, the Unassigned list, the Hold list, picked or typed). A customer with a phone call and a visit gets texted about the visit. New 🌙 Late jobs: ＋ Everyone on the board and ＋ A department… leave out jobs starting at 6 PM or later (change the time, or turn it off, in ⚙️ Settings). A late job you click on the board or type in yourself is still texted.',
     '2.4.3': '📱 Customer Texts\' Hold list gets 🔎 Filter too: tick the kinds as before, then text only the holds in your 📍 areas (the same ones you teach 🧠 Toolbox AI), with a tag, in a state, with a hold reason, or created between two dates. Both filters now have 🗺️ State, 🗂️ Hold reason or status (from the Hold list, or a 📥 report\'s Hold Reason) and 📅 Created between two dates. 📌 Saved filters work in Customer Texts too.',
     '2.4.2': 'New in 🧠 Toolbox AI\'s ⏸️ Holds to call: 🔎 Filter. Teach it your areas (＋ New area: a name, a color like 🔴 Red or 🟡 Yellow, and its cities or zip codes), then show only their holds. Or filter by tags (in ServiceTitan\'s colors), job types (one, or every Quote), what the AI reads they\'re waiting on (parts, price, financing…), high or urgent, or how old. 📌 Save a filter to use again with one click. Each hold shows its area, and so does its write-up. It all stays in this browser.',
@@ -332,7 +332,15 @@
     const jobOverview = async jobId => {
       const d = await getJSON('/dispatch/job-edit-flyout/GetJobOverviewData?jobId=' + encodeURIComponent(jobId));
       if (!d || typeof d !== 'object' || Array.isArray(d)) throw fail('bad', 'the job overview came back in a shape the Toolbox doesn\'t know');
-      return { summary: typeof d.jobSummary === 'string' ? d.jobSummary : '', skills: Array.isArray(d.skills) ? d.skills.filter(s => s && s.active !== false).map(s => ({ id: s.id, name: norm(s.name) })) : null };
+      const tags = v => (Array.isArray(v) ? v : []).map(t => t && norm(t.name) ? { name: norm(t.name), color: norm(t.color) || '#e3e5e8', textColor: norm(t.textColor) } : null).filter(Boolean);
+      const idName = v => v && typeof v === 'object' && v.id ? { id: String(v.id), name: norm(v.name) } : null;
+      // Also (📋 Quick Job Info, seen Nov 2026): its tags (jobTags) and the customer's and location's
+      // (otherTags), with ServiceTitan's colors; business unit, campaign, the invoice's subtotal, the job
+      // it's a recall or warranty of, and the equipment installed there.
+      return { summary: typeof d.jobSummary === 'string' ? d.jobSummary : '', skills: Array.isArray(d.skills) ? d.skills.filter(s => s && s.active !== false).map(s => ({ id: s.id, name: norm(s.name) })) : null,
+        jobTags: tags(d.jobTags), otherTags: tags(d.otherTags), bu: idName(d.businessUnit), campaign: idName(d.campaign),
+        invoice: d.invoice && typeof d.invoice.subtotal === 'number' ? d.invoice.subtotal : null, recallFor: idName(d.recallFor), warrantyFor: idName(d.warrantyFor),
+        equipment: (Array.isArray(d.installedEquipment) ? d.installedEquipment : []).filter(e => e && (norm(e.name) || norm(e.model))).map(e => ({ name: norm(e.name), model: norm(e.model), installed: e.installedOn ? new Date(e.installedOn) : null })) };
     };
     // The skills a job needs: [{ id, name }] (active ones only).
     const skillsOf = v => { if (!v.skills) throw fail('bad', 'the job overview came back in a shape the Toolbox doesn\'t know'); return v.skills; };
@@ -458,7 +466,24 @@
       return d.map(a => ({ id: a.id, status: a.status, start: a.start || null }));
     };
     const setConfirmed = (apptId, on) => getJSON('/dispatch/job-edit-flyout/UpdateJobAppointmentIsConfirmed', 20000, { jobAppointmentId: idNum(apptId), isConfirmed: !!on });
+    // ---- A customer's history, as their customer page reads it (seen Nov 2026) ----
+    // { rows, total }: their jobs (newest first: { id, number, type, businessUnit, firstAppointmentStart,
+    // lastAppointmentStart, appointmentsCount, technicians: [{ technicianName }], status (0 Scheduled,
+    // 1 Dispatched, 2 Working, 3 Hold, 4 Done, 5 Canceled), priority, total, summary }), their calls
+    // (newest first: { createdOn, duration (seconds), direction (0 they called us, 1 we called them),
+    // agentName }) and their memberships ({ type, from, status: 0 active }).
+    const custList = async (what, customerId, size, sort, extra) => {
+      const d = await getJSON('/app/api/customers/' + what + '?customerId=' + encodeURIComponent(customerId) + (extra || '') + '&page=1&pageSize=' + size + '&includeTotal=true&sort=' + encodeURIComponent(sort));
+      if (!d || !Array.isArray(d.data)) throw fail('bad', 'the customer\'s ' + what.replace(/^search/, '').toLowerCase() + ' came back in a shape the Toolbox doesn\'t know');
+      return { rows: d.data.filter(Boolean), total: typeof d.totalCount === 'number' ? d.totalCount : d.data.length };
+    };
+    const customerJobs = id => custList('searchJobs', id, 100, '-lastAppointmentStart', '&number=');
+    const customerCalls = id => custList('searchCalls', id, 50, '-createdOn');
+    const customerMemberships = id => custList('searchMemberships', id, 20, '-from');
+    // Everything they've paid us, or null.
+    const customerRevenue = async id => { const d = await getJSON('/app/api/customers/' + encodeURIComponent(id) + '/getLifetimeRevenueData'); return d && typeof d.lifetimeRevenue === 'number' ? d.lifetimeRevenue : null; };
     return { getJSON, pool, NOT_RUN, haltNote, SIGNED_OUT, isSignedOut, isNoPermission, job, jobEdit, chatThread, chatMessages, customerPhones, code,
+      customerJobs, customerCalls, customerMemberships, customerRevenue,
       appointment, setTimes, jobOverview, skillsOf, jobSkills, jobSummary, ownerNotes, technicians, techsBooked, daySchedule, assignTechs, unassignTechs, apptConfirmed, setConfirmed, jobAppointments, getJobs, jobPlace };
   })();
 
@@ -1766,7 +1791,7 @@
   Object.keys(views).forEach(k => { views[k].classList.add('st-view'); if (k === 'menu') views[k].classList.add('st-view-menu'); });
   news.classList.add('st-bar');
   health.bar.classList.add('st-bar');
-  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts', moves: '🔀 Move Jobs', router: '🧭 Tech Router (Beta)', ai: '🧠 Toolbox AI (Beta)' };
+  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts', moves: '🔀 Move Jobs', router: '🧭 Tech Router (Beta)', ai: '📋 Quick Job Info' };
   const showView = name => {
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
     titleText.textContent = TITLES[name];
@@ -1798,9 +1823,22 @@
     ['texts', '📱', 'Customer Texts', 'Text customers, confirm appointments', '#e3f5e9'],
     ['moves', '🔀', 'Move Jobs', 'Move, add, unassign or swap techs', '#f3e9fb'],
     ['router', '🧭', 'Tech Router', 'Fill open time, plan and score routes', '#ddf3f0', 'Beta'],
-    ['ai', '🧠', 'Toolbox AI', 'What\'s going on with a job; hold call scripts', '#fde7f3', 'Beta']
+    ['ai', '📋', 'Quick Job Info', 'Everything about a job or a hold, at a glance', '#fde7f3']
   ];
   const tiles = el('div', 'display:grid;gap:6px');
+  // 🧪 Experimental tools: the ones still being built and tested (Beta), below the finished ones,
+  // folded away until opened (it remembers, in this browser).
+  const expHead = el('button', 'display:flex;gap:6px;align-items:center;width:100%;margin-top:10px;padding:6px 10px;border:1px dashed var(--st-amber-l);border-radius:10px;background:var(--st-amber-s);color:var(--st-amber);font:inherit;font-size:12px;font-weight:800;text-align:left;cursor:pointer');
+  expHead.type = 'button'; expHead.id = 'st-exp-head';
+  const expBox = el('div', 'display:none;gap:6px;margin-top:6px');
+  expBox.id = 'st-exp';
+  const expNote = el('div', 'font-size:11px;color:var(--st-ink-3);line-height:1.35', 'Still being built and tested. They can be wrong or change, so check what they suggest.');
+  expBox.appendChild(expNote);
+  const expN = TOOLS.filter(t => t[5]).length;
+  const expShow = open => { expBox.style.display = open ? 'grid' : 'none'; expHead.textContent = (open ? '▾' : '▸') + ' 🧪 Experimental tools (' + expN + ')'; };
+  expHead.addEventListener('mousedown', e => e.preventDefault());
+  expHead.onclick = () => { const open = expBox.style.display === 'none'; set('stExpOpen', open ? '1' : '0'); expShow(open); };
+  expShow(get('stExpOpen') === '1');
   TOOLS.forEach(([key, icon, name, desc, tint, badge]) => {
     const b = el('button', 'display:flex;gap:10px;align-items:center;width:100%;text-align:left;padding:8px 10px;border:1px solid var(--st-line);border-radius:10px;background:var(--st-bg);cursor:pointer;color:var(--st-ink);font:inherit');
     b.type = 'button'; b.className = 'st-tile';
@@ -1813,11 +1851,13 @@
     b.append(ic, tx, el('span', 'margin-left:auto;color:var(--st-ink-3);font-size:16px', '›'));
     b.addEventListener('mousedown', e => e.preventDefault());
     b.onclick = () => showView(key);
-    tiles.appendChild(b);
+    (badge ? expBox : tiles).appendChild(b);
   });
   const checkRow = el('div', 'display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px');
   checkRow.append(el('span', 'font-size:11px;color:var(--st-ink-3)', 'Works on the Dispatch board\'s Day view.'), smallBtn('🩺 Check', () => health.checkBoard(true)));
-  menuPane.append(menuMsg, tiles, checkRow);
+  menuPane.append(menuMsg, tiles);
+  if (expN) menuPane.append(expHead, expBox);
+  menuPane.append(checkRow);
   // Above the tiles: which day and branches the board shows (or what to do to use the tools).
   const renderMenuMsg = () => {
     menuMsg.textContent = '';
@@ -4200,10 +4240,10 @@
   })();
 
   // ===================================================================
-  // Hold filters: shared by 📱 Customer Texts' Hold list and 🧠 Toolbox AI's ⏸️ Holds to call
+  // Hold filters: shared by 📱 Customer Texts' Hold list and 📋 Quick Job Info's ⏸️ Holds tab
   // Only the holds you want: 📍 your areas (a name, a color, and the cities and zip codes in it,
   // taught once and used by both tools), 🏷️ tags (in ServiceTitan's colors), 🧰 job types (a whole
-  // family, every Quote, or single types; Customer Texts has its own job-type ticks), 🧠 what the AI
+  // family, every Quote, or single types; Customer Texts has its own job-type ticks), 🧠 what the notes
   // reads in each hold's summary, 🗺️ state, 🗂️ hold reason or status, ⭐ high or urgent, ⏳ age, and
   // 📅 created between two dates. Within each part any one counts (Red or Yellow); every part used
   // has to pass (Red and every Quote). 📌 saves a filter as a button, to use again with one click.
@@ -4212,7 +4252,7 @@
   //   facts(row): what a Hold list row says, the way the filters read it: { type, tags, tagObjs, city,
   //     zip, state, reason, status, created, priority, summary }. reason: the row's own hold reason, if
   //     ServiceTitan sends one (any field with "reason" in its name); the caller can fill one in from
-  //     somewhere else (a CSV report's Hold Reason, in 🧠 Toolbox AI's memory).
+  //     somewhere else (a CSV report's Hold Reason, added in 📋 Quick Job Info → ⚙️ More).
   //   make(o): one tool's filter. o: { id (prefix for its parts' ids and classes), key (where its
   //     filter in use is saved), viewsKey (its saved filters), types (show job types), say(text),
   //     rerender() (the tool draws its list again) }.
@@ -4246,7 +4286,7 @@
       tagObjs: (Array.isArray(x.Tags) ? x.Tags : []).map(board.tagOf).filter(Boolean), city: norm(x.City), zip: (/\b(\d{5})/.exec(String(x.Zip == null ? '' : x.Zip)) || [])[1] || '',
       state: norm(x.State).toUpperCase(), reason: reasonOf(x), status: norm(x.JobStatus), created: toDate(x.CreatedOn), priority: norm(x.Priority),
       summary: [x.Summary, x.AppointmentSpecialInstructions].filter(v => typeof v === 'string' && norm(v)).join('<br>') });
-    // What the AI reads in a hold (its summary, and anything the tool adds): a Set of topic keys, worked out once.
+    // What the notes say about a hold (its summary, and anything the tool adds): a Set of topic keys, worked out once.
     const topicsOf = h => {
       if (h.topics) return h.topics;
       if (!h._topics) h._topics = new Set(typeof lang !== 'undefined' ? lang.read(h.summary || '', h.created || new Date()).topics.map(t => t.key) : []);
@@ -4292,7 +4332,7 @@
       if (f.from || f.to) parts.push('📅 created ' + (f.from && f.to ? shortDate(f.from) + ' to ' + shortDate(f.to) : f.from ? 'since ' + shortDate(f.from) : 'until ' + shortDate(f.to)));
       return parts.filter(Boolean).join(' · ');
     };
-    // Of the holds 🧠 Toolbox AI watched in each area, how many got booked (once 3 were booked or lost).
+    // Of the holds 📋 Quick Job Info watched in each area, how many got booked (once 3 were booked or lost).
     const areaStats = recs => {
       const out = {};
       areas().forEach(a => {
@@ -4354,7 +4394,7 @@
         const opt = (r, label, on, title, click, attr) => { const b = pill(label, title, click); setOn(b, on); if (attr) b.setAttribute(attr[0], attr[1]); r.appendChild(b); return b; };
         const count = fn => { const m = new Map(); cands.forEach(h => fn(h).forEach(k => { if (k != null && k !== '') m.set(k, (m.get(k) || 0) + 1); })); return m; };
         // 📍 Your areas.
-        const ar = group('📍 Your areas (shared by 🧠 Toolbox AI and 📱 Customer Texts)');
+        const ar = group('📍 Your areas (shared by 📋 Quick Job Info and 📱 Customer Texts)');
         const stats = areaStats(info.recs);
         areas().forEach(a => {
           const c = colorOf(a.color), n = cands.filter(h => inArea(a, h)).length, sx = stats[a.id];
@@ -4407,12 +4447,12 @@
         const rr = group('🗂️ Hold reason or status');
         Array.from(rsN.entries()).sort((a, b) => b[1] - a[1]).forEach(([k, n]) => opt(rr, rsLabel.get(k) + ' (' + n + ')', f.reasons.indexOf(k) > -1, 'Why it\'s on hold: ' + rsLabel.get(k), () => toggleIn(f.reasons, k), ['data-reason', rsLabel.get(k)]));
         if (stsN.size > 1) Array.from(stsN.entries()).sort((a, b) => b[1] - a[1]).forEach(([k, n]) => opt(rr, 'Status: ' + rsLabel.get(k) + ' (' + n + ')', f.reasons.indexOf(k) > -1, 'The job\'s status on the Hold list', () => toggleIn(f.reasons, k), ['data-status', rsLabel.get(k)]));
-        if (!rsN.size) rr.appendChild(el('span', 'font-size:11px;color:var(--st-ink-3)', 'The Hold list doesn\'t say why these are on hold. A 📥 CSV report with a Hold Reason column (🧠 Toolbox AI → 📚 Memory) fills it in.'));
-        // 🧠 What the AI reads in them.
+        if (!rsN.size) rr.appendChild(el('span', 'font-size:11px;color:var(--st-ink-3)', 'The Hold list doesn\'t say why these are on hold. A 📥 CSV report with a Hold Reason column (📋 Quick Job Info → ⚙️ More) fills it in.'));
+        // 🧠 What the notes say.
         const kn = count(h => Array.from(topicsOf(h)));
         const ks = KINDS().filter(t => kn.has(t.key));
         if (ks.length) {
-          const kr = group('🧠 What the AI reads in them');
+          const kr = group('🧠 What the summary says');
           ks.forEach(t => opt(kr, t.icon + ' ' + t.label + ' (' + kn.get(t.key) + ')', f.kinds.indexOf(t.key) > -1, 'Holds whose summary says: ' + t.label, () => toggleIn(f.kinds, t.key), ['data-kind', t.key]));
         }
         // 📅 Created between two dates.
@@ -4751,7 +4791,7 @@
       if (rest.halted) throw rest.haltError;
       rest.forEach(d => { if (d && d.error) throw d.error; take(d); });
       health.clear(TOOL);
-      // A hold reason from a 📥 report added to 🧠 Toolbox AI, for a hold the list doesn't give one for.
+      // A hold reason from a 📥 report added in 📋 Quick Job Info, for a hold the list doesn't give one for.
       if (jobs.some(h => !h.reason)) {
         try { const why = new Map((await mem.all('jobs')).filter(x => x.hold).map(x => [x.j, x.hold])); jobs.forEach(h => { if (!h.reason && why.has(String(h.jobId))) h.reason = why.get(String(h.jobId)); }); } catch (e) {}
       }
@@ -4851,7 +4891,7 @@
     });
     let mode = get(K.mode) === 'auto' ? 'auto' : 'type';
     const openGroups = new Set();
-    // 🔎 Filter on the Hold list (the same one as 🧠 Toolbox AI's Holds to call, with the same areas): only
+    // 🔎 Filter on the Hold list (the same one as 📋 Quick Job Info's ⏸️ Holds tab, with the same areas): only
     // the ticked kinds' holds that pass it are texted. Its own filter in use and saved filters.
     const holdF = holdFilter.make({ id: 'st-ct', key: 'stCtHoldFilter', viewsKey: 'stCtHoldViews', types: false, say: t => say(t), rerender: () => renderMain() });
 
@@ -7572,14 +7612,14 @@
   })();
 
   // ===================================================================
-  // What you've taught the AI (🧠 Toolbox AI → 👎 Something's wrong?)
-  // Phrases your notes use that the AI read wrong, or didn't read at all: { id, topic, phrase, not,
-  // at }. topic: one of the AI's topics (parts, price, urgent…) or 'nocall' (the customer doesn't
+  // What you've taught it (📋 Quick Job Info → 👎 Read something wrong?)
+  // Phrases your notes use that it read wrong, or didn't read at all: { id, topic, phrase, not,
+  // at }. topic: one of the reading's topics (parts, price, urgent…) or 'nocall' (the customer doesn't
   // want calls). not: true for "this phrase does NOT mean that" (it read a topic that isn't there).
   // A phrase counts in a sentence when its words are there, in order, side by side (case and
   // punctuation don't matter): "pt on order" is in "Pt. on order, ETA Friday". Saved in this
   // browser and read fresh, so a lesson taught in another tab counts here too. Tech Router uses the
-  // 'nocall' lessons too, so a hold the AI has been taught not to call isn't suggested there either.
+  // 'nocall' lessons too, so a hold it has been taught not to call isn't suggested there either.
   // ===================================================================
   const taught = (() => {
     const KEY = 'stAiTaught', MAX = 400;
@@ -10178,7 +10218,7 @@
       if (!text) return null;
       const lessons = taught.list();
       for (const sen of text.split(/(?<=[.!?;\n])\s+|\s*\n\s*/).map(norm).filter(Boolean)) {
-        // What you've taught 🧠 Toolbox AI: a phrase that means "don't call" (or doesn't).
+        // What you've taught 📋 Quick Job Info: a phrase that means "don't call" (or doesn't).
         if (lessons.length && taught.says(sen, 'nocall', true, lessons)) continue;
         if (lessons.length && taught.says(sen, 'nocall', false, lessons)) return sen.length > 140 ? sen.slice(0, 137) + '…' : sen;
         for (let i = 0; i < NO_CALL.length; i++) {
@@ -11261,7 +11301,7 @@
     return {
       refresh,
       leave: () => { setPicking(null); style.textContent = ''; },
-      // For 🧠 Toolbox AI: Tech Router's reading of notes (a customer who doesn't want calls, a time
+      // For 📋 Quick Job Info: Tech Router's reading of notes (a customer who doesn't want calls, a time
       // they asked for), 🎯 Place a job for a job (after showView('router')), and the 🚫 list.
       noCallIn, askOf,
       placeJob: j => { tab = 'place'; set('stRouterTab', 'place'); showTab(); place(S(j)); },
@@ -11272,30 +11312,23 @@
   })();
 
   // ===================================================================
-  // Tool 8: 🧠 Toolbox AI (Beta)
-  // A small AI that lives in this browser and learns from your own ServiceTitan data. It doesn't
-  // chat: it reads, and it suggests. It never changes a job, sends a text or saves a note by itself.
-  //   🔎 Explain a job: click a job on the board (or a row in the Jobs Tray), or type its number. It
-  //     reads what ServiceTitan has on it that a dispatcher can see (the job summary; the job's,
-  //     customer's and location's notes; its appointments; the customer's texts, unless they have
-  //     an unread reply, which it leaves unread) and what it remembers (the customer's past jobs,
-  //     holds like this one), then writes up what's going on: why it's waiting, who to ask for, how
-  //     many times we've tried, what the customer asked for, and what to watch out for.
-  //   📞 Call script (holds): what to say to get it booked: an opener, why you're calling, the
-  //     offer, answers for what they're likely to say, a voicemail and a text. It picks the approach
-  //     that has booked the most holds like this one (from your "How did the call go?" answers), so
-  //     it gets better the more calls are logged.
-  //   ⏸️ Holds to call: the Hold list, best to call first (a call-back day that has come, likely to
-  //     book, not called today), each with 🧠 to explain it.
-  //   📚 Memory: months to years of schedules (which customer, which job type, which tech, done or
-  //     canceled), read a week at a time and kept in this browser (IndexedDB, see mem below). Each
-  //     day is read once: run it again and only new days are read, plus the last SETTLE days and
-  //     the next AHEAD days, which can still change. Nothing is ever kept twice (one record per
-  //     appointment). It watches the Hold list too, and learns which holds got booked.
-  //     📥 Add outside data takes a CSV report exported from ServiceTitan (job number, job type,
-  //     status, summary, hold reason…) and adds it the same way: one record per job number.
-  //   Reading English: the ways dispatchers and techs write things in notes (see lang below), plus
-  //   what it learns from your holds (which words show up on the holds that get booked).
+  // Tool 8: 📋 Quick Job Info
+  // Everything about one job, at a glance: click a job on the board (🖱️ is on by itself when the tool
+  // opens, and stays on: click one job, then the next), a row in the Jobs Tray, or type its number.
+  // It reads what ServiceTitan has on it that a dispatcher can see (the job's overview, summary and
+  // tags; the job's, customer's and location's notes; its appointments; the customer's phone numbers
+  // and texts, unless they have an unread reply, which it leaves unread) and the customer's history,
+  // the way their customer page reads it (every other job, the call log, memberships, what they've
+  // paid us), then shows it as a card: what to do next, the watch-outs (🚫 don't call, 📵 hard to
+  // reach, ☎️ they called us, 🗓️ another job booked, 🔥 no heat, 🧓 elderly…), the appointment or
+  // hold, address and phone, the summary, the notes, the customer, and buttons into the other tools.
+  // It never changes a job, sends a text or adds a note by itself.
+  //   ⏸️ Holds: the Hold list, best to call first, with the 🔎 filter, the watch-outs, and the call
+  //     logs of the holds showing (📵 hard to reach, 📞 called today, ☎️ they called us).
+  //   🔮 Chances: it watches the Hold list (each time it's read) and learns which holds got booked
+  //     or lost, and which words show up on each (see brain and lang below). 📥 A CSV report from
+  //     ServiceTitan adds more (⚙️ More). Kept in this browser (IndexedDB, see mem below).
+  //   👎 Teaching: phrases your notes use that it read wrong or missed (see taught above).
   // ===================================================================
 
   // ---- Reading English: what a job summary, a note or a text says ----
@@ -11578,7 +11611,7 @@
     return { plain, sentencesOf, clip, TOPICS, TOPIC, read, whenIn, whoIn, moneyIn, money, tokens, train, featureText, thingOf, firstOf, titleCase };
   })();
 
-  // ---- The AI's memory: kept in this browser (IndexedDB), never sent anywhere ----
+  // ---- What Quick Job Info keeps: in this browser (IndexedDB), never sent anywhere ----
   // Stores (each record once, by its key, so reading the same thing again replaces it):
   //   appts: one per appointment (key a: its id): j job, n its number, c customer, cn customer's
   //          name, l location, t / tn job type id / name, s / e start / end (ms), st its status, js
@@ -11628,7 +11661,7 @@
           why = ''; res(d);
         };
         r.onerror = () => rej(r.error || new Error('IndexedDB didn\'t open'));
-        r.onblocked = () => rej(new Error('another ServiceTitan tab is holding the AI\'s memory open; reload that tab'));
+        r.onblocked = () => rej(new Error('another ServiceTitan tab is holding Quick Job Info\'s saved data open; reload that tab'));
       });
       dbp.catch(e => { why = errText(e); dbp = null; });
       return dbp;
@@ -11640,8 +11673,8 @@
         let t, out;
         try { t = d.transaction(stores, mode); } catch (e) { return rej(e); }
         t.oncomplete = () => res(out);
-        t.onerror = () => rej(t.error || new Error('the AI\'s memory couldn\'t be read or saved'));
-        t.onabort = () => rej(t.error || new Error('saving to the AI\'s memory was cancelled (is the computer\'s disk full?)'));
+        t.onerror = () => rej(t.error || new Error('Quick Job Info\'s saved data couldn\'t be read or saved'));
+        t.onabort = () => rej(t.error || new Error('saving Quick Job Info\'s data was cancelled (is the computer\'s disk full?)'));
         try { out = fn(t); } catch (e) { try { t.abort(); } catch (e2) {} rej(e); }
       });
     };
@@ -11682,122 +11715,11 @@
 
   // ---- Learning: schedules, holds and outside data into the memory ----
   const brain = (() => {
-    const TOOL = 'Toolbox AI';
+    const TOOL = 'Quick Job Info';
     const S = x => String(x);
-    const pad = n => String(n).padStart(2, '0');
-    const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
-    const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
     const toDate = v => { if (v == null || v === '') return null; const d = v instanceof Date ? v : new Date(v); return isNaN(d) ? null : d; };
     const today0 = () => { const t = new Date(); t.setHours(0, 0, 0, 0); return t; };
     const idOf = v => (v == null || v === '' ? undefined : S(v));
-    // A day is read again until it's SETTLE days old (a job can still be moved, finished or canceled
-    // till then); the next AHEAD days are always read again. CHUNK days a request (like Tech Router's
-    // weeks), AT_ONCE requests at a time, TECHS_PER techs a request.
-    const SETTLE = 14, AHEAD = 30, CHUNK = 7, AT_ONCE = 2, TECHS_PER = 150;
-    const MONTHS = [3, 6, 12, 24, 36];
-
-    // One appointment from the schedules, as kept.
-    const rowOf = (x, tid) => ({
-      a: S(x.appointmentId), j: S(x.jobId), n: norm(x.appointmentNumber) || undefined, c: idOf(x.customerId), cn: norm(x.customerName) || undefined, l: idOf(x.locationId),
-      t: idOf(x.jobTypeId), tn: norm(x.jobTypeName) || undefined, s: +toDate(x.appointmentStart), e: toDate(x.appointmentEnd) ? +toDate(x.appointmentEnd) : undefined,
-      st: norm(x.appointmentStatus) || undefined, js: norm(x.jobStatus) || undefined, techs: [tid], bu: norm(x.businessUnitName) || undefined,
-      city: norm(x.city) || undefined, zip: (/\b(\d{5})/.exec(String(x.zip == null ? '' : x.zip)) || [])[1], tags: (Array.isArray(x.tags) ? x.tags : []).map(t => norm(t && (t.name || t.TypeName))).filter(Boolean),
-      cf: x.isConfirmed === true || undefined
-    });
-    const isCanceled = st => /cancel/i.test(st || '');
-
-    // ---- 📚 Learn: months of schedules, a week at a time ----
-    // o: { months, say(text), stop() }. Newest weeks first, so a stopped run already knows the
-    // latest months; what's read is saved week by week, so pressing Learn again carries on. Returns
-    // { read (weeks), rows (appointments read), skipped (days already known), halted, stopped }.
-    let learning = null;
-    const learn = o => learning || (learning = (async () => {
-      const say = o.say || (() => {});
-      const months = MONTHS.indexOf(Number(o.months)) > -1 ? Number(o.months) : 12;
-      const t0 = today0(), from = new Date(t0.getFullYear(), t0.getMonth() - months, t0.getDate()), until = addDays(t0, AHEAD);
-      say('Reading the tech list…');
-      const techs = await st.technicians();
-      const ids = techs.map(t => Number(t.id)).filter(n => isFinite(n));
-      if (!ids.length) throw new Error('the tech list came back empty');
-      await mem.setMeta('techs', techs.reduce((m, t) => { m[S(t.id)] = t.name; return m; }, {}));
-      // The days still to read: never read, or read while they could still change.
-      const known = new Map((await mem.all('days')).map(x => [x.d, x]));
-      const want = [];
-      let skipped = 0;
-      for (let d = new Date(from); d < until; d = addDays(d, 1)) {
-        const x = known.get(ymd(d));
-        if (x && x.final) skipped++; else want.push(new Date(d));
-      }
-      const chunks = [];
-      want.forEach(d => {
-        const c = chunks[chunks.length - 1];
-        if (c && c.days.length < CHUNK && +addDays(c.days[c.days.length - 1], 1) === +d) c.days.push(d); else chunks.push({ days: [d] });
-      });
-      chunks.reverse();
-      const groups = [];
-      for (let i = 0; i < ids.length; i += TECHS_PER) groups.push(ids.slice(i, i + TECHS_PER));
-      let rows = 0;
-      const dayText = d => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-      const res = await st.pool(chunks, AT_ONCE, async (c, i, alive) => {
-        const a = c.days[0], b = addDays(c.days[c.days.length - 1], 1);
-        const byId = new Map();
-        for (const g of groups) {
-          if (!alive()) return null;
-          const sch = await st.getJSON('/dispatch-center/daily-assignments', 60000, { technicianIds: g, startDate: ymd(a), endDate: ymd(b), page: 1, pageSize: g.length, fields: 'Tags', showOnHoldJobs: false });
-          if (!sch || !Array.isArray(sch.items)) {
-            health.flag(TOOL, 'can\'t read past schedules', '/dispatch-center/daily-assignments');
-            throw Object.assign(new Error('the schedules came back in a shape the Toolbox doesn\'t know'), { kind: 'bad' });
-          }
-          sch.items.forEach(it => {
-            if (!it || it.technicianId == null) return;
-            const tid = S(it.technicianId);
-            (Array.isArray(it.technicianSchedule) ? it.technicianSchedule : []).forEach(dd => (dd && Array.isArray(dd.assignments) ? dd.assignments : []).forEach(x => {
-              if (!x || x.appointmentId == null || x.jobId == null) return;
-              const s = toDate(x.appointmentStart);
-              if (!s || s < a || s >= b) return;
-              const k = S(x.appointmentId), had = byId.get(k);
-              if (had) { if (had.techs.indexOf(tid) < 0) had.techs.push(tid); return; }
-              byId.set(k, rowOf(x, tid));
-            }));
-          });
-        }
-        if (!alive()) return null;
-        const list = Array.from(byId.values()), per = new Map();
-        list.forEach(x => { const k = ymd(new Date(x.s)); per.set(k, (per.get(k) || 0) + 1); });
-        const settled = addDays(t0, -SETTLE), at = Date.now();
-        await mem.saveDays(a, b, list, c.days.map(d => ({ d: ymd(d), at, n: per.get(ymd(d)) || 0, final: d < settled })));
-        rows += list.length;
-        return list.length;
-      }, (done, total) => say('Reading schedules: week ' + done + ' of ' + total + '…'), { stop: o.stop });
-      const fails = res.filter(r => r && r.error), done = res.filter(r => typeof r === 'number').length;
-      if (fails.length && !done && !res.halted) throw fails[0].error;
-      health.clear(TOOL);
-      say('Adding it up…');
-      await totals();
-      await mem.setMeta('learned', { at: Date.now(), months, rows, weeks: done });
-      return { read: done, total: chunks.length, rows, skipped, stopped: !!res.stopped, halted: res.halted ? st.haltNote(res) : '', failed: fails.length };
-    })().finally(() => { learning = null; }));
-
-    // ---- Totals over the whole memory (after each Learn) ----
-    // { n, customers, from, to, types: { typeId: { name, n, done, canceled, mins } } }: what each kind
-    // of job usually takes, and how often it's canceled.
-    const totals = async () => {
-      const T = { n: 0, customers: 0, from: 0, to: 0, types: {} }, cust = new Set();
-      await mem.each('appts', x => {
-        T.n++;
-        if (x.c) cust.add(x.c);
-        if (!T.from || x.s < T.from) T.from = x.s;
-        if (x.s > T.to) T.to = x.s;
-        const k = x.t || ('name:' + (x.tn || '?'));
-        const y = T.types[k] || (T.types[k] = { name: x.tn || '', n: 0, done: 0, canceled: 0, mins: 0 });
-        y.n++;
-        if (isCanceled(x.st)) y.canceled++;
-        else if (/^done$|complet/i.test(x.st || '')) { y.done++; if (x.e && x.e > x.s) y.mins += Math.min(12 * 60, (x.e - x.s) / 60000); }
-      });
-      T.customers = cust.size;
-      await mem.setMeta('totals', T);
-      return T;
-    };
 
     // ---- ⏸️ Watching the Hold list: which holds get booked ----
     // Every look at the Hold list is kept: a hold seen for the first time is added, one still there
@@ -11833,19 +11755,30 @@
       });
       // Gone from the list since the last look: what happened to it?
       const gone = Array.from(kept.values()).filter(h => !h.out && !seen.has(h.j)).sort((a, b) => b.last - a.last).slice(0, RESOLVE_MAX);
+      // What happened, from the customer's own job list (their customer page's): this job booked or
+      // done is booked; still on hold is moved (another branch's list); canceled is lost, unless they
+      // booked another job soon after (a quote sold as an install). Without a customer, its appointments.
+      const BOOKED = [0, 1, 2, 4];
       const res = await st.pool(gone, 3, async h => {
-        const mine = await mem.all('appts', 'j', h.j);
-        if (mine.some(a => !isCanceled(a.st) && a.s >= h.first - 86400000)) return 'booked';
+        if (h.c) {
+          let L = null;
+          try { L = await st.customerJobs(h.c); } catch (e) { if (st.isSignedOut(e)) throw e; }
+          const me = L && L.rows.find(x => S(x.id) === h.j);
+          if (me) {
+            if (BOOKED.indexOf(me.status) > -1) return 'booked';
+            if (me.status === 3) return 'moved';
+            if (me.status === 5) {
+              const near = x => { const d = toDate(x.firstAppointmentStart || x.lastAppointmentStart); return d && +d >= h.last - 86400000 && +d <= h.last + 45 * 86400000; };
+              return L.rows.some(x => S(x.id) !== h.j && BOOKED.indexOf(x.status) > -1 && near(x)) ? 'booked' : 'lost';
+            }
+          }
+        }
         let appts = null;
         try { appts = await st.jobAppointments(h.j); } catch (e) { if (st.isSignedOut(e)) throw e; }
         if (appts && appts.length) {
           if (appts.some(a => a.status === 3 || /^hold$/i.test(String(a.status)))) return 'moved';
           if (appts.some(a => [0, 1, 2, 4].indexOf(a.status) > -1 || /^(scheduled|dispatched|working|done)$/i.test(String(a.status)))) return 'booked';
-          if (appts.every(a => a.status === 5 || /cancel/i.test(String(a.status)))) {
-            // Canceled, but the customer booked another job soon after (a quote sold as an install).
-            const theirs = h.c ? await mem.all('appts', 'c', h.c) : [];
-            return theirs.some(a => a.j !== h.j && !isCanceled(a.st) && a.s >= h.last - 86400000 && a.s <= h.last + 45 * 86400000) ? 'booked' : 'lost';
-          }
+          if (appts.every(a => a.status === 5 || /cancel/i.test(String(a.status)))) return 'lost';
         }
         return null;
       }, null, {});
@@ -11946,13 +11879,12 @@
       return { rows: got.size, added, updated, same, noJob, columns: Object.keys(map) };
     };
 
-    // ---- What the memory knows, for a job explained ----
-    const aboutJob = async (j, c, l, cn) => {
-      const [byJob, byCust, byLoc, jobRec, hold, calls, csvByC, csvByName] = await Promise.all([
-        mem.all('appts', 'j', S(j)), c ? mem.all('appts', 'c', S(c)) : [], l ? mem.all('appts', 'l', S(l)) : [],
-        mem.one('jobs', S(j)), mem.one('holds', S(j)), mem.all('calls', 'j', S(j)),
+    // ---- What's kept about a job looked up: what it read last time, how it did on the Hold list, and a
+    // 📥 report's rows for the same customer ----
+    const aboutJob = async (j, c, cn) => {
+      const [jobRec, hold, csvByC, csvByName] = await Promise.all([mem.one('jobs', S(j)), mem.one('holds', S(j)),
         c ? mem.all('jobs', 'c', S(c)) : [], cn ? mem.all('jobs', 'cnk', norm(cn).toLowerCase()).catch(() => []) : []]);
-      return { byJob, byCust, byLoc, jobRec, hold, calls, csv: csvByC.concat(csvByName.filter(x => csvByC.every(y => y.j !== x.j))).filter(x => x.j !== S(j)) };
+      return { jobRec, hold, csv: csvByC.concat(csvByName.filter(x => csvByC.every(y => y.j !== x.j))).filter(x => x.j !== S(j) && /csv/.test(x.src || '')) };
     };
 
     // ---- What holds like this one did, and the chance this one books ----
@@ -11998,14 +11930,12 @@
       return { n: list.length, booked: booked.length, days: days.length ? days[Math.floor(days.length / 2)] : null, what: list === same ? norm(type) : norm(type).split(/\s*-\s*/)[0] + ' holds' };
     };
 
-    // ---- Calls: what you said and how it went ----
-    const logCall = x => mem.putAll('calls', [Object.assign({ at: Date.now(), hour: new Date().getHours() }, x)]);
-    return { learn, isLearning: () => !!learning, totals, watchHolds, holdRows, importCSV, parseCSV, aboutJob, getModel, likeThis, logCall, changed, MONTHS, SETTLE, AHEAD, rowOf };
+    return { watchHolds, holdRows, importCSV, parseCSV, aboutJob, getModel, likeThis, changed };
   })();
 
-  // ---- The tool: 🧠 Toolbox AI ----
+  // ---- The tool: 📋 Quick Job Info ----
   const ai = (() => {
-    const TOOL = 'Toolbox AI';
+    const TOOL = 'Quick Job Info';
     const S = x => String(x);
     const DAY = 86400000;
     const toDate = v => { if (v == null || v === '') return null; const d = v instanceof Date ? v : new Date(v); return isNaN(d) ? null : d; };
@@ -12015,76 +11945,40 @@
     const agoText = d => { const n = daysAgo(d); return n <= 0 ? 'today' : n === 1 ? 'yesterday' : n < 14 ? n + ' days ago' : n < 60 ? Math.round(n / 7) + ' weeks ago' : n < 730 ? Math.round(n / 30.4) + ' months ago' : Math.round(n / 365) + ' years ago'; };
     const inText = d => { const n = -daysAgo(d); return n === 0 ? 'today' : n === 1 ? 'tomorrow' : n > 1 ? 'in ' + n + ' days' : agoText(d); };
     const clock = d => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    // Times of day, for when customers pick up: [key, word, said as, from hour, to hour].
-    const SLOTS = [['morning', 'morning', 'in the morning (before noon)', 0, 12], ['midday', 'middle of the day', 'in the middle of the day (12–3)', 12, 15],
-      ['afternoon', 'afternoon', 'in the afternoon (3–6)', 15, 18], ['evening', 'evening', 'in the evening (after 6)', 18, 24]];
-    const slotOf = h => SLOTS.find(x => h >= x[3] && h < x[4]) || SLOTS[0];
-    const partOfDay = h => slotOf(h)[1];
-    // Calls you logged: 'shown' marks a call script you were shown (not a call); 'vm' a call that
-    // didn't reach them; booked, later and no, calls that did.
-    const isCall = c => c && c.out && c.out !== 'shown';
-    const reachedOn = c => isCall(c) && c.out !== 'vm';
-    // When customers pick up, from every call logged with its hour: { best (slot), per: { key: { tries,
-    // reached } }, n } once there are PICKUP_MIN calls and a clear best time (at least 15 points better
-    // than the worst, counting times with 3 or more calls); else null.
-    const PICKUP_MIN = 10;
-    const pickupOf = calls => {
-      const per = {};
-      let n = 0;
-      calls.filter(c => isCall(c) && typeof c.hour === 'number').forEach(c => { const k = slotOf(c.hour)[0], x = per[k] || (per[k] = { tries: 0, reached: 0 }); x.tries++; n++; if (reachedOn(c)) x.reached++; });
-      if (n < PICKUP_MIN) return null;
-      const rate = k => (per[k].reached + 1) / (per[k].tries + 2), ok = SLOTS.filter(x => per[x[0]] && per[x[0]].tries >= 3);
-      if (ok.length < 2) return null;
-      const best = ok.reduce((a, b) => (rate(b[0]) > rate(a[0]) ? b : a)), worst = ok.reduce((a, b) => (rate(b[0]) < rate(a[0]) ? b : a));
-      if (rate(best[0]) - rate(worst[0]) < 0.15) return null;
-      return { best, per, n, rate };
-    };
-    const pickupText = P => 'Customers pick up most ' + P.best[2] + ': ' + P.per[P.best[0]].reached + ' of ' + P.per[P.best[0]].tries + ' calls' +
-      SLOTS.filter(x => x !== P.best && P.per[x[0]] && P.per[x[0]].tries >= 3).map(x => '; ' + x[1] + 's ' + P.per[x[0]].reached + ' of ' + P.per[x[0]].tries).join('');
+    const partOfDay = h => h < 12 ? 'morning' : h < 15 ? 'middle of the day' : h < 18 ? 'afternoon' : 'evening';
     const zip5 = z => (/\b(\d{5})/.exec(String(z == null ? '' : z)) || [])[1] || '';
     const idOf = v => (v == null || v === '' ? null : S(v));
+    // Appointment and job status numbers (seen Nov 2026, the same on both): 0 Scheduled, 1 Dispatched,
+    // 2 Working, 3 Hold, 4 Done, 5 Canceled.
     const STATUS = ['Scheduled', 'Dispatched', 'Working', 'Hold', 'Done', 'Canceled'];
-
-    // ---------- Settings (saved in this browser) ----------
-    // Your name, the company's name and number for the script; whether calls can mention financing
-    // and club members' priority (only say what's true for your company).
-    const K = { months: 'stAiMonths', name: 'stAiName', company: 'stAiCompany', phone: 'stAiPhone', finance: 'stAiFinance', priority: 'stAiPriority' };
-    const DEF_COMPANY = 'AirSouth', DEF_PHONE = '(601) 847-9941';
-    const autoName = () => {
-      try {
-        const id = window.App && window.App.Notifications && window.App.Notifications.store && window.App.Notifications.store.userId;
-        const D = (window.App && window.App.Data) || {};
-        const e = id != null && ((D.Employees || []).find(x => x && x.UserId === id) || (D.ActiveEmployees || []).find(x => x && x.UserId === id));
-        if (e && e.Name) return lang.titleCase(norm(e.Name).split(' ')[0]);
-      } catch (e) {}
-      return '';
-    };
-    const myName = () => norm(get(K.name)) || norm(get('stCtName')) || autoName();
-    const company = () => norm(get(K.company)) || DEF_COMPANY;
-    const callBack = () => norm(get(K.phone)) || DEF_PHONE;
-    const offersFinance = () => get(K.finance) === '1';
-    const memberPriority = () => get(K.priority) === '1';
+    const BOOKED = [0, 1, 2];
+    // Calls (from the customer's call log): one of ours this long or longer reached them; one this
+    // short (or shorter) most likely didn't (no answer, or a voicemail left). Seconds.
+    const TALKED = 60, NO_ANSWER = 40;
+    // This many tries in a row without reaching them: 📵 Hard to reach.
+    const HARD = 3;
+    const first = n => (board.firstName(n) || norm(n).split(' ')[0] || '');
 
     // ---------- The panel ----------
     const wrap = el('div', 'display:grid;gap:8px;padding:10px 12px 12px');
-    const beta = el('div', 'display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border:1px solid var(--st-amber-l);background:var(--st-amber-s);color:var(--st-amber);border-radius:8px;font-size:11.5px;line-height:1.35');
-    beta.className = 'st-ai-beta';
-    beta.append(el('div', 'flex:1', '🚧 Beta: the AI reads and suggests. It never changes a job, sends a text or adds a note by itself. Check what it says before you call.'),
-      smallBtn('Got it', () => { beta.style.display = 'none'; fit(); }, 'flex:none;padding:1px 8px;min-height:22px;font-size:11px'));
+    const tabsRow = el('div', 'display:flex;gap:5px');
+    const jobTab = smallBtn('📋 Job', () => showJobTab(), 'flex:1');
+    jobTab.id = 'st-ai-tab-job';
+    const holdsBtn = smallBtn('⏸️ Holds', () => holdsToCall(), 'flex:1');
+    holdsBtn.id = 'st-ai-holds-go';
+    holdsBtn.title = 'The Hold list, best to call first, each with its watch-outs';
+    tabsRow.append(jobTab, holdsBtn);
     const row = el('div', 'display:flex;gap:5px');
     const input = el('input', 'flex:1;min-width:0;' + FIELD);
     input.type = 'text'; input.id = 'st-ai-input'; input.placeholder = 'Job #';
     input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); explain(input.value); } };
     const pickBtn = smallBtn('🖱️', () => setPicking(!picking));
     pickBtn.id = 'st-ai-pick';
-    pickBtn.title = 'Pick the job: click this, then a job on the board or a row in the Jobs Tray below it';
-    const goBtn = smallBtn('🧠 Explain', () => explain(input.value), PRIMARY);
+    pickBtn.title = 'Pick on the board: while it\'s on, click any job on the board (or a row in the Jobs Tray below it) to see its info';
+    const goBtn = smallBtn('🔎 Look up', () => explain(input.value), PRIMARY);
     goBtn.id = 'st-ai-go';
-    goBtn.title = 'What\'s going on with this job, and (for a hold) what to say to book it';
+    goBtn.title = 'Everything about this job';
     row.append(input, pickBtn, goBtn);
-    const holdsBtn = smallBtn('⏸️ Holds to call', () => holdsToCall(), 'justify-self:start;padding:3px 9px;min-height:26px;font-size:12px');
-    holdsBtn.id = 'st-ai-holds-go';
-    holdsBtn.title = 'The Hold list, best to call first';
     const msg = el('div', 'font-size:12px;color:var(--st-ink-2);min-height:16px');
     msg.id = 'st-ai-msg';
     const say = t => { msg.textContent = t; };
@@ -12092,11 +11986,20 @@
     out.id = 'st-ai-out';
     const holdsOut = el('div', 'display:none;gap:6px');
     holdsOut.id = 'st-ai-holds-out';
+    let tab = 'job';
+    const showTabs = () => {
+      setOn(jobTab, tab === 'job'); setOn(holdsBtn, tab === 'holds');
+      row.style.display = tab === 'job' ? 'flex' : 'none';
+      out.style.display = tab === 'job' && last ? 'grid' : 'none';
+      holdsOut.style.display = tab === 'holds' && lastHolds ? 'grid' : 'none';
+    };
+    const showJobTab = () => { tab = 'job'; showTabs(); say(last ? '' : hint()); paint(); fit(); };
+    const hint = () => onBoard() ? (picking ? 'Click any job on the board (or a row in the Jobs Tray), or type a job number.' : 'Type a job number, or press 🖱️ and click a job.') : board.need();
 
     const small = (text, extra) => el('div', 'font-size:11px;color:var(--st-ink-3);' + (extra || ''), text);
     const chip = (text, tone, title) => { const c = el('span', '', text); c.className = 'st-chip' + (tone ? ' ' + tone : ''); if (title) c.title = title; return c; };
     const pill = (label, title, onClick, extra) => { const b = smallBtn(label, onClick, 'padding:2px 7px;min-height:24px;font-size:11.5px;' + (extra || '')); b.title = title; b.addEventListener('mousedown', e => e.preventDefault()); return b; };
-    const copyPill = (label, text, title) => { const b = pill(label, title || text, async () => { const ok = await copy(typeof text === 'function' ? text() : text); b.textContent = ok ? '✓ Copied' : label; setTimeout(() => { b.textContent = label; }, 1500); }); return b; };
+    const copyPill = (label, text, title) => { const b = pill(label, title || text, async () => { const ok = await copy(typeof text === 'function' ? text() : text); b.textContent = ok ? '✓ Copied' : label; setTimeout(() => { b.textContent = label; }, 1400); }); return b; };
     const section = (title, cls) => {
       const s = el('div', 'display:grid;gap:4px;padding:8px;border:1px solid var(--st-line);border-radius:8px;background:var(--st-bg);min-width:0');
       if (cls) s.className = cls;
@@ -12104,8 +12007,10 @@
       return s;
     };
     const line = (text, extra) => el('div', 'font-size:12px;color:var(--st-ink);overflow-wrap:anywhere;' + (extra || ''), text);
+    // A label and its value on one line ("Window: 8–12").
+    const kv = (k, v, extra) => { const r = el('div', 'font-size:12px;color:var(--st-ink);overflow-wrap:anywhere;' + (extra || '')); r.append(el('span', 'font-weight:700;color:var(--st-ink-2)', k + ': '), typeof v === 'string' ? document.createTextNode(v) : v); return r; };
     // A heading that folds open to show more.
-    const fold = (head, build, cls) => {
+    const fold = (head, build, cls, open) => {
       const box = el('div', 'display:grid;gap:4px');
       if (cls) box.className = cls;
       const b = el('button', 'border:none;background:transparent;padding:0;cursor:pointer;font:inherit;font-size:12px;font-weight:700;color:var(--st-ink-2);text-align:left');
@@ -12113,95 +12018,54 @@
       const inner = el('div', 'display:none;gap:3px;padding-left:4px');
       let built = false;
       const label = () => { b.textContent = (inner.style.display === 'none' ? '▸ ' : '▾ ') + head; };
-      b.onclick = () => { if (!built) { built = true; build(inner); } inner.style.display = inner.style.display === 'none' ? 'grid' : 'none'; label(); fit(); };
+      const toggle = () => { if (!built) { built = true; build(inner); } inner.style.display = inner.style.display === 'none' ? 'grid' : 'none'; label(); fit(); };
+      b.onclick = toggle;
       label();
       box.append(b, inner);
+      if (open) { built = true; build(inner); inner.style.display = 'grid'; label(); }
       return box;
     };
     const openJob = j => { try { window.open(location.href.split('#')[0] + '#/Job/Index/' + j, '_blank'); } catch (e) {} };
     const setOn = (b, on) => { b.style.background = on ? 'var(--st-blue)' : ''; b.style.color = on ? '#fff' : ''; b.style.borderColor = on ? 'var(--st-blue)' : ''; };
 
-    // ---------- 📚 Memory: the controls ----------
+    // ---------- ⚙️ More: reports, and what it has kept ----------
     const memHead = el('button', FULL + 'padding:3px 6px;border:1px solid var(--st-line);border-radius:6px;background:var(--st-soft);color:var(--st-ink-2);font:inherit;font-size:11.5px;text-align:left;cursor:pointer');
     memHead.type = 'button'; memHead.id = 'st-ai-mem-head';
     const memBox = el('div', 'display:none;gap:6px;padding:7px;border:1px solid var(--st-line);border-radius:6px;background:var(--st-soft);font-size:12px');
     memBox.id = 'st-ai-mem';
     const memText = el('div', 'display:grid;gap:2px;color:var(--st-ink-2)');
     memText.id = 'st-ai-mem-text';
-    const monthsSel = el('select', 'flex:1;min-width:0;' + FIELD);
-    monthsSel.id = 'st-ai-months';
-    monthsSel.title = 'How far back to learn. Only days it hasn\'t read yet are read, so a longer reach later just adds the older months.';
-    [[3, '3 months'], [6, '6 months'], [12, '1 year'], [24, '2 years'], [36, '3 years']].forEach(([v, t]) => { const o = el('option', '', 'Learn the last ' + t); o.value = String(v); monthsSel.appendChild(o); });
-    monthsSel.value = brain.MONTHS.indexOf(Number(get(K.months))) > -1 ? get(K.months) : '12';
-    monthsSel.onchange = () => set(K.months, monthsSel.value);
-    const learnBtn = smallBtn('📚 Learn', () => learnNow(false), PRIMARY);
-    learnBtn.id = 'st-ai-learn';
-    const stopBtn = smallBtn('Stop', () => { learnStop = true; memSay('Stopping after the weeks being read…'); });
-    stopBtn.id = 'st-ai-stop'; stopBtn.style.display = 'none';
-    const learnRow = el('div', 'display:flex;gap:6px;align-items:center');
-    learnRow.append(monthsSel, learnBtn, stopBtn);
     const memMsg = el('div', 'min-height:14px;color:var(--st-ink-2)');
     memMsg.id = 'st-ai-mem-msg';
     const memSay = t => { memMsg.textContent = t; };
     const fileIn = el('input');
     fileIn.type = 'file'; fileIn.accept = '.csv,.tsv,.txt,text/csv'; fileIn.id = 'st-ai-csv'; fileIn.style.display = 'none';
     fileIn.onchange = () => { const f = fileIn.files && fileIn.files[0]; fileIn.value = ''; if (f) importFile(f); };
-    const csvBtn = smallBtn('📥 Add outside data (CSV)', () => fileIn.click());
+    const csvBtn = smallBtn('📥 Add a report (CSV)', () => fileIn.click());
     csvBtn.id = 'st-ai-csv-go';
-    csvBtn.title = 'Add a report exported from ServiceTitan (or any CSV with a Job # column). Jobs it already knows are updated, never copied.';
+    csvBtn.title = 'Add a Jobs report exported from ServiceTitan (any CSV with a Job # column): hold reasons for the 🔎 filters, and holds that were booked or lost for the chances. Jobs it already has are updated, never copied.';
     const csvHelp = fold('How to get a CSV from ServiceTitan', box => {
       ['1. In ServiceTitan, open Reports and make (or open) a Jobs report.',
-        '2. Pick the date range you want it to learn (a year or more is fine).',
-        '3. Add the columns it can read: Job #, Customer Name, Customer ID, Location ID, Job Type, Job Status, Hold Reason, Job Summary, Created Date, Completed Date, Jobs Total, Technician, Business Unit, Tags. Only Job # is needed; the more the better.',
+        '2. Pick the date range (a year or more is fine).',
+        '3. Add the columns it can read: Job #, Customer Name, Customer ID, Location ID, Job Type, Job Status, Hold Reason, Job Summary, Created Date, Completed Date, Jobs Total, Technician, Business Unit, Tags. Only Job # is needed.',
         '4. Export it to CSV (Excel files: open in Excel and Save As CSV).',
-        '5. Here, press 📥 Add outside data and pick the file. Adding the same report again (or a newer one) only adds or updates; nothing is kept twice.',
+        '5. Here, press 📥 Add a report and pick the file. The same report again (or a newer one) only adds or updates; nothing is kept twice.',
         'Phone numbers and emails in the file are never kept. Everything stays in this browser.'].forEach(t => box.appendChild(small(t, 'color:var(--st-ink-2)')));
     });
-    const forgetBtn = smallBtn('🗑️ Forget everything', () => askForget(), 'justify-self:start');
+    const forgetBtn = smallBtn('🗑️ Forget what it kept', () => askForget(), 'justify-self:start');
     forgetBtn.id = 'st-ai-forget';
     const forgetRow = el('div', 'display:none;gap:6px;align-items:center;flex-wrap:wrap;color:var(--st-red-d)');
-    forgetRow.append(el('span', '', 'Forget everything the AI learned in this browser?'),
-      smallBtn('Yes, forget it all', () => forgetAll(), DANGER), smallBtn('Keep it', () => { forgetRow.style.display = 'none'; }));
+    forgetRow.append(el('span', '', 'Forget the holds watched, the jobs looked up and the reports added, in this browser? (What you taught it stays.)'),
+      smallBtn('Yes, forget it', () => forgetAll(), DANGER), smallBtn('Keep it', () => { forgetRow.style.display = 'none'; }));
     const askForget = () => { forgetRow.style.display = 'flex'; fit(); };
     const csvRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap;align-items:center');
     csvRow.append(csvBtn, fileIn);
-    memBox.append(memText, learnRow, memMsg, csvRow, csvHelp, forgetBtn, forgetRow);
+    memBox.append(memText, csvRow, csvHelp, memMsg, forgetBtn, forgetRow);
     memHead.onclick = () => { memBox.style.display = memBox.style.display === 'none' ? 'grid' : 'none'; renderMem(); fit(); };
-
-    // ---------- ⚙️ Call script settings ----------
-    const setHead = el('button', FULL + 'padding:3px 6px;border:1px solid var(--st-line);border-radius:6px;background:var(--st-soft);color:var(--st-ink-2);font:inherit;font-size:11.5px;text-align:left;cursor:pointer');
-    setHead.type = 'button';
-    const setBox = el('div', 'display:none;gap:5px;padding:7px;border:1px solid var(--st-line);border-radius:6px;background:var(--st-soft);font-size:12px');
-    setBox.id = 'st-ai-settings';
-    const field = (label, key, ph, def) => {
-      const l = el('label', 'display:grid;gap:2px;color:var(--st-ink-2)');
-      const i = el('input', FULL + FIELD);
-      i.type = 'text'; i.placeholder = ph; i.value = norm(get(key)) || '';
-      i.setAttribute('data-key', key);
-      i.onchange = () => { set(key, norm(i.value)); if (last) render(last); };
-      l.append(document.createTextNode(label + (def ? ' (blank: ' + def() + ')' : '')), i);
-      return l;
-    };
-    const tickOpt = (label, key, title) => {
-      const l = el('label', 'display:flex;gap:6px;align-items:center;cursor:pointer;color:var(--st-ink-2)');
-      l.title = title;
-      const c = el('input'); c.type = 'checkbox'; c.checked = get(key) === '1';
-      c.setAttribute('data-key', key);
-      c.onchange = () => { set(key, c.checked ? '1' : '0'); if (last) render(last); };
-      l.append(c, document.createTextNode(label));
-      return l;
-    };
-    setBox.append(field('Your name', K.name, 'First name', () => norm(get('stCtName')) || autoName() || 'none found'), field('Company', K.company, DEF_COMPANY, () => DEF_COMPANY), field('Number to call back', K.phone, DEF_PHONE, () => DEF_PHONE),
-      tickOpt('We offer financing (the script can mention it)', K.finance, 'Only tick this if your company really offers financing.'),
-      tickOpt('Club members get priority scheduling (say so on calls)', K.priority, 'Only tick this if your club members really get priority.'),
-      small('Saved in this browser. The script only says what you tick here; nothing else is promised.'));
-    const setLabel = () => { setHead.textContent = '⚙️ Call script: ' + (myName() || 'your name') + ' with ' + company() + (setBox.style.display === 'none' ? '  ▸' : '  ▾'); };
-    setHead.onclick = () => { setBox.style.display = setBox.style.display === 'none' ? 'grid' : 'none'; setLabel(); fit(); };
-    setLabel();
 
     const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
     navRow.append(smallBtn('← Menu', () => showView('menu')));
-    wrap.append(beta, row, holdsBtn, msg, out, holdsOut, memHead, memBox, setHead, setBox, navRow);
+    wrap.append(tabsRow, row, msg, out, holdsOut, memHead, memBox, navRow);
     aiPane.appendChild(wrap);
     const fit = () => {
       if (aiPane.style.display === 'none') return;
@@ -12212,35 +12076,35 @@
     const onResize = () => fit();
     window.addEventListener('resize', onResize);
     resized.push(fit);
-    let busy = false;
     const setBusy = on => {
-      busy = on;
-      [[goBtn, '🧠 Explain', 'Reading…'], [holdsBtn, '⏸️ Holds to call', 'Reading…']].forEach(([b, idle, t]) => { b.disabled = on; b.textContent = on ? t : idle; b.classList.toggle('st-busy', on); });
+      goBtn.disabled = on; goBtn.textContent = on ? 'Reading…' : '🔎 Look up'; goBtn.classList.toggle('st-busy', on);
+      holdsBtn.classList.toggle('st-busy', on && tab === 'holds');
     };
 
     // ---------- Picking a job on the board ----------
+    // On by itself when the tool opens on the board, and it stays on: click one job, then another.
     let picking = false, alive = true, shownJob = null;
     const shown = () => aiPane.style.display !== 'none';
     const style = el('style');
     const paint = () => {
-      style.textContent = shown() && shownJob ? board.jobsCss([shownJob], '#7c3aed', 'rgba(124,58,237,.18)') : '';
+      style.textContent = shown() && shownJob && tab === 'job' ? board.jobsCss([shownJob], '#7c3aed', 'rgba(124,58,237,.18)') : '';
       if (style.textContent) board.mount(style);
     };
     const setPicking = on => {
       picking = !!on && onBoard();
       if (on && !onBoard()) say(board.need());
       setOn(pickBtn, picking);
-      if (picking) say('Click a job on the board, or a row in the Jobs Tray below it.');
+      pickBtn.textContent = picking ? '🖱️ On' : '🖱️';
     };
     const onClick = async e => {
       if (!picking || !onBoard() || !shown() || panel.contains(e.target)) return;
       const hit = board.clickedJob(e);
       if (!hit) return;
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      setPicking(false);
       let j = hit.jobId;
       if (!j && hit.apptId) { try { await board.load({ fresh: true }); } catch (err) {} j = board.jobOfAppt(hit.apptId); }
       if (!j) { say('⚠️ Couldn\'t tell which job that is. Click it again in a moment.'); return; }
+      tab = 'job';
       explain(j);
     };
     window.addEventListener('click', onClick, true);
@@ -12249,12 +12113,12 @@
     // ---------- Finding the job ----------
     // Where it is, and what the list or board already says about it: { j, where ('board', 'hold',
     // 'ua', 'other', 'memory'), customer, customerId, locationId, type, typeId, tags (names), summary
-    // (null: not read yet), phone, created, priority, city, zip, day, start, end, ws, we, status,
+    // (null: not read yet), phone, created, priority, street, city, state, zip, day, start, end, ws, we, status,
     // techIds, techNames, total } or null.
     const fromRow = x => ({ customer: norm(x.Customer), customerId: idOf(x.CustomerId), locationId: idOf(x.LocationId), type: norm(x.Type), typeId: idOf(x.TypeId) || '',
       tags: (Array.isArray(x.Tags) ? x.Tags : []).map(t => norm(t && (t.name || t.TypeName))).filter(Boolean), tagObjs: (Array.isArray(x.Tags) ? x.Tags : []).map(board.tagOf).filter(Boolean),
       state: norm(x.State).toUpperCase(), reason: holdFilter.facts(x).reason, status: norm(x.JobStatus), summary: [x.Summary, x.AppointmentSpecialInstructions].filter(v => typeof v === 'string' && norm(v)).join('<br>'),
-      phone: last10(x.CustomerPhone), created: toDate(x.CreatedOn), priority: norm(x.Priority), city: norm(x.City), zip: zip5(x.Zip), start: toDate(x.Start), end: toDate(x.End), ws: toDate(x.ArrivalWindowStart), we: toDate(x.ArrivalWindowEnd) });
+      phone: last10(x.CustomerPhone), created: toDate(x.CreatedOn), priority: norm(x.Priority), city: norm(x.City), zip: zip5(x.Zip), street: norm(x.Street), start: toDate(x.Start), end: toDate(x.End), ws: toDate(x.ArrivalWindowStart), we: toDate(x.ArrivalWindowEnd) });
     const findJob = async (j, stale) => {
       const base = { j, where: '', customer: '', customerId: null, locationId: null, type: '', typeId: '', tags: [], summary: null, phone: '', created: null, priority: '', city: '', zip: '', techIds: [], techNames: [] };
       let s = null;
@@ -12266,7 +12130,7 @@
         onB.forEach(y => y.techs.forEach(id => { if (ids.indexOf(id) < 0) ids.push(id); }));
         const busyA = onB.find(y => /^(working|dispatched)$/i.test(y.status) || y.techs.some(id => /^(working|dispatched)$/i.test(y.techStatus[id] || '')));
         return Object.assign(base, { where: onB.every(y => /^hold$/i.test(y.status)) ? 'hold' : 'board', day: s.day, customer: a.customer, customerId: idOf(a.customerId), locationId: idOf(a.locationId), type: a.jobType, typeId: a.jobTypeId,
-          tags: a.tags.map(t => t.name), city: a.city, zip: zip5(a.zip), start: a.start, end: a.end, ws: a.windowStart, we: a.windowEnd, techIds: ids, techNames: ids.map(id => board.techName(id)).filter(Boolean),
+          tags: a.tags.map(t => t.name), tagObjs: a.tags, city: a.city, zip: zip5(a.zip), street: norm(a.street), state: norm(a.state), start: a.start, end: a.end, ws: a.windowStart, we: a.windowEnd, techIds: ids, techNames: ids.map(id => board.techName(id)).filter(Boolean),
           status: busyA ? (busyA.techStatus[busyA.techs[0]] || busyA.status) : a.status, history: board.historyOf(j) });
       }
       let rows = null;
@@ -12292,150 +12156,175 @@
         const ja = d && Array.isArray(d.jobAppointments) ? d.jobAppointments.find(x => x && S(x.id) === S(a.id)) : null;
         const techs = ja && Array.isArray(ja.technicians) ? ja.technicians.filter(t => t && t.id != null) : [];
         return Object.assign(base, { where: 'other', customer: norm(cu.name), customerId: idOf(cu.id != null ? cu.id : d && d.customerId), locationId: idOf(d && (d.locationId != null ? d.locationId : d.location && d.location.id)),
-          city: norm(la.city), zip: zip5(la.zip), techIds: techs.map(t => S(t.id)), techNames: techs.map(t => norm(t.name)).filter(Boolean), total: d && typeof d.jobTotal === 'number' ? d.jobTotal : null,
+          city: norm(la.city), zip: zip5(la.zip), street: norm(la.street), state: norm(la.state), techIds: techs.map(t => S(t.id)), techNames: techs.map(t => norm(t.name)).filter(Boolean), total: d && typeof d.jobTotal === 'number' ? d.jobTotal : null,
           start: toDate(a.start), status: STATUS[a.status] || (typeof a.status === 'string' ? a.status : ''), appts });
       }
-      const mine = await mem.all('appts', 'j', j).catch(() => []);
-      if (mine.length) {
-        const a = mine.sort((x, y) => y.s - x.s)[0];
-        return Object.assign(base, { where: 'memory', customer: a.cn || '', customerId: a.c || null, locationId: a.l || null, type: a.tn || '', typeId: a.t || '', city: a.city || '', zip: a.zip || '', tags: a.tags || [], start: new Date(a.s), status: a.st || '', techIds: a.techs || [] });
-      }
+      // Looked up before, or in a 📥 report.
+      const kept = await mem.one('jobs', j).catch(() => null);
+      if (kept && (kept.cn || kept.tn)) return Object.assign(base, { where: 'memory', customer: kept.cn || '', customerId: kept.c || null, locationId: kept.l || null, type: kept.tn || '', city: kept.city || '', zip: kept.zip || '', tags: kept.tags || [], status: kept.js || '' });
       return null;
     };
 
-    // ---------- Reading what ServiceTitan has on it ----------
-    // The summary (unless the list gave it), the job's, customer's and location's notes, its
-    // appointments, and the customer's texts. A conversation with an unread reply isn't read, so
-    // it stays unread for you. { summary, notes: [{ text, at, pinned, src }], appts, texts, missed: [what] }
+    // ---------- Reading everything ServiceTitan has on it ----------
+    // At the same time: the job's overview (summary, tags with their colors, business unit, campaign,
+    // equipment); the job's, customer's and location's notes; its appointments; the customer's phone
+    // numbers and texts (a conversation with an unread reply isn't read, so it stays unread for you);
+    // and the customer's history, the way their customer page reads it: every job they've had, their
+    // call log, their memberships and what they've paid us. Nothing is read twice and nothing is
+    // changed. { summary, ov, notes: [{ text, at, pinned, src }], appts, texts, jobs, calls, members,
+    // revenue, missed: [what couldn't be read] }
     const AUTO_KINDS = [['BookingConfirmation', 6], ['JobReminder', 7], ['DispatchNotification', 8], ['JobCompletionSurvey', 9], ['AppointmentConfirmationResponse', 14], ['Autoresponder', 16], ['SmsCampaign', 21]];
     const textsOf = async J => {
       let nums = [];
       if (J.customerId) nums = await st.customerPhones(J.customerId);
       if (!nums.length && J.phone) nums = [{ num: J.phone, mobile: true }];
       const num = (nums.find(n => n.mobile) || nums[0] || {}).num;
-      if (!num) return { none: true };
+      if (!num) return { none: true, phones: nums };
       const t = await st.chatThread(num);
-      if (!t) return { num, none: true };
+      if (!t) return { num, none: true, phones: nums };
       const blocked = t.BlockedStatus === st.code('ChatThreadBlockedStatus', 'Blocked', 10);
-      if (t.ReadStatus === st.code('ChatThreadReadStatus', 'Unread', -10)) return { num, unread: true, blocked };
+      if (t.ReadStatus === st.code('ChatThreadReadStatus', 'Unread', -10)) return { num, unread: true, blocked, phones: nums };
       const raw = await st.chatMessages(t.ThreadId, 40);
       const outCode = st.code('SmsDirection', 'Outbound', 1), auto = new Set(AUTO_KINDS.map(k => st.code('SmsChannel', k[0], k[1])));
       const msgs = raw.map(m => ({ body: norm(m.Body), at: toDate(m.CreatedOn), out: m.SmsDirection === outCode, auto: m.SmsDirection === outCode && auto.has(m.Channel) })).filter(m => m.at).sort((a, b) => a.at - b.at);
-      return { num, msgs, blocked };
+      return { num, msgs, blocked, phones: nums };
     };
     const readAll = async (J, stale) => {
-      const tasks = [];
-      if (J.summary == null) tasks.push(['sum', () => st.jobSummary(J.j), 'the job summary']);
+      const tasks = [['ov', () => st.jobOverview(J.j), 'the job overview']];
       tasks.push(['nj', () => st.ownerNotes(J.j), 'the job\'s notes']);
       if (J.customerId) tasks.push(['nc', () => st.ownerNotes(J.customerId), 'the customer\'s notes']);
       if (J.locationId) tasks.push(['nl', () => st.ownerNotes(J.locationId), 'the location\'s notes']);
       if (!J.appts) tasks.push(['ap', () => st.jobAppointments(J.j), 'its appointments']);
       if (J.customerId || J.phone) tasks.push(['tx', () => textsOf(J), 'their texts']);
-      const got = await st.pool(tasks, 4, t => t[1](), null, { stop: stale });
+      if (J.customerId) {
+        tasks.push(['cj', () => st.customerJobs(J.customerId), 'their other jobs']);
+        tasks.push(['cc', () => st.customerCalls(J.customerId), 'their calls']);
+        tasks.push(['cm', () => st.customerMemberships(J.customerId), 'their memberships']);
+        tasks.push(['cr', () => st.customerRevenue(J.customerId), 'what they\'ve paid us']);
+      }
+      const got = await st.pool(tasks, 6, t => t[1](), null, { stop: stale });
       if (got.halted === 'signedOut') throw got.haltError;
-      const R = { summary: J.summary || '', notes: [], appts: J.appts || [], texts: null, missed: [] };
+      const R = { summary: J.summary || '', ov: null, notes: [], appts: J.appts || [], texts: null, jobs: null, calls: null, members: null, revenue: null, missed: [] };
       const seen = new Set(), WORD = { nj: 'job', nc: 'customer', nl: 'location' };
       tasks.forEach((t, i) => {
         const v = got[i];
         if (v === st.NOT_RUN || (v && v.error)) { R.missed.push(t[2]); return; }
-        if (t[0] === 'sum') R.summary = v || '';
+        if (t[0] === 'ov') { R.ov = v; if (!R.summary || norm(v.summary).length > norm(R.summary).length) R.summary = v.summary || R.summary; }
         else if (t[0] === 'ap') R.appts = v || [];
         else if (t[0] === 'tx') R.texts = v;
+        else if (t[0] === 'cj') R.jobs = v;
+        else if (t[0] === 'cc') R.calls = v;
+        else if (t[0] === 'cm') R.members = v;
+        else if (t[0] === 'cr') R.revenue = v;
         else (v || []).forEach(n => { const k = norm(n.text) + '|' + (n.at ? +n.at : ''); if (seen.has(k)) return; seen.add(k); R.notes.push(Object.assign({ src: WORD[t[0]] }, n)); });
       });
       return R;
     };
 
+    // ---------- Calls: who reached whom ----------
+    // The customer's call log, newest first: { at, secs, theyCalled, who }.
+    const callsOf = L => (L && L.rows ? L.rows : []).map(c => ({ at: toDate(c.createdOn), secs: Number(c.duration) || 0, theyCalled: c.direction === 0, who: norm(c.agentName) })).filter(c => c.at).sort((a, b) => b.at - a.at);
+    // From the call log (and notes that say we did or didn't reach them, when given): the last time
+    // we spoke (one of our calls of TALKED seconds or more, or any call from them), and the tries since
+    // that most likely didn't reach them (our calls of NO_ANSWER seconds or less, and notes saying so;
+    // a note and the call it's about count once). { lastTalk, theyCalled (their last call), misses
+    // (newest first), today (our calls today) }.
+    const contactOf = (calls, noteTries, noteReached) => {
+      const talks = calls.filter(c => c.theyCalled ? c.secs >= 15 : c.secs >= TALKED).map(c => c.at).concat(noteReached ? [noteReached] : []);
+      const lastTalk = talks.length ? new Date(Math.max.apply(null, talks.map(Number))) : null;
+      const tries = calls.filter(c => !c.theyCalled && c.secs <= NO_ANSWER).map(c => c.at);
+      (noteTries || []).forEach(d => { if (!tries.some(t => Math.abs(t - d) < 20 * 60000)) tries.push(d); });
+      const misses = tries.filter(d => !lastTalk || d > lastTalk).sort((a, b) => b - a);
+      return { lastTalk, theyCalled: (calls.find(c => c.theyCalled) || {}).at || null, misses, today: calls.filter(c => !c.theyCalled && daysAgo(c.at) === 0) };
+    };
+
     // ---------- Making sense of it ----------
-    let techNames = null;
-    const techName = async id => {
-      const n = board.techName(id);
-      if (n) return n;
-      if (!techNames) techNames = await mem.meta('techs', {}).catch(() => ({}));
-      return techNames[S(id)] || '';
-    };
-    const first = n => (board.firstName(n) || norm(n).split(' ')[0] || '');
-    // Which kind of call it is (the newest note that says why wins): see SCRIPTS below.
-    const SIT_ORDER = ['lost', 'ready', 'parts', 'finance', 'decide', 'approval', 'away', 'callback', 'price', 'permit'];
-    const situationOf = (sources, A) => {
-      for (const x of sources) {
-        const keys = x.r.topics.map(t => t.key);
-        const k = SIT_ORDER.find(s => keys.indexOf(s) > -1 || (s === 'price' && keys.indexOf('quote') > -1));
-        if (k) return k;
-      }
-      if (A.topics.has('lost')) return 'lost';
-      if (/quote|estimate|proposal/i.test(A.type)) return 'price';
-      if (A.attempts.length >= 2 && !A.reached) return 'cold';
-      return 'general';
-    };
-    const analyze = async (J, R, M, model, calls) => {
+    const analyze = (J, R, M, model) => {
       const now = new Date();
-      const type = J.type || (M && M.byJob.length ? (M.byJob[0].tn || '') : '') || (M && M.jobRec && M.jobRec.tn) || '';
+      const type = J.type || (M && M.jobRec && M.jobRec.tn) || '';
       const notes = R.notes.slice().sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.at || 0) - (a.at || 0));
       const sources = notes.map(n => ({ text: n.text, at: n.at, src: 'a ' + n.src + ' note' + (n.at ? ' from ' + dText(n.at) : ''), note: n }))
         .concat(R.summary ? [{ text: R.summary, at: J.created || null, src: 'the job summary' }] : []);
       const lessons = taught.list();
       sources.forEach(x => { x.r = lang.read(x.text, x.at || now, lessons); });
-      const A = { J, R, M, type, now, sources, topics: new Map(), notes, isHold: J.where === 'hold' || /^hold$/i.test(J.status || ''), model, callsIn: calls };
+      const A = { J, R, M, type, now, sources, topics: new Map(), notes, isHold: J.where === 'hold' || /^hold$/i.test(J.status || ''), model };
       // Each topic once: where it was said last.
       sources.forEach(x => x.r.topics.forEach(t => { if (!A.topics.has(t.key)) A.topics.set(t.key, { key: t.key, sen: t.sen, src: x.src, at: x.at, taught: t.taught }); }));
-      const memberTag = J.tags.find(t => /club|member|agreement/i.test(t));
-      if (memberTag && !A.topics.has('member')) A.topics.set('member', { key: 'member', sen: 'Tagged ' + memberTag, src: 'its tags' });
       for (const x of sources) { const a = x.r.amounts.slice().sort((p, q) => q.n - p.n)[0]; if (a) { A.amount = { n: a.n, sen: a.sen, src: x.src }; break; } }
       for (const x of sources) if (x.r.when) { A.when = Object.assign({ src: x.src }, x.r.when); break; }
       A.who = { rel: '', name: '' };
       sources.forEach(x => { if (x.r.who) { if (!A.who.rel && x.r.who.rel) A.who.rel = x.r.who.rel; if (!A.who.name && x.r.who.name) A.who.name = x.r.who.name; } });
-      // Calls: the notes that say we didn't reach them, and the last time we did.
-      A.attempts = sources.filter(x => x.note && x.r.attempt).map(x => x.at).filter(Boolean);
-      A.reached = (sources.find(x => x.note && x.r.reached && x.at) || {}).at || null;
-      if (A.reached) A.attempts = A.attempts.filter(t => t > A.reached);
-      // When they've picked up, and when they haven't: the notes' times, and the calls you logged.
-      const mineCalls = (calls || []).filter(isCall);
-      const reaches = sources.filter(x => x.note && x.r.reached && x.at).map(x => x.at).concat(mineCalls.filter(reachedOn).map(c => new Date(c.at))).sort((a, b) => b - a);
-      A.missedAt = sources.filter(x => x.note && x.r.attempt && x.at).map(x => x.at).concat(mineCalls.filter(c => c.out === 'vm').map(c => new Date(c.at)));
-      A.theirTime = reaches.length ? { at: reaches[0], slot: slotOf(reaches[0].getHours()) } : null;
-      A.pickup = pickupOf(allCalls);
+      // Tags: the job's (with ServiceTitan's colors), then the customer's and location's.
+      const ov = R.ov || {};
+      const jobTags = (ov.jobTags && ov.jobTags.length ? ov.jobTags : (J.tagObjs && J.tagObjs.length ? J.tagObjs : J.tags.map(n => ({ name: n })))).map(board.tagOf).filter(Boolean);
+      const otherTags = (ov.otherTags || []).map(board.tagOf).filter(Boolean).filter(t => !jobTags.some(x => x.name === t.name));
+      A.tags = jobTags; A.otherTags = otherTags;
+      // Club membership: an active membership, or a tag that says so.
+      const members = (R.members && R.members.rows || []).filter(m => m.status === 0 && norm(m.type));
+      A.member = Array.from(new Set(members.map(m => norm(m.type))));
+      const memberTag = jobTags.concat(otherTags).map(t => t.name).find(t => /club|member|agreement/i.test(t));
+      if ((A.member.length || memberTag) && !A.topics.has('member')) A.topics.set('member', { key: 'member', sen: A.member.length ? A.member.join(', ') : 'Tagged ' + memberTag, src: A.member.length ? 'their memberships' : 'its tags' });
+      // A watch-out a tag says (Elderly, Spanish, Warranty…).
+      jobTags.concat(otherTags).forEach(tg => lang.read(tg.name, now, lessons).topics.forEach(t => {
+        const T0 = lang.TOPIC.get(t.key);
+        if (T0 && T0.group === 'flag' && !A.topics.has(t.key)) A.topics.set(t.key, { key: t.key, sen: 'Tagged ' + tg.name, src: 'its tags' });
+      }));
+      // Calls: the notes that say we didn't (or did) reach them, and the call log.
+      const noteTries = sources.filter(x => x.note && x.r.attempt && x.at).map(x => x.at);
+      const noteReached = (sources.find(x => x.note && x.r.reached && x.at) || {}).at || null;
+      A.calls = callsOf(R.calls);
+      A.contact = contactOf(A.calls, noteTries, noteReached);
+      A.callLog = !!R.calls;
       // Texts.
       const T = R.texts || {};
       const ours = (T.msgs || []).filter(m => m.out && !m.auto), theirs = (T.msgs || []).filter(m => !m.out);
       A.lastOut = ours[ours.length - 1] || null; A.lastIn = theirs[theirs.length - 1] || null;
       theirs.slice(-5).reverse().forEach(m => lang.read(m.body, m.at, lessons).topics.forEach(t => { if (!A.topics.has(t.key)) A.topics.set(t.key, { key: t.key, sen: m.body, src: 'their text from ' + dText(m.at), at: m.at }); }));
+      // A reply to a text is talking with them too.
+      if (A.lastIn && (!A.contact.lastTalk || A.lastIn.at > A.contact.lastTalk)) { A.contact.lastTalk = A.lastIn.at; A.contact.misses = A.contact.misses.filter(d => d > A.lastIn.at); }
+      A.hard = A.contact.misses.length >= HARD;
       // Tech Router's reading: a customer who doesn't want calls, and a time they asked for.
       for (const x of sources) { const sen = router.noCallIn(x.text); if (sen) { A.noCall = { sen, src: x.src }; break; } }
       for (const x of sources) { const a = router.askOf(x.text, A.isHold ? null : (J.start || J.day || null)); if (a) { A.ask = Object.assign({ src: x.src }, a); break; } }
-      // This job's visits, and the customer's other jobs (from the memory and any reports).
-      const visits = (R.appts || []).map(a => ({ at: toDate(a.start), status: STATUS[a.status] || S(a.status || '') })).filter(v => v.at);
-      (M ? M.byJob : []).forEach(a => { if (!visits.some(v => Math.abs(+v.at - a.s) < 60000)) visits.push({ at: new Date(a.s), status: a.st || '', techs: a.techs }); else { const v = visits.find(y => Math.abs(+y.at - a.s) < 60000); v.techs = a.techs; } });
-      A.visits = visits.sort((a, b) => a.at - b.at);
-      const done = A.visits.filter(v => v.at < now && !/cancel|hold/i.test(v.status));
-      A.lastVisit = done[done.length - 1] || null;
-      if (A.lastVisit && A.lastVisit.techs && A.lastVisit.techs.length) A.lastTech = first(await techName(A.lastVisit.techs[0]));
-      else if (J.techNames.length) A.lastTech = first(J.techNames[0]);
-      const theirAppts = M ? (M.byCust.length ? M.byCust : M.byLoc) : [];
-      const jobs = new Map();
-      theirAppts.forEach(a => {
-        if (a.j === J.j) return;
-        const g = jobs.get(a.j) || { j: a.j, tn: a.tn || '', s: a.s, last: a.s, techs: new Set(), all: 0, canceled: 0 };
-        g.s = Math.min(g.s, a.s); g.last = Math.max(g.last, a.s); g.all++; if (/cancel/i.test(a.st || '')) g.canceled++;
-        (a.techs || []).forEach(t => g.techs.add(t));
-        jobs.set(a.j, g);
-      });
-      (M ? M.csv : []).forEach(x => { if (!jobs.has(x.j)) jobs.set(x.j, { j: x.j, tn: x.tn || '', s: x.start || x.done || x.created || 0, last: x.done || x.start || x.created || 0, techs: new Set(), techText: x.tech || '', all: 1, canceled: /cancel/i.test(x.js || '') ? 1 : 0, total: x.total, csv: true, js: x.js }); });
-      A.past = Array.from(jobs.values()).sort((a, b) => b.last - a.last);
-      const techCount = new Map();
-      theirAppts.forEach(a => { if (!/cancel/i.test(a.st || '')) (a.techs || []).forEach(t => techCount.set(t, (techCount.get(t) || 0) + 1)); });
-      const top = Array.from(techCount.entries()).sort((a, b) => b[1] - a[1])[0];
-      if (top && top[1] >= 2) A.usualTech = { name: await techName(top[0]), n: top[1] };
-      for (const p of A.past.slice(0, 6)) p.techName = p.techs.size ? first(await techName(Array.from(p.techs)[0])) : p.techText || '';
-      // What the AI has learned.
-      A.calls = calls || [];
-      A.digest = Array.from(new Set(Array.from(A.topics.values()).filter(t => t.src !== 'its tags').map(t => t.sen))).join(' ').slice(0, 600);
+      // This job's visits.
+      A.visits = (R.appts || []).map(a => ({ at: toDate(a.start), status: STATUS[a.status] || S(a.status || '') })).filter(v => v.at).sort((a, b) => a.at - b.at);
+      // The customer's history: every other job they've had (newest first), from their job list (or a
+      // 📥 report's rows when it can't be read).
+      const jobsList = R.jobs ? R.jobs.rows : null;
+      A.me = jobsList ? jobsList.find(x => S(x.id) === J.j) || null : null;
+      A.past = jobsList ? jobsList.filter(x => S(x.id) !== J.j).map(x => ({
+        j: S(x.id), tn: norm(x.type), bu: norm(x.businessUnit), at: toDate(x.lastAppointmentStart) || toDate(x.firstAppointmentStart), firstAt: toDate(x.firstAppointmentStart),
+        status: STATUS[x.status] || '', code: x.status, tech: first(((x.technicians || [])[0] || {}).technicianName || ''), total: typeof x.total === 'number' ? x.total : null
+      })) : (M ? M.csv : []).map(x => ({ j: x.j, tn: x.tn || '', at: toDate(x.start || x.done || x.created), status: /cancel/i.test(x.js || '') ? 'Canceled' : norm(x.js), tech: first(x.tech || ''), total: x.total != null ? x.total : null, csv: true }));
+      A.past.sort((a, b) => (b.at || 0) - (a.at || 0));
+      A.jobsTotal = R.jobs ? R.jobs.total : null;
+      const starts = A.past.map(p => p.firstAt || p.at).filter(Boolean).concat(A.me && toDate(A.me.firstAppointmentStart) ? [toDate(A.me.firstAppointmentStart)] : []);
+      A.since = starts.length ? new Date(Math.min.apply(null, starts.map(Number))) : null;
+      A.canceled = A.past.filter(p => p.status === 'Canceled').length;
+      // Their other jobs still open: booked (on the schedule, coming up) and other holds.
+      A.upcoming = A.past.filter(p => BOOKED.indexOf(p.code) > -1 && p.at && day0(p.at) >= day0(now)).sort((a, b) => a.at - b.at);
+      A.otherHolds = A.past.filter(p => p.code === 3);
+      const doneJobs = A.past.filter(p => p.status === 'Done' && p.at && p.at <= now);
+      A.lastDone = doneJobs[0] || null;
+      const techN = new Map();
+      doneJobs.forEach(p => { if (p.tech) techN.set(p.tech, (techN.get(p.tech) || 0) + 1); });
+      const top = Array.from(techN.entries()).sort((a, b) => b[1] - a[1])[0];
+      if (top && top[1] >= 2) A.usualTech = { name: top[0], n: top[1] };
+      // The last tech out: this job's own (once a visit has happened), else their last job done.
+      const meAt = A.me ? toDate(A.me.lastAppointmentStart) : null, meTech = A.me && A.me.technicians && A.me.technicians.length ? first(A.me.technicians[0].technicianName) : '';
+      if (J.techNames.length && (A.visits.some(v => v.at < now && v.status === 'Done') || /^(working|dispatched|done)$/i.test(J.status || ''))) { A.lastTech = first(J.techNames[0]); A.lastTechWhen = J.start || null; }
+      else if (meTech && meAt && meAt < now && (A.me.status === 3 || A.me.status === 4)) { A.lastTech = meTech; A.lastTechWhen = meAt; }
+      else if (A.lastDone && A.lastDone.tech) { A.lastTech = A.lastDone.tech; A.lastTechWhen = A.lastDone.at; }
+      else { A.lastTech = ''; A.lastTechWhen = null; }
+      A.revenue = R.revenue;
+      A.total = A.me && typeof A.me.total === 'number' && A.me.total ? A.me.total : ov.invoice || (J.total != null ? J.total : null);
+      // Learned from holds: how this kind did, and the chance this one books.
+      A.digest = Array.from(new Set(Array.from(A.topics.values()).filter(t => !/^(its tags|their memberships)$/.test(t.src)).map(t => t.sen))).join(' ').slice(0, 600);
       if (model) {
         A.like = brain.likeThis(model, type);
         if (model.ok && A.isHold) A.chance = model.chance({ text: [lang.plain(R.summary), A.digest].join('. '), type });
         A.modelSize = model.size;
       }
-      A.sit = A.isHold ? situationOf(sources, A) : null;
       A.next = nextStep(A);
       return A;
     };
@@ -12444,204 +12333,68 @@
     const nextStep = A => {
       const J = A.J, t = k => A.topics.has(k);
       if (A.noCall) return { tone: 'r', text: '🚫 Don\'t call: ' + A.noCall.src + ' says "' + lang.clip(A.noCall.sen, 120) + '"' };
-      if (A.R.texts && A.R.texts.unread) return { tone: 'a', text: '💬 They have an unread text. Read it in the Chat Center first (the AI left it unread).' };
+      if (A.R.texts && A.R.texts.unread) return { tone: 'a', text: '💬 They have an unread text. Read it in the Chat Center first (it was left unread).' };
       if (!A.isHold) {
-        if (J.where === 'ua') return { tone: 'b', text: '🎯 It needs a tech: Tech Router\'s Place a job finds the best one.' };
+        if (J.where === 'ua') return { tone: 'b', text: '🎯 It needs a tech: 🎯 Place finds the best one.' };
         if (/^(working|dispatched)$/i.test(J.status || '')) return { tone: 'g', text: '🔧 It\'s underway. Nothing to do unless the customer calls.' };
         if (/cancel/i.test(J.status || '')) return { tone: '', text: '✖️ It\'s canceled.' };
         if (/^done$|complet/i.test(J.status || '')) return { tone: 'g', text: '✅ It\'s done. Nothing to do unless the customer calls.' };
         return { tone: 'g', text: '🗓️ It\'s on the schedule. Nothing to do right now.' };
       }
-      if (A.lastIn && (!A.lastOut || A.lastIn.at > A.lastOut.at) && daysAgo(A.lastIn.at) <= 14) return { tone: 'b', text: '💬 They texted ' + agoText(A.lastIn.at) + ': answer that first (it\'s under What\'s going on).' };
+      if (A.upcoming.length) { const u = A.upcoming[0]; return { tone: 'a', text: '🗓️ They already have ' + (u.tn || 'a job') + ' booked for ' + dText(u.at, true) + ' (#' + u.j + '). Check whether this hold is still needed.' }; }
+      if (A.lastIn && (!A.lastOut || A.lastIn.at > A.lastOut.at) && daysAgo(A.lastIn.at) <= 14) return { tone: 'b', text: '💬 They texted ' + agoText(A.lastIn.at) + ': answer that first.' };
+      if (A.contact.theyCalled && daysAgo(A.contact.theyCalled) <= 2 && (!A.contact.misses[0] || A.contact.theyCalled > A.contact.misses[0])) return { tone: 'b', text: '☎️ They called us ' + agoText(A.contact.theyCalled) + ' (' + clock(A.contact.theyCalled) + '). Check the notes for what they wanted before you call.' };
       if (t('lost')) return { tone: 'a', text: '❓ The notes say they may not want it. Ask if they still do; if not, close it out.' };
       if (A.when && A.when.after && A.when.at > day0(A.now)) return { tone: 'a', text: '⏳ Wait: they asked to hear from us after ' + dText(A.when.at, true) + ' (' + inText(A.when.at) + ').' };
       if (t('parts')) return { tone: 'b', text: '📦 Check the part is in, then call to book it.' };
-      const today = A.calls.filter(c => isCall(c) && daysAgo(new Date(c.at)) === 0);
-      if (today.length) return { tone: 'a', text: '📞 Already called today (' + today.map(c => OUT_WORDS[c.out] || c.out).join(', ') + '). Try again another day.' };
-      if (A.attempts.length >= 3 && !(A.lastOut && daysAgo(A.lastOut.at) <= 3)) return { tone: 'b', text: '📱 Try a text: ' + plural(A.attempts.length, 'call') + ' haven\'t reached them.' };
-      // The best time to call: when they've picked up before, else when customers pick up most, if
-      // calls at this time of day haven't reached them.
-      const nowSlot = slotOf(new Date().getHours()), missedNow = A.missedAt.filter(d => slotOf(d.getHours()) === nowSlot).length;
-      if (missedNow && A.theirTime && A.theirTime.slot !== nowSlot) return { tone: 'b', text: '🕑 Try ' + A.theirTime.slot[2] + ': they picked up then on ' + dText(A.theirTime.at) + ', and calls in the ' + nowSlot[1] + ' haven\'t reached them.' };
-      if (missedNow && A.pickup && A.pickup.best !== nowSlot) return { tone: 'b', text: '🕑 Try ' + A.pickup.best[2] + ': customers pick up most then (' + A.pickup.per[A.pickup.best[0]].reached + ' of ' + A.pickup.per[A.pickup.best[0]].tries + ' calls), and calls in the ' + nowSlot[1] + ' haven\'t reached them.' };
-      const hours = A.attempts.map(d => d.getHours());
+      if (A.contact.today.length) return { tone: 'a', text: '📞 Already called today (' + A.contact.today.map(c => clock(c.at)).join(', ') + '). Try again another day.' };
+      if (A.hard && !(A.lastOut && daysAgo(A.lastOut.at) <= 3)) return { tone: 'b', text: '📱 Try a text: ' + plural(A.contact.misses.length, 'call') + ' haven\'t reached them.' };
+      const hours = A.contact.misses.slice(0, 4).map(d => d.getHours());
       if (hours.length >= 2 && hours.every(h => partOfDay(h) === partOfDay(hours[0])) && partOfDay(new Date().getHours()) === partOfDay(hours[0])) return { tone: 'b', text: '🕑 The last calls were all in the ' + partOfDay(hours[0]) + '. Try another time of day.' };
-      return { tone: 'g', text: '📞 Call to book it. The script is below.' };
-    };
-    const OUT_WORDS = { booked: '✅ booked', later: '📅 call back later', vm: '📬 no answer', no: '❌ not interested' };
-
-    // ---------- 📞 Call scripts ----------
-    // One per kind of hold, each with one or more angles (ways in). Lines have fill-ins: {first},
-    // {me}, {company}, {thing} (what the job is), {tech}, {visit}, {who}, {approver}, {date},
-    // {dateWhen}, {amount}, {phone}. Each line is a list: the first one whose fill-ins are all known
-    // is used. The angle used is the one with the best record on holds like this (see pickAngle).
-    const SCRIPTS = {
-      ready: { name: 'They said they\'re ready', angles: [
-        { key: 'book', name: 'Book it', why: ['You\'d told us you were ready to go ahead with {thing}, so I\'m calling to get you on the schedule.'] }] },
-      parts: { name: 'Waiting on parts', check: 'Before you call: make sure the part has come in.', angles: [
-        { key: 'partin', name: 'The part is in', why: ['I\'m calling about {thing}. The part we were waiting on is in, so we can get it taken care of.'] }] },
-      finance: { name: 'Financing', angles: [
-        { key: 'heard', name: 'Did you hear back?', why: ['I\'m following up on {thing}. Did you hear back on the financing?'], ifNo: 'No problem. I can have someone go over the other options with you.' }] },
-      decide: { name: 'Talking it over', angles: [
-        { key: 'talked', name: 'Did you talk it over?', why: ['I\'m following up on {thing}. Did you get a chance to talk it over with {who}?', 'I\'m following up on {thing}. Did you get a chance to talk it over?'] },
-        { key: 'together', name: 'Both of you there', why: ['I\'m calling about {thing}. I know you wanted to go over it with {who}. Would it help to set up a time when you\'re both home, so we can answer any questions together?',
-          'I\'m calling about {thing}. Would it help to set up a time when everyone who decides is home, so we can answer any questions together?'] }] },
-      approval: { name: 'Waiting on approval', angles: [
-        { key: 'heard', name: 'Did they approve it?', why: ['I\'m checking in on {thing}. Have you heard back from {approver} yet?', 'I\'m checking in on {thing}. Has it been approved yet?'] }] },
-      away: { name: 'Away for a while', angles: [
-        { key: 'back', name: 'Are you back?', why: ['I\'m calling about {thing}. You\'d mentioned you\'d be away until {date}. Are you back home now?', 'I\'m calling about {thing}. You\'d mentioned you\'d be away for a while. Are you back home now?'] }] },
-      callback: { name: 'Asked us to call back', angles: [
-        { key: 'promised', name: 'As you asked', why: ['You\'d asked us to check back with you {dateWhen}, so I\'m following up on {thing}.', 'You\'d asked us to check back with you, so I\'m following up on {thing}.'] }] },
-      price: { name: 'Thinking it over', angles: [
-        { key: 'questions', name: 'Any questions?', why: ['I\'m following up on {thing}. The quote was {amount}. Did you have any questions about it? I\'m happy to go over it with you.', 'I\'m following up on {thing}. Did you have any questions about it? I\'m happy to go over it with you.'] },
-        { key: 'soonest', name: 'We have openings', why: ['I\'m calling about {thing}. We have some openings coming up, and I wanted to see if we could get you on the schedule before they fill up.'] },
-        { key: 'monthly', name: 'Monthly payments', needs: 'finance', why: ['I\'m following up on {thing}. I wanted to let you know we offer financing, so you could spread the cost out over monthly payments if that helps.'] }] },
-      permit: { name: 'Permit or inspection', check: 'Before you call: check where the permit or inspection stands.', angles: [
-        { key: 'ready', name: 'Ready to go', why: ['I\'m calling about {thing}. We\'re ready to move ahead, so I wanted to get a day on the calendar.'] }] },
-      cold: { name: 'Hard to reach', angles: [
-        { key: 'short', name: 'Short and sweet', why: ['I\'m calling about {thing}. We\'d still love to take care of it for you.'] },
-        { key: 'priority', name: 'Priority', why: ['I\'m calling about {thing}. I can give you priority on our schedule for a day that works for you.'] }] },
-      lost: { name: 'May not want it', angles: [
-        { key: 'still', name: 'Still need it?', why: ['I\'m following up on {thing}. Is this still something you need help with?'], ifNo: 'Thanks for letting me know. I\'ll close it out on our end. If anything changes, just give us a call.' }] },
-      general: { name: 'Book the hold', angles: [
-        { key: 'soonest', name: 'We have openings', why: ['I\'m calling to get {thing} on the schedule. We have some openings coming up.'] },
-        { key: 'checkin', name: 'Checking in', why: ['I\'m checking in about {thing}. Is it still something you\'d like us to take care of?'] },
-        { key: 'priority', name: 'Priority', why: ['I\'m calling about {thing}. I can give you priority on our schedule for a day that works for you.'] }] }
-    };
-    const OPEN = ['Hi {first}, this is {me} with {company}.', 'Hi, this is {me} with {company}.', 'Hi, this is {company} calling.'];
-    const OFFER = ['{tech} was out there {visit}, so I can try to get {tech} back out to you. What day works best for you?', 'What day works best for you?'];
-    const CLOSE = ['Perfect, you\'re all set for [day and time]. Is this still the best number to reach you?'];
-    const VOICEMAIL = ['Hi {first}, this is {me} with {company}, calling about {thing}. Please give us a call back at {phone} when you get a chance. Thank you!',
-      'Hi, this is {me} with {company}, calling about {thing}. Please give us a call back at {phone} when you get a chance. Thank you!',
-      'Hi, this is {company}, calling about {thing}. Please give us a call back at {phone}. Thank you!'];
-    const fillLine = (variants, F) => {
-      for (const v of variants) { if ((v.match(/\{\w+\}/g) || []).every(m => F[m.slice(1, -1)])) return v.replace(/\{(\w+)\}/g, (m, k) => F[k]); }
-      return '';
-    };
-    // How each angle has done on holds of this kind: talked = calls where you reached them.
-    // { angleKey: { talked, booked, later, auto } }. A voicemail doesn't count (nobody heard the angle).
-    // Credit without a tap (auto): when a hold is booked (it left the Hold list, see brain.watchHolds)
-    // within CREDIT_DAYS of a call, the call counts as booked: the last "📅 Call back later" before
-    // it, or else (no call logged at all) the last approach you were shown for it.
-    const CREDIT_DAYS = 14;
-    const angleStats = (calls, sit, holds) => {
-      const m = {}, rec = k => m[k] || (m[k] = { talked: 0, booked: 0, later: 0, auto: 0 }), byJob = new Map();
-      calls.filter(c => c.sit === sit && c.angle).forEach(c => { if (!byJob.has(c.j)) byJob.set(c.j, []); byJob.get(c.j).push(c); });
-      byJob.forEach((list, j) => {
-        list.sort((a, b) => a.at - b.at);
-        const talks = list.filter(c => reachedOn(c));
-        talks.forEach(c => { const x = rec(c.angle); x.talked++; if (c.out === 'booked') x.booked++; if (c.out === 'later') x.later++; });
-        const h = holds && holds.get(S(j)), at = h && h.out === 'booked' ? h.outAt : null;
-        if (!at || talks.some(c => c.out === 'booked')) return;
-        const before = list.filter(c => c.at <= at && at - c.at <= CREDIT_DAYS * DAY);
-        const later = before.filter(c => c.out === 'later').pop(), shown = before.filter(c => c.out === 'shown').pop();
-        if (later) { const x = rec(later.angle); x.later--; x.booked++; x.auto++; }
-        else if (shown && !before.some(c => c.out === 'no')) { const x = rec(shown.angle); x.talked++; x.booked++; x.auto++; }
-      });
-      return m;
-    };
-    // The best record (booked, and a little for "call back later"), with one booking's worth of benefit
-    // of the doubt for an angle not tried much yet. Ties: the first angle (the usual way in).
-    const pickAngle = (angles, stats) => {
-      const score = a => { const s = stats[a.key] || { talked: 0, booked: 0, later: 0 }; return (s.booked + 0.3 * s.later + 1) / (s.talked + 2); };
-      return angles.reduce((best, a) => (score(a) > score(best) + 1e-9 ? a : best), angles[0]);
-    };
-    // A relation, said to the customer ("your husband"), by them ("my husband") or about them ("their
-    // husband"); an owner is "the homeowner" every way.
-    const relWords = (rel, whose) => !rel ? '' : /owner/.test(rel) ? 'the homeowner' : whose + ' ' + rel;
-    const fillsFor = A => {
-      const rel = A.who.rel, approver = (() => {
-        const t = A.topics.get('approval');
-        if (!t) return '';
-        return /warranty/i.test(t.sen) ? 'the warranty company' : /insurance|claim|adjuster/i.test(t.sen) ? 'your insurance' : /landlord/i.test(t.sen) ? 'your landlord' : /property|management|hoa/i.test(t.sen) ? 'the property manager' : '';
-      })();
-      return { first: lang.firstOf(A.J.customer), me: myName(), company: company(), phone: callBack(), thing: lang.thingOf(A.type), tech: A.lastTech || '',
-        visit: A.lastVisit ? 'on ' + dText(A.lastVisit.at) : '', who: relWords(rel, 'your'), approver, amount: A.amount ? lang.money(A.amount.n) : '',
-        date: A.when ? dText(A.when.at) : '', dateWhen: A.when ? (A.when.after ? 'after ' : 'around ') + dText(A.when.at) : '' };
-    };
-    // The objections to have ready: the ones that fit this hold, then the usual ones (four at most).
-    const objections = A => {
-      const t = k => A.topics.has(k), list = [];
-      if (t('price') || A.sit === 'price') list.push(['"It\'s too much."', 'I understand. Was it the total, or the monthly cost?' + (offersFinance() ? ' We do offer financing, so it can be spread out over monthly payments.' : '') + ' I can also have someone go over the other options with you.']);
-      if (t('decide') || A.sit === 'decide') list.push(['"I need to talk to ' + (relWords(A.who.rel, 'my') || 'someone') + ' first."', 'Of course. When\'s a good time for me to call back, so you can both be there? (Then press 📅 Call back later.)']);
-      if (A.sit === 'parts') list.push(['"Is the part in?"', 'If it isn\'t yet: say when it\'s due, and that you\'ll call the day it comes in.']);
-      if (t('unhappy') || t('recall')) list.push(['"I\'m not happy about this."', 'Listen first and don\'t argue. Say you\'re sorry it\'s been a hassle, and offer to have a manager call them.']);
-      if (t('urgent') || t('vulnerable')) list.push(['"Can you come today?"', 'Let me see who\'s closest. (🎯 Find a time, below, shows the best tech and day.)']);
-      list.push(['"Not right now."', 'No problem. When would be a better time for me to check back?']);
-      list.push(['"We already had it done."', 'Thanks for letting me know! I\'ll close it out on our end. We\'re here if you ever need us.']);
-      if (!t('price') && A.sit !== 'price') list.push(['"How much will it cost?"', 'The tech will go over everything with you before any work is done.']);
-      return list.slice(0, 4);
-    };
-    // The whole script for a hold, for the angle given (or the best one): { sit, name, angle,
-    // angles, stats, check, parts: [[label, text]], objections, voicemail }.
-    const scriptFor = (A, angleKey) => {
-      const S0 = SCRIPTS[A.sit] || SCRIPTS.general;
-      const angles = S0.angles.filter(a => a.needs !== 'finance' || offersFinance());
-      const stats = angleStats(allCalls, A.sit, allHolds);   // every hold like this, not just this one
-      const angle = angles.find(a => a.key === angleKey) || pickAngle(angles, stats);
-      const F = fillsFor(A), t = k => A.topics.has(k);
-      const parts = [['👋 Open', fillLine(OPEN, F)], ['🎯 Why you\'re calling', fillLine(angle.why, F)]];
-      const care = [];
-      if (t('urgent') || t('vulnerable')) care.push('I know you\'ve been dealing with this, and I don\'t want you going without it any longer than you have to.');
-      if (t('unhappy') || t('recall')) care.push('I\'m sorry this has been such a hassle. I\'d like to make it right.');
-      if (t('member') && memberPriority()) care.push('As a club member, you get priority on our schedule.');
-      if (care.length) parts.push(['💛 Show you care', care.join(' ')]);
-      let offer = fillLine(OFFER, F);
-      if (A.ask && A.ask.words) offer += ' (The notes ask for ' + A.ask.words + ', so offer times that keep to it.)';
-      parts.push(['📅 The offer', offer]);
-      if (angle.ifNo) parts.push(['↩️ If not', angle.ifNo]);
-      parts.push(['✅ Close', fillLine(CLOSE, F)]);
-      return { sit: A.sit, name: S0.name, angle, angles, stats, check: S0.check || '', parts, objections: objections(A), voicemail: fillLine(VOICEMAIL, F), F };
+      return { tone: 'g', text: '📞 Call to book it.' };
     };
 
-    // ---------- Explain ----------
-    let runId = 0, last = null, allCalls = [], allHolds = new Map(), memOff = '', lastHolds = null;
-    const safe = p => Promise.resolve(p).catch(e => { memOff = errText(e); return null; });
-    // fromHolds: opened from ⏸️ Holds to call (the write-up gets a ← back to the list).
+    // ---------- Look up ----------
+    let runId = 0, last = null, lastHolds = null;
+    const safe = p => Promise.resolve(p).catch(() => null);
+    // fromHolds: opened from the ⏸️ Holds tab (the card gets a ← back to the list).
     const explain = async (raw, fromHolds) => {
       const run = ++runId, stale = () => run !== runId || !alive;
-      if (!fromHolds) lastHolds = null;
-      setPicking(false);
       const j = S(raw == null ? '' : raw).replace(/\D/g, '');
-      if (!j) return say('Type a job number, or press 🖱️ and click a job.');
+      if (!j) return say(hint());
+      tab = 'job';
       input.value = j;
-      holdsOut.style.display = 'none';
-      out.style.display = 'none'; out.textContent = '';
-      last = null; shownJob = j; paint();
+      last = null; showTabs();
+      out.textContent = '';
+      shownJob = j; paint();
       setBusy(true);
       try {
         say('Finding job #' + j + '…');
         const J = await findJob(j, stale);
         if (stale()) return;
         if (!J) { shownJob = null; paint(); return say('⚠️ Couldn\'t find job #' + j + ' on the board, the Hold list, the Unassigned list or in ServiceTitan. Check the number.'); }
-        say('Reading its summary, notes and texts…');
-        const R = await readAll(J, stale);
+        say('Reading job #' + j + '…');
+        const [R, M, model] = await Promise.all([readAll(J, stale), safe(brain.aboutJob(J.j, J.customerId, J.customer)), safe(brain.getModel())]);
         if (stale()) return;
-        say('Thinking…');
-        memOff = '';
-        const [M, model, calls, holds0] = await Promise.all([safe(brain.aboutJob(J.j, J.customerId, J.locationId, J.customer)), safe(brain.getModel()), safe(mem.all('calls')), safe(mem.all('holds'))]);
-        if (stale()) return;
-        allCalls = calls || [];
-        allHolds = new Map((holds0 || []).map(h => [h.j, h]));
-        const A = await analyze(J, R, M, model, allCalls.filter(c => c.j === J.j));
-        if (stale()) return;
+        const A = analyze(J, R, M, model);
         A.fromHolds = !!(fromHolds && lastHolds);
         last = A;
         render(A);
         remember(A);
-        say(A.next.text);
+        say('');
       } catch (e) {
         if (stale()) return;
-        say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t explain the job: ' + errText(e)));
+        say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t read the job: ' + errText(e)));
       } finally { if (run === runId) setBusy(false); }
     };
-    // What it read is remembered (the summary and the notes' telling sentences), so the customer's
-    // later jobs, and the holds learning, can use it.
+    // What it read is kept (the summary and the notes' telling sentences), so the 🔮 chances can learn
+    // from how holds like it turn out.
     const remember = A => {
       const J = A.J;
       mem.one('jobs', J.j).then(was => {
         const x = Object.assign({}, was || {}, { j: J.j, src: was && /csv/.test(was.src || '') ? 'csv+seen' : 'seen', seenAt: Date.now(), at: Date.now(), tn: A.type || (was && was.tn) || undefined,
-          sum: lang.clip(lang.plain(A.R.summary), 1200) || (was && was.sum) || undefined, digest: A.digest || undefined, topics: Array.from(A.topics.keys()), when: A.when ? +A.when.at : undefined });
+          sum: lang.clip(lang.plain(A.R.summary), 1200) || (was && was.sum) || undefined, digest: A.digest || undefined, topics: Array.from(A.topics.keys()), when: A.when ? +A.when.at : undefined,
+          city: J.city || (was && was.city) || undefined, zip: J.zip || (was && was.zip) || undefined });
         if (J.customerId) x.c = J.customerId;
         if (J.locationId) x.l = J.locationId;
         if (J.customer) { x.cn = J.customer; x.cnk = J.customer.toLowerCase(); }
@@ -12651,14 +12404,14 @@
     };
 
     // ---------- Showing it ----------
-    const TONE_BG = { r: 'var(--st-red-s);color:var(--st-red-d);border-color:var(--st-red-l)', a: 'var(--st-amber-s);color:var(--st-amber);border-color:var(--st-amber-l)', g: 'var(--st-green-s);color:var(--st-green-d);border-color:var(--st-green-l)', b: 'var(--st-blue-s);color:var(--st-blue-d);border-color:var(--st-blue-s)', '': 'var(--st-soft);color:var(--st-ink-2);border-color:var(--st-line)' };
+    const TONE_BG = { r: 'var(--st-red-s);color:var(--st-red-d);border-color:var(--st-red-l)', a: 'var(--st-amber-s);color:var(--st-amber);border-color:var(--st-amber-l)', g: 'var(--st-green-s);color:var(--st-green-d);border-color:var(--st-green-l)', b: 'var(--st-blue-s);color:var(--st-blue-d);border-color:var(--st-blue-l)', '': 'var(--st-soft);color:var(--st-ink-2);border-color:var(--st-line)' };
+    const winText = J => J.ws && J.we ? clock(J.ws) + '–' + clock(J.we) : J.start ? clock(J.start) : '';
     const statusLine = A => {
       const J = A.J, names = J.techNames.map(first).filter(Boolean), withT = names.length ? ' with ' + names.join(' and ') : '';
-      const win = J.ws && J.we ? clock(J.ws) + '–' + clock(J.we) : J.start ? clock(J.start) : '';
+      const win = winText(J);
       if (A.isHold) {
-        // When the AI first saw it on the Hold list, if that tells more than the day it was created.
         const h = A.M && A.M.hold, since = h && h.first && daysAgo(new Date(h.first)) >= 2 && (!J.created || h.first - J.created > 2 * DAY) ? ' On the Hold list since at least ' + dText(new Date(h.first)) + '.' : '';
-        return '⏸️ On hold.' + (J.created ? ' The job was created ' + dText(J.created) + ' (' + agoText(J.created) + ').' : '') + since + (/^(urgent|high)$/i.test(J.priority) ? ' ' + J.priority + ' priority.' : '');
+        return '⏸️ On hold.' + (J.created ? ' Created ' + dText(J.created) + ' (' + agoText(J.created) + ').' : '') + since;
       }
       if (J.where === 'ua') return '📋 Unassigned for ' + dText(J.day || J.start || new Date(), true) + (win ? ', ' + win : '') + '.';
       const st0 = norm(J.status), d = J.start ? dText(J.start, true) : '';
@@ -12669,6 +12422,13 @@
       if (/^scheduled$/i.test(st0) || J.where === 'board') return '🗓️ Scheduled for ' + (d || 'the day the board shows') + (win ? ', ' + win : '') + (withT || ' (no tech yet)') + '.';
       return (st0 ? st0 + '. ' : '') + (d ? 'Its appointment: ' + d + '.' : '');
     };
+    // A relation, said about them ("their husband"); an owner is "the homeowner".
+    const relWords = (rel, whose) => !rel ? '' : /owner/.test(rel) ? 'the homeowner' : whose + ' ' + rel;
+    const approverOf = A => {
+      const t = A.topics.get('approval');
+      if (!t) return '';
+      return /warranty/i.test(t.sen) ? 'the warranty company' : /insurance|claim|adjuster/i.test(t.sen) ? 'their insurance' : /landlord/i.test(t.sen) ? 'their landlord' : /property|management|hoa/i.test(t.sen) ? 'the property manager' : '';
+    };
     const why = A => {
       const t = k => A.topics.get(k), out0 = [];
       if (t('ready')) out0.push('said they\'re ready to book');
@@ -12678,51 +12438,35 @@
       if (t('decide')) out0.push('wants to talk it over' + (A.who.rel ? ' with ' + relWords(A.who.rel, 'their') : ' first'));
       if (t('finance')) out0.push('sorting out financing');
       if (t('parts')) out0.push('waiting on parts' + (t('parts').at ? ' (noted ' + dText(t('parts').at) + ')' : ''));
-      if (t('approval')) { const f = fillsFor(A).approver; out0.push('waiting on approval' + (f ? ' from ' + f.replace(/^your /, 'their ') : '')); }
+      if (t('approval')) { const f = approverOf(A); out0.push('waiting on approval' + (f ? ' from ' + f : '')); }
       if (t('away')) out0.push('away' + (A.when && A.when.after ? ' until ' + dText(A.when.at) : ' for now'));
       if (t('callback')) out0.push('asked us to call back' + (A.when ? ' ' + (A.when.after ? 'after ' : 'around ') + dText(A.when.at) : ''));
       if (t('permit')) out0.push('waiting on a permit or inspection');
       return out0;
     };
-    // "What's going on": a few plain sentences.
-    const story = A => {
+    // 📋 At a glance: a few plain lines.
+    const glance = A => {
       const J = A.J, L = [statusLine(A)];
-      const sum = lang.sentencesOf(A.R.summary).filter(s => !/^job summary\.?$/i.test(s));
-      L.push('It\'s for: ' + (A.type || 'a job with no job type') + (sum.length ? ': "' + lang.clip(sum.slice(0, 2).join(' '), 170) + '"' : '.'));
       const w = why(A);
       if (w.length) L.push((A.isHold ? 'Why it\'s waiting: ' : 'The notes say: ') + w.join('; ') + '.');
-      if (A.attempts.length) {
-        const hours = A.attempts.map(d => d.getHours()), same = hours.length >= 2 && hours.every(h => partOfDay(h) === partOfDay(hours[0]));
-        L.push('📵 Called ' + plural(A.attempts.length, 'time') + ' without reaching them (' + A.attempts.slice(0, 4).map(d => dText(d)).join(', ') + (A.attempts.length > 4 ? '…' : '') + (same ? ', all in the ' + partOfDay(hours[0]) : '') + ').');
-      }
-      if (A.reached) L.push('☎️ Last talked with them ' + dText(A.reached) + ' (' + agoText(A.reached) + ').');
-      if (A.isHold && A.theirTime) L.push('🕑 They picked up ' + A.theirTime.slot[2] + ' last time (' + dText(A.theirTime.at) + ', ' + clock(A.theirTime.at) + ').');
-      if (A.isHold && A.pickup) L.push('🕑 ' + pickupText(A.pickup) + '.');
+      if (J.reason && A.isHold) L.push('🗂️ Hold reason: ' + J.reason + '.');
+      const C = A.contact;
+      if (C.misses.length) {
+        const hours = C.misses.map(d => d.getHours()), same = hours.length >= 2 && hours.every(h => partOfDay(h) === partOfDay(hours[0]));
+        L.push('📵 ' + plural(C.misses.length, 'try', 'tries') + ' without reaching them' + (C.lastTalk ? ' since we last spoke (' + dText(C.lastTalk) + ')' : '') + ': ' + C.misses.slice(0, 4).map(d => dText(d)).join(', ') + (C.misses.length > 4 ? '…' : '') + (same ? ', all in the ' + partOfDay(hours[0]) : '') + '.');
+      } else if (C.lastTalk) L.push('☎️ Last spoke with them ' + dText(C.lastTalk) + ' (' + agoText(C.lastTalk) + ').');
+      if (C.theyCalled && daysAgo(C.theyCalled) <= 30) L.push('☎️ They called us ' + agoText(C.theyCalled) + ' (' + dText(C.theyCalled) + ', ' + clock(C.theyCalled) + ').');
       const T = A.R.texts;
-      if (T && T.unread) L.push('💬 They have an unread text reply. Read it in the Chat Center before you call (the AI left it unread).');
+      if (T && T.unread) L.push('💬 They have an unread text reply. Read it in the Chat Center before you call (it was left unread).');
       else if (A.lastIn && (!A.lastOut || A.lastIn.at > A.lastOut.at)) L.push('💬 They texted ' + agoText(A.lastIn.at) + ': "' + lang.clip(A.lastIn.body || '(a picture)', 140) + '"');
       else if (A.lastOut) L.push('💬 Our last text was ' + agoText(A.lastOut.at) + (A.lastIn ? '; they last replied ' + agoText(A.lastIn.at) + '.' : ', and they haven\'t replied.'));
       if (T && T.blocked) L.push('🚫 Texts to them are blocked in ServiceTitan.');
       if (A.when && !(A.topics.has('callback') || A.topics.has('away'))) L.push('📅 ' + lang.clip(A.when.sen, 120) + ' (' + A.when.src + '; that\'s ' + inText(A.when.at) + ').');
       else if (A.when) L.push('📅 That\'s ' + inText(A.when.at) + ' (' + A.when.src + ').');
-      // Someone else than the customer (spoke with their wife Mary, Mrs. Jones…).
       if (A.who.name && A.who.name.replace(/^(?:Mr|Mrs|Ms|Miss)\.\s+/, '').toLowerCase() !== lang.firstOf(J.customer).toLowerCase() && norm(J.customer).toLowerCase().indexOf(A.who.name.replace(/^(?:Mr|Mrs|Ms|Miss)\.\s+/, '').toLowerCase()) < 0)
         L.push('🙋 Ask for ' + A.who.name + ' (named in the notes).');
-      if (A.visits.length) {
-        const v = A.visits.slice(-3).map(x => dText(x.at) + (x.status ? ' (' + x.status.toLowerCase() + ')' : ''));
-        L.push('🧰 Its visits: ' + v.join(', ') + (A.lastTech ? '. Last tech out: ' + A.lastTech + '.' : '.'));
-      }
-      if (A.past.length) {
-        const p = A.past[0], since = new Date(Math.min.apply(null, A.past.map(x => x.s || Date.now())));
-        const canc = A.past.filter(x => x.canceled && x.canceled === x.all).length;
-        L.push('🏠 ' + (A.past.length >= 2 ? 'A customer since ' + since.getFullYear() + ': ' : '') + plural(A.past.length, 'other job') + ' (last: ' + (p.tn || 'a job') + ', ' + (p.last ? dText(new Date(p.last)) : '?') + (p.canceled && p.canceled === p.all ? ', canceled' : p.techName ? ', ' + p.techName : '') + ')' +
-          (canc ? '; ' + canc + ' canceled' : '') + '.' + (A.usualTech && A.usualTech.name ? ' Usually ' + first(A.usualTech.name) + ' (' + A.usualTech.n + ' visits).' : ''));
-      } else if (A.M && J.customerId) L.push('🏠 No other jobs for this customer in the AI\'s memory' + (A.M.byJob.length || A.M.byCust.length ? '.' : ' (📚 Learn teaches it your history).'));
-      if (A.like) L.push('📊 ' + A.like.what + ': ' + A.like.booked + ' of ' + A.like.n + ' got booked (' + Math.round(100 * A.like.booked / A.like.n) + '%)' + (A.like.days != null ? ', usually within ' + plural(A.like.days, 'day') : '') + '.');
-      if (A.chance) {
-        const top = A.chance.why.slice(0, 2).map(x => (x.w > 0 ? '📈 ' : '📉 ') + lang.featureText(x.f) + ' (' + x.booked + ' of ' + x.n + ' booked)');
-        L.push('🔮 Chance it books: about ' + Math.round(A.chance.p * 20) * 5 + '% (learned from ' + plural(A.modelSize, 'hold') + ')' + (top.length ? ': ' + top.join(', ') : '') + '.');
-      }
+      if (A.upcoming.length) L.push('🗓️ Also booked: ' + A.upcoming.slice(0, 2).map(u => (u.tn || 'a job') + ' on ' + dText(u.at, true) + ' (#' + u.j + ')').join('; ') + '.');
+      if (A.otherHolds.length) L.push('⏸️ Also on hold: ' + A.otherHolds.slice(0, 2).map(u => (u.tn || 'a job') + ' (#' + u.j + ')').join('; ') + '.');
       return L;
     };
     // The watch-outs, as chips.
@@ -12730,86 +12474,222 @@
       const box = el('div', 'display:flex;gap:4px;flex-wrap:wrap');
       box.className = 'st-ai-chips';
       if (A.noCall) box.appendChild(chip('🚫 Don\'t call', 'r', A.noCall.src + ': "' + A.noCall.sen + '"'));
+      if (A.hard) { const c = chip('📵 Hard to reach (' + A.contact.misses.length + ' tries)', 'r', 'Calls since we last spoke that most likely didn\'t reach them (ours of ' + NO_ANSWER + ' seconds or less, and notes saying so): ' + A.contact.misses.map(d => dText(d) + ' ' + clock(d)).join(', ')); c.setAttribute('data-topic', 'hard'); box.appendChild(c); }
+      if (A.contact.theyCalled && daysAgo(A.contact.theyCalled) <= 14) { const c = chip('☎️ Called us ' + agoText(A.contact.theyCalled), 'g', 'They called us ' + dText(A.contact.theyCalled) + ' at ' + clock(A.contact.theyCalled)); c.setAttribute('data-topic', 'called'); box.appendChild(c); }
+      if (A.lastIn && daysAgo(A.lastIn.at) <= 30 && !A.R.texts.unread) { const c = chip('💬 Texts back', 'g', 'Their last text: ' + dText(A.lastIn.at)); c.setAttribute('data-topic', 'texts'); box.appendChild(c); }
+      if (A.upcoming.length) { const c = chip('🗓️ Another job booked', 'a', A.upcoming.map(u => '#' + u.j + ' ' + u.tn + ' on ' + dText(u.at)).join('; ')); c.setAttribute('data-topic', 'booked'); box.appendChild(c); }
       if (A.ask) box.appendChild(chip('🕑 ' + (A.ask.words || 'a time request'), 'p', A.ask.src + ': "' + (A.ask.text || '') + '"'));
       lang.TOPICS.filter(t => t.group === 'flag' || t.group === 'good' || t.group === 'lost').forEach(t => {
         const x = A.topics.get(t.key);
-        if (x) { const c = chip(t.icon + ' ' + t.label + (x.taught ? ' 📖' : ''), t.tone, x.src + ': "' + x.sen + '"' + (x.taught ? ' (you taught it this)' : '')); c.setAttribute('data-topic', t.key); box.appendChild(c); }
+        if (x && !(t.key === 'noanswer' && A.hard)) { const c = chip(t.icon + ' ' + t.label + (x.taught ? ' 📖' : ''), t.tone, x.src + ': "' + x.sen + '"' + (x.taught ? ' (you taught it this)' : '')); c.setAttribute('data-topic', t.key); box.appendChild(c); }
       });
       lang.TOPICS.filter(t => t.group === 'why').forEach(t => {
         const x = A.topics.get(t.key);
-        if (x) { const c = chip(t.icon + ' ' + t.label + (x.taught ? ' 📖' : ''), t.tone || 'b', x.src + ': "' + x.sen + '"' + (x.taught ? ' (you taught it this)' : '')); c.setAttribute('data-topic', t.key); box.appendChild(c); }
+        if (x && !(t.key === 'noanswer' && A.hard)) { const c = chip(t.icon + ' ' + t.label + (x.taught ? ' 📖' : ''), t.tone || 'b', x.src + ': "' + x.sen + '"' + (x.taught ? ' (you taught it this)' : '')); c.setAttribute('data-topic', t.key); box.appendChild(c); }
       });
       if (A.amount) box.appendChild(chip('💲 ' + lang.money(A.amount.n), '', A.amount.src + ': "' + A.amount.sen + '"'));
+      if (A.J.priority && /^(urgent|high)$/i.test(A.J.priority)) box.appendChild(chip('⭐ ' + A.J.priority + ' priority', 'r'));
       return box;
     };
+    const addressOf = J => [J.street, J.city, [J.state, J.zip].filter(Boolean).join(' ')].map(norm).filter(Boolean).join(', ');
+    const phonesOf = A => {
+      const T = A.R.texts || {}, list = (T.phones || []).slice();
+      if (A.J.phone && !list.some(p => p.num === A.J.phone)) list.unshift({ num: A.J.phone, mobile: false, list: true });
+      return list;
+    };
+    const ageOf = d => { const y = (Date.now() - d) / (365.25 * DAY); return y >= 1 ? Math.floor(y) + (Math.floor(y) === 1 ? ' year' : ' years') : 'under a year'; };
+    // 📋 Copy job info: everything on the card, as plain text to paste into a note or a message.
     const plainText = A => {
-      const lines = ['#' + A.J.j + ' ' + (A.J.customer || ''), A.next.text, ''].concat(story(A));
-      if (A.script) lines.push('', 'Call script (' + A.script.name + ': ' + A.script.angle.name + ')').concat(A.script.parts.map(p => p[0].replace(/^\S+\s/, '') + ': ' + p[1]), ['Voicemail: ' + A.script.voicemail]);
-      return lines.join('\n');
+      const J = A.J, L = ['#' + J.j + ' ' + (J.customer || '') + (A.type ? ' — ' + A.type : ''), statusLine(A)];
+      if (J.reason && A.isHold) L.push('Hold reason: ' + J.reason);
+      const addr = addressOf(J);
+      if (addr) L.push('Address: ' + addr);
+      const ph = phonesOf(A);
+      if (ph.length) L.push('Phone: ' + ph.map(p => fmtPhone(p.num) + (p.mobile ? ' (mobile)' : '')).join(', '));
+      if (A.tags.length) L.push('Tags: ' + A.tags.map(t => t.name).join(', '));
+      if (A.member.length) L.push('Club: ' + A.member.join(', '));
+      const sum = lang.plain(A.R.summary);
+      if (sum) L.push('Summary: ' + sum);
+      const w = why(A);
+      if (w.length) L.push((A.isHold ? 'Why it\'s waiting: ' : 'Notes say: ') + w.join('; '));
+      const flags = Array.from(chipsFor(A).children).map(c => c.textContent).filter(Boolean);
+      if (flags.length) L.push('Watch out: ' + flags.join(', '));
+      if (A.contact.misses.length) L.push('Calls not reaching them: ' + A.contact.misses.length + ' since ' + (A.contact.lastTalk ? dText(A.contact.lastTalk) : 'the start'));
+      if (A.lastTech) L.push('Last tech out: ' + A.lastTech + (A.lastTechWhen ? ' (' + dText(A.lastTechWhen) + ')' : ''));
+      const n = A.notes[0];
+      if (n) L.push('Latest note' + (n.at ? ' (' + dText(n.at) + ')' : '') + ': ' + lang.clip(lang.plain(n.text), 300));
+      L.push('Next: ' + A.next.text);
+      return L.join('\n');
     };
     const render = A => {
       out.textContent = '';
       const J = A.J;
-      const head = el('div', 'display:grid;gap:1px;font-size:12px;color:var(--st-ink-2)');
-      head.className = 'st-ai-head';
-      head.append(el('div', 'font-weight:800;font-size:13px;color:var(--st-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap', '#' + J.j + ' ' + (J.customer || '')),
-        el('div', '', [A.type || 'no job type', J.city || J.zip, A.isHold ? '⏸️ on hold' : J.where === 'ua' ? 'Unassigned' : norm(J.status)].filter(Boolean).join(' · ')));
-      if (J.tags.length) head.appendChild(tagChips(J.tags.map(n => ({ name: n, color: '#e3e5e8', text: '#141414' })), 4));
-      const ars = areasOf({ city: J.city, zip: J.zip });
-      if (ars.length) { const c = el('div', 'display:flex;gap:3px;flex-wrap:wrap'); c.className = 'st-ai-areas'; ars.forEach(a => c.appendChild(areaChip(a))); head.appendChild(c); }
-      const next = el('div', 'padding:6px 8px;border:1px solid;border-radius:8px;font-size:12px;font-weight:700;background:' + TONE_BG[A.next.tone || ''], A.next.text);
-      next.className = 'st-ai-next';
       if (A.fromHolds) {
-        const back = pill('← Holds to call', 'Back to the list (as it was read)', () => { out.style.display = 'none'; shownJob = null; paint(); renderHolds(); say(holdsMsg()); });
+        const back = pill('← Holds', 'Back to the list (as it was read)', () => { tab = 'holds'; shownJob = null; paint(); renderHolds(); showTabs(); say(holdsMsg()); });
         back.className = 'st-ai-back';
         back.style.justifySelf = 'start';
         out.appendChild(back);
       }
-      out.append(head, next);
-      const sec = section('📋 What\'s going on', 'st-ai-story');
-      story(A).forEach(t => sec.appendChild(line(t)));
-      sec.appendChild(chipsFor(A));
-      const teachBtn = pill(A.teachOpen ? '👎 Close' : '👎 Something\'s wrong?', 'Teach it: what it read wrong, or what it missed. It remembers, for every job.', () => { A.teachOpen = !A.teachOpen; render(A); });
-      teachBtn.className = 'st-ai-teach-open';
-      teachBtn.style.justifySelf = 'start';
-      sec.appendChild(teachBtn);
+      // The top: who and what, its tags, and what to do next.
+      const head = el('div', 'display:grid;gap:2px;font-size:12px;color:var(--st-ink-2)');
+      head.className = 'st-ai-head';
+      const nameRow = el('div', 'display:flex;gap:6px;align-items:center;min-width:0');
+      nameRow.append(el('div', 'flex:1;min-width:0;font-weight:800;font-size:13.5px;color:var(--st-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap', '#' + J.j + ' ' + (J.customer || '')),
+        copyPill('📋', '#' + J.j, 'Copy the job number'));
+      const stWord = A.isHold ? '⏸️ Hold' : J.where === 'ua' ? '📋 Unassigned' : norm(J.status) ? (STATUS_ICON[lang.titleCase(norm(J.status))] || '') + ' ' + norm(J.status) : '';
+      head.append(nameRow, el('div', '', [A.type || 'no job type', A.R.ov && A.R.ov.bu ? A.R.ov.bu.name : '', stWord].filter(Boolean).join(' · ')));
+      if (A.tags.length) head.appendChild(tagChips(A.tags, 8));
+      const ars = areasOf({ city: J.city, zip: J.zip });
+      if (ars.length) { const c = el('div', 'display:flex;gap:3px;flex-wrap:wrap'); c.className = 'st-ai-areas'; ars.forEach(a => c.appendChild(areaChip(a))); head.appendChild(c); }
+      const next = el('div', 'padding:6px 8px;border:1px solid;border-radius:8px;font-size:12px;font-weight:700;background:' + TONE_BG[A.next.tone || ''], A.next.text);
+      next.className = 'st-ai-next';
+      out.append(head, next, chipsFor(A));
+
+      // 📋 At a glance.
+      const sec = section('📋 At a glance', 'st-ai-story');
+      glance(A).forEach(t => sec.appendChild(line(t)));
+      if (A.chance || A.like) {
+        if (A.chance) {
+          const top = A.chance.why.slice(0, 2).map(x => (x.w > 0 ? '📈 ' : '📉 ') + lang.featureText(x.f) + ' (' + x.booked + ' of ' + x.n + ' booked)');
+          const c = line('🔮 Chance it books: about ' + Math.round(A.chance.p * 20) * 5 + '% (learned from ' + plural(A.modelSize, 'hold') + ')' + (top.length ? ': ' + top.join(', ') : '') + '.');
+          c.className = 'st-ai-chance'; sec.appendChild(c);
+        }
+        if (A.like) sec.appendChild(line('📊 ' + A.like.what + ': ' + A.like.booked + ' of ' + A.like.n + ' got booked (' + Math.round(100 * A.like.booked / A.like.n) + '%)' + (A.like.days != null ? ', usually within ' + plural(A.like.days, 'day') : '') + '.'));
+      }
       out.appendChild(sec);
-      if (A.teachOpen) out.appendChild(renderTeach(A));
-      if (A.R.missed.length) out.appendChild(small('⚠️ Couldn\'t read ' + A.R.missed.join(', ') + ', so it may be missing something.', 'color:var(--st-amber)'));
-      if (memOff) out.appendChild(small('⚠️ The AI\'s memory is off in this browser (' + memOff + '), so it only knows what it read just now.', 'color:var(--st-amber)'));
-      // The call script, for a hold.
-      A.script = null;
-      if (A.isHold && !A.noCall) { A.script = scriptFor(A, A.angleKey); out.appendChild(renderScript(A)); noteShown(A); }
-      // Buttons.
+
+      // Buttons: open the other tools with this job.
       const act = el('div', 'display:flex;gap:4px;flex-wrap:wrap');
       act.className = 'st-ai-actions';
-      if (onBoard() && (A.isHold || J.where === 'ua' || J.where === 'board')) act.appendChild(pill('🎯 Find a time', 'Opens 🧭 Tech Router\'s 🎯 Place a job with #' + J.j + ': the best tech and day for it. Nothing changes on its own.', () => { showView('router'); router.placeJob(J.j); }));
-      if (A.isHold) act.appendChild(pill('📱 Text: holds', 'Opens 📱 Customer Texts in its ⏸️ Holds folder with #' + J.j + ' picked. Nothing is sent until you press Start there.', () => {
-        if (texts.takeJobs([J.j], /hold/i) < 0) return say('📱 Customer Texts is busy. Wait for it to finish, then try again.');
+      const place = pill('🎯 Place', 'Opens 🧭 Tech Router\'s 🎯 Place a job with #' + J.j + ': the best tech and day for it. Nothing changes on its own.', () => { showView('router'); router.placeJob(J.j); });
+      place.className = 'st-ai-act-place';
+      const txt = pill('📱 Text', 'Opens 📱 Customer Texts in its ' + (A.isHold ? '⏸️ Holds' : '🚚 Tech Updates') + ' folder with #' + J.j + ' picked. Nothing is sent until you press Start there.', () => {
+        if (texts.takeJobs([J.j], A.isHold ? /hold/i : /update/i) < 0) return say('📱 Customer Texts is busy. Wait for it to finish, then try again.');
         showView('texts');
-      }));
-      act.appendChild(pill('📝 Note', 'Opens 📝 Notes in its 📞 Updates folder: click the job, then the note.', () => { notes.openNamed(/update/i); showView('notes'); }));
-      act.appendChild(pill('🔎 Open job', 'Open job #' + J.j + ' in a new tab', () => openJob(J.j)));
-      const phone = J.phone || (A.R.texts && A.R.texts.num) || '';
-      if (phone) act.appendChild(copyPill('📋 ' + fmtPhone(phone), fmtPhone(phone), 'Copy the phone number'));
-      act.appendChild(copyPill('📋 Copy all', () => plainText(A), 'Copy the write-up (and the script) to paste somewhere'));
+      });
+      txt.className = 'st-ai-act-text';
+      const note = pill('📝 Note', 'Opens 📝 Notes in its Updates folder: click the job, then the note.', () => { notes.openNamed(/update/i); showView('notes'); });
+      note.className = 'st-ai-act-note';
+      const move = pill('🔀 Move', 'Opens 🔀 Move Jobs with #' + J.j + ' picked: choose the tech (or day) there. Nothing changes until you review and start it there.', () => {
+        if (moves.take([J.j], '', '') < 0) return say('🔀 Move Jobs is busy. Wait for it to finish, then try again.');
+        showView('moves');
+      });
+      move.className = 'st-ai-act-move';
+      if (onBoard() && !A.isHold && J.where !== 'other' && J.where !== 'memory') act.append(move);
+      if (onBoard() && (A.isHold || J.where === 'ua' || J.where === 'board')) act.appendChild(place);
+      act.append(txt, note, pill('🔎 Open job', 'Open job #' + J.j + ' in a new tab', () => openJob(J.j)));
+      const all = copyPill('📋 Copy job info', () => plainText(A), 'Copy everything on this card as plain text, to paste into a note or a message');
+      all.className = 'st-ai-copy';
+      act.appendChild(all);
       out.appendChild(act);
-      // More, folded.
-      if (A.notes.length) out.appendChild(fold('🗒️ Notes (' + A.notes.length + ')', box => A.notes.forEach(n => {
-        const r = el('div', 'font-size:11.5px;color:var(--st-ink-2);border-top:1px solid var(--st-line);padding-top:2px;overflow-wrap:anywhere');
-        r.append(el('span', 'font-weight:700;color:var(--st-ink)', (n.pinned ? '📌 ' : '') + (n.at ? dText(n.at) + ' ' + clock(n.at) : 'Undated') + ' · ' + n.src + ': '), document.createTextNode(lang.clip(lang.plain(n.text), 400)));
+
+      // 🗓️ The appointment (or the hold).
+      const ap = section(A.isHold ? '⏸️ The hold' : '🗓️ Appointment', 'st-ai-appt');
+      if (A.isHold) {
+        if (J.created) ap.appendChild(kv('Created', dText(J.created) + ' (' + agoText(J.created) + ')'));
+        if (J.reason) ap.appendChild(kv('Hold reason', J.reason));
+        if (A.when) ap.appendChild(kv('Call back', (A.when.after ? 'after ' : 'around ') + dText(A.when.at, true) + ' (' + inText(A.when.at) + ')'));
+      } else {
+        const d = J.start || J.day;
+        if (d) ap.appendChild(kv('Day', dText(d, true) + (winText(J) ? ', ' + winText(J) : '')));
+        if (J.techNames.length) ap.appendChild(kv('Tech', J.techNames.join(', ')));
+        else if (J.where === 'board' || J.where === 'ua') ap.appendChild(kv('Tech', 'none yet'));
+      }
+      if (J.priority && !/^normal$/i.test(J.priority)) ap.appendChild(kv('Priority', J.priority));
+      if (A.total) ap.appendChild(kv('Total', lang.money(A.total)));
+      const ov = A.R.ov || {};
+      if (ov.campaign && ov.campaign.name) ap.appendChild(kv('Campaign', ov.campaign.name));
+      if (ov.recallFor) ap.appendChild(kv('🔁 Recall of', '#' + ov.recallFor.id));
+      if (ov.warrantyFor) ap.appendChild(kv('🛡️ Warranty for', '#' + ov.warrantyFor.id));
+      if (A.visits.length) ap.appendChild(kv('Visits', A.visits.slice(-4).map(v => dText(v.at) + (v.status ? ' (' + v.status.toLowerCase() + ')' : '')).join(', ')));
+      if (A.lastTech) ap.appendChild(kv('Last tech out', A.lastTech + (A.lastTechWhen ? ' (' + dText(A.lastTechWhen) + ')' : '')));
+      if (ap.children.length > 1) out.appendChild(ap);
+
+      // 📍 Where, and 📞 how to reach them.
+      const ct = section('📍 Address and phone', 'st-ai-contact');
+      const addr = addressOf(J);
+      if (addr) {
+        const r = el('div', 'display:flex;gap:4px;align-items:center;flex-wrap:wrap;font-size:12px');
+        const a = el('a', 'color:var(--st-blue-d);font-weight:600;overflow-wrap:anywhere', addr);
+        a.href = 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(addr); a.target = '_blank'; a.rel = 'noopener';
+        a.title = 'Open in Google Maps';
+        r.append(a, copyPill('📋', addr, 'Copy the address'));
+        ct.appendChild(r);
+      }
+      phonesOf(A).forEach(p => {
+        const r = el('div', 'display:flex;gap:4px;align-items:center;font-size:12px');
+        r.append(el('span', 'font-weight:700', fmtPhone(p.num)), el('span', 'color:var(--st-ink-3)', p.mobile ? 'mobile' : p.list ? 'from the list' : 'phone'), copyPill('📋', fmtPhone(p.num), 'Copy the phone number'));
+        r.className = 'st-ai-phone';
+        ct.appendChild(r);
+      });
+      if (ct.children.length > 1) out.appendChild(ct);
+
+      // 📝 The whole summary.
+      const sumText = lang.plain(A.R.summary);
+      if (sumText) { const s0 = section('📝 Summary', 'st-ai-summary'); s0.appendChild(line(sumText, 'white-space:pre-wrap')); out.appendChild(s0); }
+
+      // 🗒️ Notes: newest first (pinned on top); the first few showing.
+      if (A.notes.length) {
+        const ns = section('🗒️ Notes (' + A.notes.length + ')', 'st-ai-notes');
+        const noteRow = n => {
+          const r = el('div', 'font-size:11.5px;color:var(--st-ink-2);border-top:1px solid var(--st-line);padding-top:3px;overflow-wrap:anywhere;white-space:pre-wrap');
+          r.className = 'st-ai-note';
+          r.append(el('span', 'font-weight:700;color:var(--st-ink)', (n.pinned ? '📌 ' : '') + (n.at ? dText(n.at) + ' ' + clock(n.at) : 'Undated') + ' · ' + n.src + ': '), document.createTextNode(lang.plain(n.text)));
+          return r;
+        };
+        A.notes.slice(0, 4).forEach(n => ns.appendChild(noteRow(n)));
+        if (A.notes.length > 4) ns.appendChild(fold('Show ' + (A.notes.length - 4) + ' more', box => A.notes.slice(4).forEach(n => box.appendChild(noteRow(n)))));
+        out.appendChild(ns);
+      }
+
+      // 🏠 The customer: how long, how much, club, who usually goes, and every other job.
+      const cu = section('🏠 Customer', 'st-ai-customer');
+      const facts = [];
+      if (A.since) facts.push('a customer since ' + A.since.getFullYear());
+      if (A.jobsTotal) facts.push(plural(A.jobsTotal, 'job') + ' in all');
+      if (A.revenue) facts.push(lang.money(A.revenue) + ' lifetime');
+      if (A.canceled) facts.push(A.canceled + ' canceled');
+      if (facts.length) { const f = facts.join(' · '); cu.appendChild(line(f.charAt(0).toUpperCase() + f.slice(1) + '.')); }
+      if (A.member.length) cu.appendChild(line('⭐ Club: ' + A.member.join(', ') + '.'));
+      if (A.usualTech) cu.appendChild(line('🧰 Usually ' + A.usualTech.name + ' (' + plural(A.usualTech.n, 'job') + ').'));
+      if (A.lastDone) cu.appendChild(line('🔧 Last job done: ' + (A.lastDone.tn || 'a job') + ', ' + dText(A.lastDone.at) + (A.lastDone.tech ? ' with ' + A.lastDone.tech : '') + (A.lastDone.total ? ' (' + lang.money(A.lastDone.total) + ')' : '') + '.'));
+      if (A.otherTags.length) { const r = el('div', 'display:flex;gap:4px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:var(--st-ink-3)'); r.append(document.createTextNode('Customer tags:'), tagChips(A.otherTags, 6)); cu.appendChild(r); }
+      if (ov.equipment && ov.equipment.length) {
+        const eq = el('div', 'display:grid;gap:1px');
+        eq.className = 'st-ai-equip';
+        eq.appendChild(el('div', 'font-size:11.5px;font-weight:700;color:var(--st-ink-2)', '🧰 Equipment'));
+        ov.equipment.slice(0, 5).forEach(e => eq.appendChild(el('div', 'font-size:11.5px;color:var(--st-ink-2);overflow-wrap:anywhere', '• ' + [e.name, e.model].filter(Boolean).join(' · ') + (e.installed && !isNaN(e.installed) ? ' (installed ' + dText(e.installed) + ', ' + ageOf(e.installed) + ' old)' : ''))));
+        cu.appendChild(eq);
+      }
+      if (A.past.length) cu.appendChild(fold('📜 Their other jobs (' + A.past.length + (A.jobsTotal != null && A.jobsTotal - 1 > A.past.length ? ' of ' + (A.jobsTotal - 1) : '') + ')', box => A.past.slice(0, 40).forEach(p => {
+        const r = el('div', 'font-size:11.5px;color:var(--st-ink-2);border-top:1px solid var(--st-line);padding-top:2px');
+        r.className = 'st-ai-pastjob';
+        r.textContent = (p.at ? dText(p.at) : '?') + ' · #' + p.j + ' ' + (p.tn || '') + (p.status ? ' · ' + p.status : '') + (p.tech ? ' · ' + p.tech : '') + (p.total ? ' · ' + lang.money(p.total) : '') + (p.csv ? ' (report)' : '');
         box.appendChild(r);
-      }), 'st-ai-notes'));
+      }), 'st-ai-past', A.past.length <= 3));
+      else if (A.R.jobs) cu.appendChild(small('No other jobs for this customer.'));
+      if (cu.children.length > 1) out.appendChild(cu);
+
+      // 💬 Their texts.
       const msgs = A.R.texts && A.R.texts.msgs || [];
       if (msgs.length) out.appendChild(fold('💬 Texts (' + msgs.length + ')', box => msgs.slice(-12).forEach(m => {
         box.appendChild(el('div', 'font-size:11.5px;color:var(--st-ink-2);border-top:1px solid var(--st-line);padding-top:2px;overflow-wrap:anywhere;' + (m.out ? '' : 'font-weight:700;color:var(--st-ink)'),
           dText(m.at) + ' ' + clock(m.at) + ' · ' + (m.out ? (m.auto ? 'automatic' : 'us') : 'them') + ': ' + lang.clip(m.body || '(a picture)', 300)));
       }), 'st-ai-texts'));
-      if (A.past.length) out.appendChild(fold('🏠 Their other jobs (' + A.past.length + ')', box => A.past.slice(0, 15).forEach(p => {
+      // ☎️ Their calls.
+      if (A.calls.length) out.appendChild(fold('☎️ Calls (' + A.calls.length + (A.R.calls && A.R.calls.total > A.calls.length ? ' newest of ' + A.R.calls.total : '') + ')', box => A.calls.slice(0, 15).forEach(c => {
         box.appendChild(el('div', 'font-size:11.5px;color:var(--st-ink-2);border-top:1px solid var(--st-line);padding-top:2px',
-          (p.last ? dText(new Date(p.last)) : '?') + ' · #' + p.j + ' ' + (p.tn || '') + (p.techName ? ' · ' + p.techName : '') + (p.canceled && p.canceled === p.all ? ' · canceled' : '') + (p.total != null ? ' · ' + lang.money(p.total) : '') + (p.csv ? ' · from a report' : '')));
-      }), 'st-ai-past'));
-      out.style.display = 'grid';
+          dText(c.at) + ' ' + clock(c.at) + ' · ' + (c.theyCalled ? 'they called us' : 'we called') + ' · ' + (c.secs >= 60 ? Math.round(c.secs / 60) + ' min' : c.secs + ' sec') + (!c.theyCalled && c.secs <= NO_ANSWER ? ' (likely no answer)' : '') + (c.who ? ' · ' + c.who : '')));
+      }), 'st-ai-calls'));
+
+      // 👎 Teaching it.
+      const teachBtn = pill(A.teachOpen ? '👎 Close' : '👎 Read something wrong?', 'Teach it: what it read wrong, or what it missed. It remembers, for every job.', () => { A.teachOpen = !A.teachOpen; render(A); });
+      teachBtn.className = 'st-ai-teach-open';
+      teachBtn.style.justifySelf = 'start';
+      out.appendChild(teachBtn);
+      if (A.teachOpen) out.appendChild(renderTeach(A));
+      if (A.R.missed.length) out.appendChild(small('⚠️ Couldn\'t read ' + A.R.missed.join(', ') + ', so it may be missing something.', 'color:var(--st-amber)'));
+      showTabs();
       paint(); fit();
     };
     // ---------- 👎 Teaching it ----------
@@ -12821,11 +12701,10 @@
     const relearn = async (A, said) => {
       brain.changed();
       teachSay = said;
-      const A2 = await analyze(A.J, A.R, A.M, A.model, A.callsIn);
-      Object.assign(A2, { teachOpen: true, fromHolds: A.fromHolds, angleKey: A.angleKey });
+      const A2 = analyze(A.J, A.R, A.M, A.model);
+      Object.assign(A2, { teachOpen: true, fromHolds: A.fromHolds });
       last = A2;
       render(A2);
-      say(A2.next.text);
     };
     const renderTeach = A => {
       const box = section('👎 Teach it', 'st-ai-teach');
@@ -12847,7 +12726,7 @@
       wrong.appendChild(el('div', 'font-size:11px;font-weight:800;color:var(--st-ink-3)', 'Read wrong? Press ✕ on what isn\'t right:'));
       const chipsRow = el('div', 'display:flex;gap:4px;flex-wrap:wrap');
       const form = el('div', 'display:none;gap:4px');
-      const items = Array.from(A.topics.values()).filter(t => t.src !== 'its tags').map(t => ({ key: t.key, sen: t.sen }));
+      const items = Array.from(A.topics.values()).filter(t => t.src !== 'its tags' && t.src !== 'their memberships').map(t => ({ key: t.key, sen: t.sen }));
       if (A.noCall) items.unshift({ key: 'nocall', sen: A.noCall.sen });
       items.forEach(it => {
         const c = pill(meaning(it.key) + ' ✕', 'It isn\'t this', () => {
@@ -12910,102 +12789,23 @@
       }), 'st-ai-lessons'));
       return box;
     };
-    const renderScript = A => {
-      const s = A.script, sec = section('📞 Call script: ' + s.name, 'st-ai-script');
-      if (s.angles.length > 1) {
-        const tabs = el('div');
-        tabs.className = 'st-seg st-ai-angles';
-        s.angles.forEach(a => {
-          const st0 = s.stats[a.key], b = el('button', '', a.name + (st0 && st0.talked ? ' · ' + st0.booked + '/' + st0.talked : ''));
-          b.type = 'button'; b.setAttribute('data-angle', a.key);
-          b.title = st0 && st0.talked ? 'Booked ' + st0.booked + ' of ' + st0.talked + ' calls where you reached them' : 'Not tried yet on holds like this';
-          b.classList.toggle('on', a.key === s.angle.key);
-          b.addEventListener('mousedown', e => e.preventDefault());
-          b.onclick = () => { A.angleKey = a.key; render(A); };
-          tabs.appendChild(b);
-        });
-        sec.appendChild(tabs);
-      }
-      const rec = s.stats[s.angle.key];
-      sec.appendChild(small(rec && rec.talked ? '🏆 This approach booked ' + rec.booked + ' of ' + rec.talked + ' "' + s.name + '" calls where you reached them' +
-        (rec.auto ? ' (' + rec.auto + ' counted on ' + (rec.auto === 1 ? 'its' : 'their') + ' own: the hold got booked within ' + CREDIT_DAYS + ' days)' : '') + '.' :
-        'Log how each call goes (below), or just call: when a hold gets booked, the AI credits the approach you were shown.'));
-      if (s.check) sec.appendChild(line('🔍 ' + s.check, 'color:var(--st-amber);font-weight:700'));
-      s.parts.forEach(([label, text]) => {
-        const p = el('div', 'display:grid;gap:1px');
-        p.className = 'st-ai-part';
-        p.append(el('div', 'font-size:11px;font-weight:800;color:var(--st-ink-3)', label), el('div', 'font-size:12.5px;color:var(--st-ink);line-height:1.45', text));
-        sec.appendChild(p);
-      });
-      if (!s.F.me) sec.appendChild(small('⚠️ Your name couldn\'t be found: set it in ⚙️ Call script, below.', 'color:var(--st-amber)'));
-      const ob = el('div', 'display:grid;gap:3px;margin-top:2px');
-      ob.className = 'st-ai-objections';
-      ob.appendChild(el('div', 'font-size:11px;font-weight:800;color:var(--st-ink-3)', '🛡️ If they say…'));
-      s.objections.forEach(([q, a]) => { const r = el('div', 'font-size:12px;color:var(--st-ink-2)'); r.append(el('span', 'font-weight:700;color:var(--st-ink)', q + ' '), document.createTextNode(a)); ob.appendChild(r); });
-      sec.appendChild(ob);
-      const vm = el('div', 'display:grid;gap:1px');
-      vm.className = 'st-ai-vm';
-      vm.append(el('div', 'font-size:11px;font-weight:800;color:var(--st-ink-3)', '📬 Voicemail'), el('div', 'font-size:12px;color:var(--st-ink-2)', s.voicemail));
-      sec.appendChild(vm);
-      // How did the call go?
-      const how = el('div', 'display:grid;gap:4px;margin-top:3px;padding-top:6px;border-top:1px solid var(--st-line)');
-      how.className = 'st-ai-how';
-      how.appendChild(el('div', 'font-size:11px;font-weight:800;color:var(--st-ink-3)', 'How did the call go? (teaches the AI)'));
-      const btns = el('div', 'display:flex;gap:4px;flex-wrap:wrap'), after = el('div', 'display:flex;gap:4px;flex-wrap:wrap;align-items:center;font-size:12px;color:var(--st-ink-2)');
-      after.className = 'st-ai-after';
-      [['booked', '✅ Booked it'], ['later', '📅 Call back later'], ['vm', '📬 No answer'], ['no', '❌ Not interested']].forEach(([k, label]) => {
-        const b = pill(label, 'Saves how the call went, so the AI learns which approach works', () => logOutcome(A, k, after));
-        b.setAttribute('data-out', k);
-        btns.appendChild(b);
-      });
-      how.append(btns, after);
-      sec.appendChild(how);
-      return sec;
-    };
-    // A call script you were shown (once a day per hold and approach), so a hold booked soon after
-    // credits the approach even if nobody said how the call went. Not a call: it's never counted as one.
-    const noteShown = A => {
-      const s = A.script, t0 = +day0(new Date());
-      if (memOff || allCalls.some(c => c.j === A.J.j && c.angle === s.angle.key && c.out === 'shown' && c.at >= t0)) return;
-      const x = { j: A.J.j, sit: s.sit, angle: s.angle.key, out: 'shown' };
-      allCalls.push(Object.assign({ at: Date.now(), hour: new Date().getHours() }, x));
-      brain.logCall(x).catch(() => {});
-    };
-    const logOutcome = async (A, k, after) => {
-      const s = A.script;
-      after.textContent = '';
-      try { await brain.logCall({ j: A.J.j, sit: s.sit, angle: s.angle.key, out: k, by: myName() || undefined }); }
-      catch (e) { after.appendChild(document.createTextNode('⚠️ Couldn\'t save it (' + errText(e) + ').')); return; }
-      allCalls.push({ j: A.J.j, sit: s.sit, angle: s.angle.key, out: k, at: Date.now(), hour: new Date().getHours() });
-      A.calls.push({ j: A.J.j, sit: s.sit, angle: s.angle.key, out: k, at: Date.now(), hour: new Date().getHours() });
-      after.appendChild(el('span', 'font-weight:700;color:var(--st-green-d)', '✓ Saved: ' + OUT_WORDS[k] + '.'));
-      if (k === 'booked') after.appendChild(pill('🎯 Put it on a tech', 'Tech Router\'s 🎯 Place a job, for the best tech and day', () => { showView('router'); router.placeJob(A.J.j); }));
-      if (k === 'vm') {
-        after.appendChild(pill('📱 Text them', 'Opens 📱 Customer Texts in its ⏸️ Holds folder with this job. Nothing is sent until you press Start.', () => { if (texts.takeJobs([A.J.j], /hold/i) >= 0) showView('texts'); }));
-        after.appendChild(pill('📝 Voicemail note', 'Opens 📝 Notes in its 📞 Updates folder: click the job, then 📬 Left Voicemail', () => { notes.openNamed(/update/i); showView('notes'); }));
-      }
-      if (k === 'later') after.appendChild(pill('📝 Note it', 'Opens 📝 Notes: write when to call back', () => { notes.openNamed(/update/i); showView('notes'); }));
-      if (k === 'no') after.appendChild(pill('🚫 Stop suggesting it', 'Tech Router won\'t suggest this hold to call again (↩ in Tech Router puts it back)', () => { router.skipHold({ jobId: A.J.j, customer: A.J.customer }, true); after.lastChild.textContent = '✓ Not suggested any more'; }));
-      fit();
-    };
-
-    // ---------- 🔎 The filter for ⏸️ Holds to call (shared with 📱 Customer Texts: see holdFilter) ----------
+    // ---------- 🔎 The filter for the ⏸️ Holds tab (shared with 📱 Customer Texts: see holdFilter) ----------
     const HF = holdFilter.make({ id: 'st-ai', key: 'stAiHoldFilter', viewsKey: 'stAiHoldViews', types: true, say: t => say(t), rerender: () => refilter() });
     const areasOf = holdFilter.areasOf, areaChip = holdFilter.areaChip, cityText = holdFilter.cityText;
     // The list again through the filter as it is now (nothing is read again), and the line above it.
     const refilter = () => { if (!lastHolds) return; renderHolds(); say(holdsMsg()); };
 
-    // ---------- ⏸️ Holds to call ----------
-    // The Hold list, best to call first: a call-back day that has come, signs it'll book (ready,
-    // the AI's chance), high priority, not called today. Left out: holds whose notes say not to call
-    // and holds marked 🚫 in Tech Router. Only what the Hold list itself says is read (one request),
-    // plus what the AI remembers about each hold from explaining it.
+    // ---------- ⏸️ Holds ----------
+    // The Hold list, best to call first: a call-back day that has come, signs it'll book (ready, the
+    // chance it books), high priority. Left out: holds whose summary says not to call and holds marked
+    // 🚫 in Tech Router. One request for the list (plus what was kept from looking holds up); then the
+    // call logs of the holds showing, a few at a time, for 📵 hard to reach and ☎️ they called us.
     const HOLDS_SHOW = 10;
     const holdsToCall = async () => {
       const run = ++runId, stale = () => run !== runId || !alive;
-      setPicking(false);
-      out.style.display = 'none'; holdsOut.style.display = 'none'; holdsOut.textContent = '';
+      tab = 'holds';
       shownJob = null; paint();
+      holdsOut.textContent = ''; showTabs();
       setBusy(true);
       try {
         say('Reading the Hold list…');
@@ -13013,8 +12813,7 @@
         try { rows = (await brain.watchHolds({ fresh: true })).rows; }
         catch (e) { if (st.isSignedOut(e)) throw e; rows = await brain.holdRows(true); }
         if (stale()) return;
-        memOff = '';
-        const [model, calls, jobs, recs] = await Promise.all([safe(brain.getModel()), safe(mem.all('calls')), safe(mem.all('jobs')), safe(mem.all('holds'))]);
+        const [model, jobs] = await Promise.all([safe(brain.getModel()), safe(mem.all('jobs'))]);
         if (stale()) return;
         const seen = new Map((jobs || []).map(x => [x.j, x])), now = new Date(), lessons = taught.list();
         let dnc = 0, skipped = 0;
@@ -13027,7 +12826,6 @@
           if (router.noCallIn(f.summary)) { dnc++; return; }
           const r = lang.read(f.summary, f.created || now, lessons), topics = new Set(r.topics.map(t => t.key).concat(rec.topics || []));
           const when = r.when ? r.when.at : rec.when ? new Date(rec.when) : null;
-          const mine = (calls || []).filter(c => c.j === j && isCall(c)).sort((a, b) => b.at - a.at), lastCall = mine[0] || null;
           const p = model && model.ok ? model.chance({ text: [lang.plain(f.summary), rec.digest].filter(Boolean).join('. '), type: f.type }) : null;
           let score = p ? p.p : 0.5;
           const why0 = [];
@@ -13035,17 +12833,15 @@
           else if (when) { score -= 0.6; why0.push(['⏳ Wait till ' + dText(when), 'a']); }
           if (topics.has('ready')) { score += 0.3; why0.push(['✅ Ready', 'g']); }
           if (topics.has('lost')) { score -= 0.4; why0.push(['❓ May not want it', 'a']); }
+          if (topics.has('parts')) why0.push(['📦 Parts', 'a']);
           if (topics.has('urgent')) { score += 0.1; why0.push(['🔥 Urgent', 'r']); }
           if (/^(urgent|high)$/i.test(f.priority)) { score += 0.1; why0.push(['⭐ ' + f.priority, 'r']); }
           if (p) why0.push(['🔮 ' + Math.round(p.p * 20) * 5 + '%', p.p >= 0.5 ? 'g' : '']);
-          if (lastCall && daysAgo(new Date(lastCall.at)) === 0) { score -= 1; why0.push(['📞 Called today: ' + OUT_WORDS[lastCall.out], '']); }
-          else if (lastCall) why0.push(['📞 Last called ' + agoText(new Date(lastCall.at)) + ': ' + OUT_WORDS[lastCall.out], '']);
-          if (lastCall && lastCall.out === 'no') score -= 0.5;
           if (!f.reason && rec.hold) f.reason = rec.hold;   // a 📥 report's Hold Reason, when the list has none
           list.push(Object.assign(f, { j, score, why: why0, topics }));
         });
         list.sort((a, b) => b.score - a.score || (a.created || 0) - (b.created || 0));
-        lastHolds = { cands: list, info: { dnc, skipped, model, pickup: pickupOf(calls || []), recs: recs || [] } };
+        lastHolds = { cands: list, info: { dnc, skipped, model, recs: [] }, calls: new Map() };
         renderHolds();
         say(holdsMsg());
       } catch (e) {
@@ -13057,27 +12853,56 @@
       const { cands } = lastHolds, n = cands.filter(h => HF.passes(h)).length;
       if (!cands.length) return 'No holds to call on your branches\' Hold list.';
       if (HF.used()) return n ? 'Showing ' + n + ' of ' + plural(cands.length, 'hold') + ' (🔎 ' + HF.words() + '), best to call first.' : 'No holds match the filter (🔎 ' + HF.words() + '). Press All holds to see every one.';
-      return 'Best to call first. 🧠 explains one and gives its call script.';
+      return 'Best to call first. 📋 Info shows everything about one.';
+    };
+    // The call-log chips for one hold (once its calls are read): 📵 hard to reach, 📞 called today,
+    // ☎️ they called us lately.
+    const callChips = c => {
+      const out0 = [];
+      if (!c) return out0;
+      if (c.misses.length >= HARD) out0.push(['📵 Hard to reach (' + c.misses.length + ' tries)', 'r', 'hard']);
+      if (c.today.length) out0.push(['📞 Called today', '', 'today']);
+      if (c.theyCalled && daysAgo(c.theyCalled) <= 14) out0.push(['☎️ Called us ' + agoText(c.theyCalled), 'g', 'called']);
+      return out0;
+    };
+    // Reads the call logs of the holds showing that haven't been read yet, then shows them again.
+    let callsRun = 0;
+    const readCalls = async show => {
+      const H = lastHolds, want = show.filter(h => h.customerId && !H.calls.has(h.customerId));
+      if (!want.length) return;
+      const run = ++callsRun;
+      want.forEach(h => H.calls.set(h.customerId, null));
+      const got = await st.pool(want, 4, h => st.customerCalls(h.customerId), null, { stop: () => run !== callsRun || !alive || lastHolds !== H });
+      if (lastHolds !== H) return;
+      want.forEach((h, i) => { const v = got[i]; if (v && !v.error && v !== st.NOT_RUN) H.calls.set(h.customerId, contactOf(callsOf(v), [], null)); else H.calls.delete(h.customerId); });
+      if (tab === 'holds' && shown()) renderHolds(H.all, true);
     };
     // The list, through the filter (cands: every hold read, best first). all: every one, not the first HOLDS_SHOW.
-    const renderHolds = all => {
+    const renderHolds = (all, again) => {
       const { cands, info } = lastHolds, list = cands.filter(h => HF.passes(h));
+      lastHolds.all = !!all;
       holdsOut.textContent = '';
       holdsOut.appendChild(HF.bar());
       if (HF.isOpen()) holdsOut.appendChild(HF.box(cands, info));
       if (HF.isEditing()) holdsOut.appendChild(HF.editor(cands));
       if (HF.used()) { const t = el('div', 'font-size:12px;font-weight:700;color:var(--st-blue-d)', '🔎 ' + list.length + ' of ' + plural(cands.length, 'hold') + ': ' + HF.words()); t.id = 'st-ai-filter-count'; holdsOut.appendChild(t); }
-      if (info.pickup) { const t = small('🕑 ' + pickupText(info.pickup) + '.', 'color:var(--st-ink-2)'); t.className = 'st-ai-pickup'; holdsOut.appendChild(t); }
       const show = all ? list : list.slice(0, HOLDS_SHOW);
       show.forEach((h, i) => {
         const r = el('div', 'display:grid;gap:2px;padding:6px 8px;border:1px solid var(--st-line);border-radius:8px;background:var(--st-bg)');
         r.className = 'st-ai-hold'; r.setAttribute('data-job', h.j);
         r.append(el('div', 'font-weight:800;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap', (i + 1) + '. #' + h.j + ' ' + h.customer),
-          el('div', 'font-size:11.5px;color:var(--st-ink-3)', [h.type, h.city ? cityText(h.city) : '', h.created ? 'created ' + agoText(h.created) : ''].filter(Boolean).join(' · ')));
-        const ars = areasOf(h);
-        if (h.why.length || ars.length) { const c = el('div', 'display:flex;gap:3px;flex-wrap:wrap'); ars.forEach(a => c.appendChild(areaChip(a))); h.why.forEach(([t, tone]) => c.appendChild(chip(t, tone))); r.appendChild(c); }
+          el('div', 'font-size:11.5px;color:var(--st-ink-3)', [h.type, h.city ? cityText(h.city) : '', h.created ? 'created ' + agoText(h.created) : '', h.reason || ''].filter(Boolean).join(' · ')));
+        const ars = areasOf(h), cc = callChips(lastHolds.calls.get(h.customerId));
+        if (h.why.length || ars.length || cc.length || (h.tagObjs || []).length) {
+          const c = el('div', 'display:flex;gap:3px;flex-wrap:wrap;align-items:center');
+          ars.forEach(a => c.appendChild(areaChip(a)));
+          cc.forEach(([t, tone, k]) => { const x = chip(t, tone); x.setAttribute('data-topic', k); c.appendChild(x); });
+          h.why.forEach(([t, tone]) => c.appendChild(chip(t, tone)));
+          if ((h.tagObjs || []).length) c.appendChild(tagChips(h.tagObjs, 3));
+          r.appendChild(c);
+        }
         const act = el('div', 'display:flex;gap:4px;flex-wrap:wrap');
-        const ex = pill('🧠 Explain', 'What\'s going on with #' + h.j + ', and its call script', () => explain(h.j, true));
+        const ex = pill('📋 Info', 'Everything about #' + h.j, () => explain(h.j, true));
         ex.className = 'st-ai-hold-explain';
         act.appendChild(ex);
         if (h.phone) act.appendChild(copyPill('📋 ' + fmtPhone(h.phone), fmtPhone(h.phone), 'Copy the phone number'));
@@ -13088,49 +12913,30 @@
       if (!list.length && cands.length) holdsOut.appendChild(small('No holds match the filter. Press All holds to see every one.', 'color:var(--st-amber)'));
       const left = [info.dnc ? plural(info.dnc, 'hold') + ' left out: the summary says not to call' : '', info.skipped ? plural(info.skipped, 'hold') + ' marked 🚫 in Tech Router' : ''].filter(Boolean);
       if (left.length) holdsOut.appendChild(small('🚫 ' + left.join('; ') + '.'));
-      holdsOut.appendChild(small(info.model && info.model.ok ? '🔮 Chances are learned from ' + plural(info.model.size, 'hold') + ' that were booked or lost.' : '🔮 Chances show once the AI has seen ' + 20 + ' holds booked or lost (it watches the Hold list each time, and 📥 reports with a Hold Reason count too).'));
-      holdsOut.style.display = 'grid';
+      holdsOut.appendChild(small(info.model && info.model.ok ? '🔮 Chances are learned from ' + plural(info.model.size, 'hold') + ' that were booked or lost.' : '🔮 Chances show once ' + 20 + ' holds have been seen booked or lost (it watches the Hold list each time it\'s read, or add a 📥 report under ⚙️ More).'));
+      showTabs();
       fit();
+      if (!again) readCalls(show);
     };
 
-    // ---------- 📚 Memory ----------
-    let learnStop = false;
+    // ---------- ⚙️ More ----------
     const renderMem = async () => {
-      const [learned, totals, holds, calls, jobs, appts] = await Promise.all([mem.meta('learned', null), mem.meta('totals', null), mem.all('holds'), mem.all('calls').then(v => v.filter(isCall).length), mem.all('jobs'), mem.count('appts')].map(p => p.catch(e => { memOff = errText(e); return null; })));
+      const [holds, jobs] = await Promise.all([mem.all('holds'), mem.all('jobs')].map(p => p.catch(() => null)));
       memText.textContent = '';
-      if (appts == null) {
-        memHead.textContent = '📚 Memory: off in this browser' + (memBox.style.display === 'none' ? '  ▸' : '  ▾');
-        memText.appendChild(el('div', 'color:var(--st-red-d)', '⚠️ The AI\'s memory can\'t be used here (' + (memOff || mem.why() || 'IndexedDB is off') + '). It still explains jobs from what it reads each time. A private window, or blocked site data, does this.'));
-        learnBtn.disabled = csvBtn.disabled = true;
+      if (holds == null) {
+        memHead.textContent = '⚙️ More: nothing kept in this browser' + (memBox.style.display === 'none' ? '  ▸' : '  ▾');
+        memText.appendChild(el('div', 'color:var(--st-red-d)', '⚠️ Nothing can be kept here (' + (mem.why() || 'IndexedDB is off') + '). Every job still shows in full; only the 🔮 chances need it. A private window, or blocked site data, does this.'));
+        csvBtn.disabled = true;
         return;
       }
-      learnBtn.disabled = brain.isLearning(); csvBtn.disabled = false;
+      csvBtn.disabled = false;
       const csv = (jobs || []).filter(x => /csv/.test(x.src || '')).length, seenN = (jobs || []).filter(x => /seen/.test(x.src || '')).length;
-      const out0 = (holds || []).reduce((m, h) => { m[h.out || 'on'] = (m[h.out || 'on'] || 0) + 1; return m; }, {});
-      memHead.textContent = '📚 Memory: ' + (appts ? appts.toLocaleString('en-US') + ' appointments' : 'nothing learned yet') + (learned ? ' · learned ' + agoText(new Date(learned.at)) : '') + (memBox.style.display === 'none' ? '  ▸' : '  ▾');
+      const out0 = holds.reduce((m, h) => { m[h.out || 'on'] = (m[h.out || 'on'] || 0) + 1; return m; }, {});
+      memHead.textContent = '⚙️ More: reports and what it\'s kept' + (memBox.style.display === 'none' ? '  ▸' : '  ▾');
       const add = t => memText.appendChild(el('div', '', t));
-      if (totals && totals.n) add('🗓️ ' + totals.n.toLocaleString('en-US') + ' appointments for ' + totals.customers.toLocaleString('en-US') + ' customers, ' + dText(new Date(totals.from)) + ' to ' + dText(new Date(totals.to)) + '.');
-      else add('🗓️ No schedules learned yet. Pick how far back and press 📚 Learn (a year takes a minute or two, once).');
-      if (learned) add('Last learned ' + agoText(new Date(learned.at)) + ' at ' + clock(new Date(learned.at)) + ' (' + plural(learned.weeks || 0, 'week') + ' read). Pressing Learn again only reads new days and the last ' + brain.SETTLE + '.');
-      add('⏸️ Holds watched: ' + (holds || []).length + ((holds || []).length ? ' (' + [out0.on ? out0.on + ' on hold now' : '', out0.booked ? out0.booked + ' booked' : '', out0.lost ? out0.lost + ' lost' : ''].filter(Boolean).join(', ') + ')' : '') + '.');
-      add('📞 Calls logged: ' + (calls || 0) + '. 📄 Jobs from reports: ' + csv + '. 🧠 Jobs explained: ' + seenN + '.');
-    };
-    const learnNow = async quiet => {
-      if (brain.isLearning()) return;
-      learnStop = false;
-      learnBtn.disabled = true; stopBtn.style.display = quiet ? 'none' : '';
-      learnBtn.classList.add('st-busy');
-      try {
-        const r = await brain.learn({ months: Number(monthsSel.value), say: t => { if (!quiet || memBox.style.display !== 'none') memSay(t); }, stop: () => learnStop || !alive });
-        if (!alive) return;
-        try { await brain.watchHolds({ fresh: true }); } catch (e) { if (st.isSignedOut(e)) throw e; }
-        memSay((r.stopped ? 'Stopped. ' : '✓ ') + 'Read ' + plural(r.read, 'week') + ' (' + r.rows.toLocaleString('en-US') + ' appointments)' + (r.skipped ? '; ' + plural(r.skipped, 'day') + ' it already knew weren\'t read again' : '') + '.' + (r.halted ? ' ⚠️ ' + r.halted : '') + (r.failed ? ' ⚠️ ' + plural(r.failed, 'week') + ' couldn\'t be read; Learn again tries them.' : ''));
-      } catch (e) {
-        if (alive) memSay('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t learn: ' + errText(e)));
-      } finally {
-        learnBtn.classList.remove('st-busy'); stopBtn.style.display = 'none';
-        if (alive) renderMem();
-      }
+      add('⏸️ Holds watched: ' + holds.length + (holds.length ? ' (' + [out0.on ? out0.on + ' on hold now' : '', out0.booked ? out0.booked + ' booked' : '', out0.lost ? out0.lost + ' lost' : ''].filter(Boolean).join(', ') + ')' : '') + '. The 🔮 chances learn from the booked and lost ones.');
+      add('📋 Jobs looked up: ' + seenN + '. 📄 Jobs from reports: ' + csv + '. 📖 Phrases taught: ' + taught.list().length + '.');
+      add('A customer\'s history (their other jobs, calls, club and total) is read fresh from ServiceTitan each time you look a job up.');
     };
     const importFile = async f => {
       memSay('Reading ' + f.name + '…');
@@ -13144,35 +12950,26 @@
     };
     const forgetAll = async () => {
       forgetRow.style.display = 'none';
-      if (brain.isLearning()) { learnStop = true; memSay('Stop learning first (wait for it to finish the weeks it\'s reading).'); return; }
       await mem.forget();
       brain.changed();
-      allCalls = []; last = null; out.style.display = 'none'; techNames = null;
-      memSay('✓ Forgotten. Everything the AI learned in this browser is gone.');
+      memSay('✓ Forgotten. The holds watched, jobs looked up and reports added in this browser are gone.');
       renderMem();
     };
 
-    // When it's opened: the latest news on the Hold list, and (if it has learned before and it's
-    // been a while) the new days since, quietly.
-    const CATCH_UP = 6 * 3600000;
+    // When it's opened: 🖱️ picking on (on the board), and the latest news on the Hold list, quietly.
     const refresh = () => {
-      beta.style.display = 'flex';
-      setLabel();
-      renderMem().then(async () => {
-        if (!alive || !shown() || !onBoard()) return;
-        const learned = await mem.meta('learned', null).catch(() => null);
-        if (learned && Date.now() - learned.at > CATCH_UP && !brain.isLearning()) { monthsSel.value = String(learned.months || monthsSel.value); learnNow(true); }
-        else brain.watchHolds().catch(() => {});
-      });
+      renderMem().then(() => { if (alive && shown() && onBoard()) brain.watchHolds().catch(() => {}); });
+      if (onBoard() && !picking) setPicking(true);
+      showTabs();
       if (!onBoard()) say(board.need());
-      else if (out.style.display === 'none' && holdsOut.style.display === 'none') say('Press 🖱️ and click a job (or type its number), then 🧠 Explain: what\'s going on, and for a hold, what to say to book it.');
+      else if (tab === 'job' && !last) say(hint());
       paint(); fit();
     };
     return {
       refresh,
       leave: () => { setPicking(false); style.textContent = ''; },
       explain,
-      cleanup: () => { alive = false; runId++; learnStop = true; window.removeEventListener('click', onClick, true); window.removeEventListener('resize', onResize); board.unmount(style); }
+      cleanup: () => { alive = false; runId++; callsRun++; window.removeEventListener('click', onClick, true); window.removeEventListener('resize', onResize); board.unmount(style); }
     };
   })();
 
@@ -13322,7 +13119,7 @@
     closeBar.style.display = 'block';
   };
   closeX.onclick = close;
-  // read: 🧠 Toolbox AI's reading of a piece of text (what it's about, money, a call-back day), for
+  // read: 📋 Quick Job Info's reading of a piece of text (what it's about, money, a call-back day), for
   // other tools and the tests. It reads only the text it's given.
   window.__stToolbox = { version: VERSION, close, read: (text, at) => lang.read(text, at) };
 

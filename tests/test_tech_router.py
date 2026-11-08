@@ -43,6 +43,7 @@ def start(b, setup=None):
     return page, errors
 def open_router(page):
     if B(page, '← Menu').count(): B(page, '← Menu').click()
+    page.evaluate("() => { const h = document.getElementById('st-exp-head'); if (h && document.getElementById('st-exp').style.display === 'none') h.click(); }")
     page.locator('#st-toolbox .st-tile', has_text='Tech Router').click()
     page.wait_for_function("() => document.querySelectorAll('#st-router-tech option').length > 2", timeout=10000)
 def find(page, tech):
@@ -93,8 +94,11 @@ with sync_playwright() as p:
 
     # ================= The name and the Beta warning =================
     page, errors = start(b)
+    page.evaluate("() => { const h = document.getElementById('st-exp-head'); if (h && document.getElementById('st-exp').style.display === 'none') h.click(); }")
     tile = page.locator('#st-toolbox .st-tile', has_text='Tech Router').inner_text()
     check('Tech Router' in tile and 'BETA' in tile, 'the menu tile says Tech Router and BETA (%r)' % tile.replace('\n', ' '))
+    check(page.evaluate("() => { const x = document.getElementById('st-exp'); const kids = Array.from(document.querySelector('#st-toolbox .st-view-menu').children); return !!x && /Tech Router/.test(x.textContent) && kids.indexOf(x) > kids.indexOf(document.getElementById('st-exp-head')) && kids.indexOf(x) > kids.findIndex(k => k.querySelector && k.querySelector('.st-tile')); }"), 'Tech Router is under 🧪 Experimental tools, below the finished tools')
+    check(page.evaluate("() => localStorage.getItem('stExpOpen')") == '1', 'opening 🧪 Experimental tools is remembered')
     open_router(page)
     check(page.inner_text('#st-toolbox .st-head') .startswith('🧭 Tech Router (Beta)'), 'the title says Tech Router (Beta)')
     warn = page.locator('#st-toolbox .st-router-beta')
