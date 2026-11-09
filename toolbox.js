@@ -8,7 +8,8 @@
       off and applied to the board's day in one run.
     - Tech Messages: sends a saved message (Good Morning, ETA, ...) to the techs you pick (by team or on the board).
     - Business Unit: switches the jobs you pick to a branch (Mendenhall Branch by default).
-    - Customer Texts: texts customers a saved message (holds, tech updates, reschedules, ...).
+    - Customer Texts: texts customers a saved message (holds, tech updates, reschedules, ...), and offers customers
+      on hold a couple of openings to reply 1 or 2 to, each customer their own, then lists who picked which.
     - Move Jobs: moves jobs to a tech, adds or unassigns techs, swaps jobs or whole days, or moves a tech's
       whole day to another day, without dragging.
     - Tech Router (Beta, still being built): for a job you click, the best techs to put it on and why,
@@ -34,8 +35,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.5.1';
+  const VERSION = '2.6';
   const WHATS_NEW = {
+    '2.6': 'New in 📱 Customer Texts: 📲 Offer times. A folder that texts customers on hold a couple of openings to reply 1 or 2 to. List the openings you want filled under 🗓️ Times to offer (a day, a window, how many spots). Each customer gets their own: a time of day their summary asks for ("prefers afternoons", "not home until 2"), a day we\'re already in their town first (and the text says so), and no opening offered to too many at once. Their name and what the hold is ({about}: "your water heater quote") are filled in, and you see every text before it goes: change the times or the words for anyone, or ✕ Leave out. Then 📥 Check replies to offers lists who picked which time ("2", "the first one", "Thursday works"), who needs a look, who said no and who hasn\'t answered. Nothing is booked by the Toolbox: open the job, book it, then ✓ Booked. A hold booked in ServiceTitan leaves the list by itself.',
     '2.5.1': '📱 Customer Texts: someone else having a customer\'s conversation open no longer stops the run. That customer is skipped and listed under Needs a look, and it goes on to the next (only 3 in a row stop it). ✅ Confirm Appt no longer texts customers whose appointments that day are already confirmed in ServiceTitan, checked again right before each text.',
     '2.5': 'New: 📋 Quick Job Info (it replaces 🧠 Toolbox AI). Open it on the board and click any job (holds too), then the next: everything about it on one card. What to do next, watch-outs (🚫 don\'t call, 📵 hard to reach from their call log, ☎️ they called us, 💬 texts back, 🗓️ another job booked, 🔥, 🧓…), the hold or appointment, address (opens Google Maps) and phones, the whole summary and notes, and the customer\'s history read by itself: every other job, club, lifetime total, equipment, who usually goes. Buttons open Customer Texts, Move Jobs and Tech Router with the job, and 📋 Copy job info copies the card. ⏸️ Holds lists the Hold list best to call first, with the 🔎 filter. 🔮 Chances and 👎 teaching stay; call scripts and 📚 Learn are gone (history is read fresh each time). Also: tools still being tested (🧭 Tech Router) are now under 🧪 Experimental tools at the bottom of the menu; tap it to open.',
     '2.4.4': '📱 Customer Texts never texts PHONE CALL ONLY jobs: they\'re a call, not a visit, so they\'re skipped and listed with why (from the board, the Unassigned list, the Hold list, picked or typed). A customer with a phone call and a visit gets texted about the visit. New 🌙 Late jobs: ＋ Everyone on the board and ＋ A department… leave out jobs starting at 6 PM or later (change the time, or turn it off, in ⚙️ Settings). A late job you click on the board or type in yourself is still texted.',
@@ -4585,7 +4587,8 @@
   const texts = (() => {
     const TOOL = 'Customer Texts';
     const BOX = 'textarea.cht-response-input';
-    const K = { folders: 'stCtFolders', folder: 'stCtFolder', pick: 'stCtPick', mode: 'stCtMode', name: 'stCtName', all: 'stCtAllMobiles', never: 'stCtNever', types: 'stCtTypes', source: 'stCtSource', added: 'stCtAddedFolders', confirm: 'stCtConfirmFolders', late: 'stCtLateHour' };
+    const K = { folders: 'stCtFolders', folder: 'stCtFolder', pick: 'stCtPick', mode: 'stCtMode', name: 'stCtName', all: 'stCtAllMobiles', never: 'stCtNever', types: 'stCtTypes', source: 'stCtSource', added: 'stCtAddedFolders', confirm: 'stCtConfirmFolders', late: 'stCtLateHour',
+      offer: 'stCtOfferFolders', slots: 'stCtOfferSlots', offers: 'stCtOffers', offerN: 'stCtOfferN', perSpot: 'stCtOfferPerSpot', town: 'stCtOfferTown' };
     const loadJSON = (k, d) => { try { const v = JSON.parse(get(k)); return v == null ? d : v; } catch (e) { return d; } };
     const showNum = d => d ? '…' + String(d).slice(-4) : '?';
     const s1 = plural;
@@ -4619,6 +4622,11 @@
       // as a sales text.
       { name: '📣 OutReach', days: 30, same: true, msgs: [
         ['🔥 Heater reminder', 'Hey, this is {dispatcher} with AirSouth Cooling, Heating, Plumbing and Electrical. Cooler weather is on the way, so here is a friendly reminder to switch your thermostat to heat and let it run for a few minutes before the first cold night. Reply STOP to opt out.']
+      ] },
+      // Offers each customer on hold a couple of openings to reply 1 or 2 to ({options}: the times
+      // picked for that customer from 🗓️ Times to offer). 📥 Check replies then lists who picked what.
+      { name: '📲 Offer times', days: 7, same: false, msgs: [
+        ['🗓️ Two openings', 'Hi {first}, this is {dispatcher} with AirSouth Cooling, Heating, Plumbing and Electrical. I\'m reaching out about {about} that we still have on hold, and I\'d like to get you taken care of. Here is what I have open: reply {options}. If none of that works, just reply with a day that does and I\'ll give you a call. Thank you!']
       ] }
     ];
     const cloneDefaults = () => DEFAULT_FOLDERS.map(f => ({ name: f.name, days: f.days, same: f.same, msgs: f.msgs.map(m => m.slice()) }));
@@ -4630,7 +4638,7 @@
     // Folders added to the defaults in an update. Someone who already saved their own folders gets
     // each one once, at the end of their list (unless they already have one by that name), and
     // never again after deleting it. Someone still on the defaults already has them.
-    const ADDED_LATER = ['📣 OutReach', '✅ Confirm Appt'];
+    const ADDED_LATER = ['📣 OutReach', '✅ Confirm Appt', '📲 Offer times'];
     const folderKey = n => norm(n).replace(/[^a-z0-9]/gi, '').toLowerCase();
     (() => {
       let seen = loadJSON(K.added, []);
@@ -4655,6 +4663,14 @@
     let confirmKeys = (() => { const v = loadJSON(K.confirm, null); return Array.isArray(v) ? v.filter(x => typeof x === 'string') : CONFIRM_DEFAULT.map(folderKey); })();
     const isConfirmFolder = f => !!f && confirmKeys.indexOf(folderKey(f.name)) > -1;
     const saveConfirm = () => set(K.confirm, JSON.stringify(confirmKeys));
+    // Folders whose messages offer times to reply 1 or 2 to (📁 Edit folders → "Offers times"). Their
+    // messages use {options}; each customer's text is shown, and can be changed, before anything is
+    // sent; and 📥 Check replies reads who picked which time. Kept apart from the folders, like the
+    // confirm folders.
+    const OFFER_DEFAULT = ['📲 Offer times'];
+    let offerKeys = (() => { const v = loadJSON(K.offer, null); return Array.isArray(v) ? v.filter(x => typeof x === 'string') : OFFER_DEFAULT.map(folderKey); })();
+    const isOfferFolder = f => !!f && offerKeys.indexOf(folderKey(f.name)) > -1;
+    const saveOffer = () => set(K.offer, JSON.stringify(offerKeys));
     // 1.6.5: the Confirm Appt message as it shipped in 1.6.4 ("…with us tomorrow.") becomes the
     // {when} one, once, and only where nobody changed it.
     (() => {
@@ -4687,7 +4703,10 @@
     };
     const myName = () => norm(get(K.name)) || autoName();
     const uses = (tmpl, key) => new RegExp('\\{' + key + '\\}', 'i').test(tmpl);
-    const fill = (tmpl, r) => tmpl.replace(/\{dispatcher\}/gi, myName()).replace(/\{first\}/gi, r.first || '').replace(/\{tech\}/gi, r.tech || '').replace(/\{when\}/gi, r.when || '');
+    // {about}: what the job is, in plain words, from its job type ("your water heater quote").
+    // {options}: the times offered to that customer (only in a folder that offers times).
+    const fill = (tmpl, r) => tmpl.replace(/\{dispatcher\}/gi, myName()).replace(/\{first\}/gi, r.first || '').replace(/\{tech\}/gi, r.tech || '').replace(/\{when\}/gi, r.when || '')
+      .replace(/\{about\}/gi, r.about || '').replace(/\{options\}/gi, r.options || '');
     // {when}: the appointment's day compared with today's date when the text goes out: "today",
     // "tomorrow", or "on Friday, October 30" for anything later. null once the day has passed.
     const whenText = day => {
@@ -4757,6 +4776,184 @@
       if (b && b.day instanceof Date && sameDay(b.day, day)) return day;
       // On the board's timeline that day (the board's data, as last read for this day).
       return board.latest() && board.job(j) ? day : null;
+    };
+
+    // ---------- 📲 Offering times (folders that offer times) ----------
+    // You list the openings you want filled (🗓️ Times to offer: a day, an arrival window and how
+    // many spots). Each customer is then offered a couple of them, chosen for that customer:
+    //   - a time of day their summary asks for ("prefers afternoons", "not home until 2") is kept to,
+    //   - a day we already have a job in their town comes first (and the text can say so),
+    //   - no opening is offered to more customers at once than its spots times "per spot" (most
+    //     people don't answer, so each spot is offered to a few),
+    //   - two different days when there are two.
+    // Every customer's text is shown before anything is sent: change their times, reword it, or
+    // leave them out. What was offered to whom is kept in this browser, so 📥 Check replies can
+    // tell which time a "1" or a "Tuesday works" means. Nothing is booked by the Toolbox.
+    const pad2 = n => String(n).padStart(2, '0');
+    const ymd = d => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+    const fromYmd = t => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(t || '')); if (!m) return null; const d = new Date(+m[1], +m[2] - 1, +m[3]); return isNaN(d) ? null : d; };
+    const today0 = () => { const t = new Date(); t.setHours(0, 0, 0, 0); return t; };
+    const WINDOWS = [
+      { id: '8-12', label: '8 AM–12 PM', say: 'between 8 AM and 12 PM', part: 'am' },
+      { id: '12-5', label: '12–5 PM', say: 'between 12 and 5 PM', part: 'pm' },
+      { id: '5-9', label: '5–9 PM', say: 'between 5 and 9 PM', part: 'eve' }
+    ];
+    const winOf = id => WINDOWS.find(w => w.id === id) || null;
+    const winAt = o => WINDOWS.indexOf(winOf(o.win));
+    const slotKey = o => o.day + '|' + o.win;
+    const bySlot = (a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0) || winAt(a) - winAt(b);
+    const shortDay = t => { const d = fromYmd(t); return d ? d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : String(t); };
+    const longDay = t => { const d = fromYmd(t); return d ? d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : String(t); };
+    const slotLabel = o => shortDay(o.day) + ' · ' + (winOf(o.win) || { label: o.win }).label;
+    // The openings, as saved right now: days from tomorrow on (a day that has come is dropped).
+    const slots = () => {
+      const v = readSaved(K.slots, [], []), t = ymd(today0());
+      return (Array.isArray(v) ? v : []).filter(x => x && fromYmd(x.day) && x.day > t && winOf(x.win))
+        .map(x => ({ day: x.day, win: x.win, spots: Math.max(0, Math.min(50, parseInt(x.spots, 10) || 0)) })).sort(bySlot);
+    };
+    const saveSlots = list => set(K.slots, JSON.stringify(list));
+    const addSlot = (day, win, spots) => {
+      const list = slots(), had = list.find(x => x.day === day && x.win === win);
+      if (had) had.spots = Math.min(50, had.spots + spots); else list.push({ day, win, spots });
+      saveSlots(list.sort(bySlot));
+    };
+    const changeSlot = (o, by) => { const list = slots(), x = list.find(z => slotKey(z) === slotKey(o)); if (!x) return false; const was = x.spots; x.spots = Math.max(0, Math.min(50, x.spots + by)); saveSlots(list); return x.spots !== was; };
+    const dropSlot = o => saveSlots(slots().filter(z => slotKey(z) !== slotKey(o)));
+    const numSaved = (k, lo, hi, d) => { const n = parseInt(get(k), 10); return n >= lo && n <= hi ? n : d; };
+    const offerN = () => numSaved(K.offerN, 1, 3, 2);       // how many times each customer is offered
+    const perSpot = () => numSaved(K.perSpot, 1, 5, 3);     // how many customers each spot is offered to at once
+    const townOn = () => get(K.town) !== '0';               // say when we'll already be in their town
+    // What's been offered and not finished with: [{ jobId, num, customerId, customer, hold, type,
+    // opts: [{ day, win }], text, at, pick (set by you) }]. Kept 45 days, in this browser.
+    const OFFER_KEEP = 45 * 86400000, OFFER_MAX = 400;
+    const offersOut = () => {
+      const v = readSaved(K.offers, [], []), cut = Date.now() - OFFER_KEEP;
+      return (Array.isArray(v) ? v : []).filter(e => e && last10(e.num).length === 10 && e.jobId != null && Array.isArray(e.opts) && e.at > cut);
+    };
+    const saveOffers = list => set(K.offers, JSON.stringify(list.slice(-OFFER_MAX)));
+    const sameOffer = (e, jobId, num) => String(e.jobId) === String(jobId) && e.num === num;
+    const recordOffer = x => {
+      const list = offersOut().filter(e => !sameOffer(e, x.r.jobId, x.num));
+      list.push({ jobId: String(x.r.jobId), num: x.num, customerId: x.r.customerId || null, customer: x.r.customer || '', hold: !!x.r.hold, type: x.r.type || '',
+        opts: x.offer.opts.map(o => ({ day: o.day, win: o.win })), text: x.text, at: Date.now() });
+      saveOffers(list);
+    };
+    const dropOffer = (jobId, num) => saveOffers(offersOut().filter(e => !sameOffer(e, jobId, num)));
+    const markOffer = (jobId, num, pick) => { const list = offersOut(), e = list.find(z => sameOffer(z, jobId, num)); if (e) { if (pick == null) delete e.pick; else e.pick = pick; saveOffers(list); } };
+    // How many customers each opening is out to right now (a customer texted on two numbers counts once).
+    const offeredTo = () => {
+      const m = new Map(), t = ymd(today0());
+      offersOut().forEach(e => e.opts.forEach(o => { if (o.day > t) { const k = slotKey(o); if (!m.has(k)) m.set(k, new Set()); m.get(k).add(String(e.jobId)); } }));
+      const out = new Map();
+      m.forEach((set, k) => out.set(k, set.size));
+      return out;
+    };
+    // A time of day the summary asks for: { want, avoid } (sets of 'am', 'pm', 'eve'). Only when the
+    // words are about when to come ("prefers mornings", "afternoons only", "not home until 2",
+    // "no mornings"), not any mention of a morning.
+    const PART_WORDS = { am: 'mornings?', pm: 'afternoons?', eve: 'evenings?' };
+    const PART_SAY = { am: 'mornings', pm: 'afternoons', eve: 'evenings' };
+    const wishOf = raw => {
+      const t = (typeof lang !== 'undefined' ? lang.plain(raw) : norm(raw)).toLowerCase();
+      const want = new Set(), avoid = new Set();
+      Object.keys(PART_WORDS).forEach(p => {
+        const w = '(?:' + PART_WORDS[p] + ')';
+        if (new RegExp('\\b(?:no|not|never|except|anything but|can\'?t do|cannot do|doesn\'?t want|don\'?t want|does not want)\\s+(?:in\\s+the\\s+|any\\s+)?' + w + '\\b').test(t)) { avoid.add(p); return; }
+        if (new RegExp('\\b(?:prefers?|preferred|wants?|needs?|only|available|free|home|best|better|works?|schedule|book|come|requests?|requested|asked for|would like|likes?)\\b[^.!?]{0,40}\\b' + w + '\\b').test(t) ||
+          new RegExp('\\b' + w + '\\s+(?:only|preferred|are best|is best|work best|works best|are better|appointments?|appts?|please)\\b').test(t)) want.add(p);
+      });
+      if (/\bbefore\s+(?:noon|lunch|1[0-2]\b)/.test(t)) want.add('am');
+      const m = /\b(?:after|not home (?:until|till|til)|home (?:after|by)|off (?:work )?(?:at|by)|gets? (?:home|off) (?:at|by|around))\s+(noon|lunch|work|\d{1,2})(?::\d\d)?\s*(a\.?m\b)?/.exec(t);
+      if (m && !m[2]) {
+        const h = /^\d/.test(m[1]) ? Number(m[1]) : m[1] === 'work' ? 5 : 12;
+        if (h === 12 || (h >= 1 && h <= 4)) want.add('pm'); else if (h >= 5 && h <= 7) want.add('eve');
+      }
+      avoid.forEach(p => want.delete(p));
+      return { want, avoid };
+    };
+    const wishWords = w => Array.from(w.want).map(p => PART_SAY[p]).concat(Array.from(w.avoid).map(p => 'not ' + PART_SAY[p])).join(', ');
+    // {about}: "Quote - Water Heater" -> "your water heater quote". Short words in capitals (AC,
+    // HVAC) are kept as they are.
+    const aboutOf = type => {
+      const t = norm(type).replace(/^non\s*-?\s*operational/i, 'Non Operational');
+      if (!t) return 'your appointment';
+      const segs = t.split(/\s+-\s*|\s*-\s+/).map(norm).filter(Boolean), kind = (segs[0] || '').toLowerCase();
+      const thingSeg = segs.slice(1).find(x => !/^(residential|commercial|summer|fall|winter|spring|under|over|\d)/i.test(x)) || '';
+      const thing = thingSeg.split(' ').map(w => /^[A-Z]{2,5}$/.test(w) ? w : w.toLowerCase()).join(' ');
+      if (/quote|estimate/.test(kind)) return thing ? 'your ' + thing + ' quote' : 'your free quote';
+      if (/maint|tune|clean/.test(kind)) return 'your maintenance visit';
+      if (/non operational|repair/.test(kind)) return thing ? 'your ' + thing + ' repair' : 'your repair visit';
+      if (/install/.test(kind)) return thing ? 'your ' + thing + ' installation' : 'your installation';
+      if (/^service/.test(kind)) return thing ? 'your ' + thing + ' service call' : 'your service call';
+      return 'your appointment';
+    };
+    // Where we already have jobs on a day: { cities, zips }, or null when the day couldn't be read.
+    const placeKey = t => norm(t).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const zipOf = z => (/\b(\d{5})/.exec(String(z == null ? '' : z)) || [])[1] || '';
+    const townName = c => norm(c).toLowerCase().replace(/(^|[\s'-])([a-z])/g, (m, a, b) => a + b.toUpperCase());
+    const townsOn = async days => {
+      const out = new Map();
+      await Promise.all(days.map(async day => {
+        try {
+          const s = await board.dayData(fromYmd(day));
+          const cities = new Set(), zips = new Set();
+          s.appts.forEach(a => {
+            if (!board.live(a) || /^hold$/i.test(a.status) || /^hold$/i.test(a.jobStatus) || PHONE_ONLY.test(a.jobType || '')) return;
+            if (placeKey(a.city)) cities.add(placeKey(a.city));
+            if (zipOf(a.zip)) zips.add(zipOf(a.zip));
+          });
+          out.set(day, { cities, zips });
+        } catch (e) { if (st.isSignedOut(e)) throw e; out.set(day, null); }
+      }));
+      return out;
+    };
+    const inTown = (r, t) => !!t && ((!!r.zip && t.zips.has(r.zip)) || (!!placeKey(r.city) && t.cities.has(placeKey(r.city))));
+    // The times for one customer. ctx: { slots, used (opening -> customers it's out to), towns, n, perSpot, townOn }.
+    const pickOptions = (r, ctx) => {
+      const wish = wishOf(r.summary || '');
+      let open = ctx.slots.filter(sl => sl.spots > 0 && (ctx.used.get(slotKey(sl)) || 0) < sl.spots * ctx.perSpot);
+      if (!open.length) return { opts: [], wish, wishKept: false };
+      const part = sl => winOf(sl.win).part;
+      let wishKept = false;
+      const wanted = open.filter(sl => wish.want.has(part(sl)));
+      if (wanted.length) { open = wanted; wishKept = true; }
+      else if (!wish.want.size) { const ok = open.filter(sl => !wish.avoid.has(part(sl))); if (ok.length) { open = ok; wishKept = wish.avoid.size > 0; } }
+      const town = sl => ctx.townOn && inTown(r, ctx.towns.get(sl.day)) ? 1 : 0;
+      const pool = open.slice().sort((a, b) => (town(b) - town(a)) || bySlot(a, b)), opts = [];
+      while (opts.length < ctx.n && pool.length) {
+        let i = pool.findIndex(sl => !opts.some(o => o.day === sl.day));   // another day first
+        if (i < 0) i = 0;
+        opts.push(pool.splice(i, 1)[0]);
+      }
+      return { opts: opts.sort(bySlot).map(sl => ({ day: sl.day, win: sl.win, town: !!town(sl) })), wish, wishKept };
+    };
+    // {options}: "1 for Tuesday, November 12 between 12 and 5 PM, or 2 for Thursday, November 14 between 8 AM and 12 PM".
+    const optionsText = (r, opts) => {
+      const parts = opts.map((o, i) => (i + 1) + ' for ' + longDay(o.day) + ' ' + winOf(o.win).say + (o.town ? ' (we\'ll already be in ' + (townName(r.city) || 'your area') + ' that day)' : ''));
+      return parts.length < 3 ? parts.join(', or ') : parts.slice(0, -1).join(', ') + ', or ' + parts[parts.length - 1];
+    };
+    const offerFill = (x, tmpl) => fill(tmpl, Object.assign({}, x.vars, { options: optionsText(x.r, x.offer.opts) }));
+    // Gives every customer about to be texted their times and their text. Anyone no opening is left
+    // for is skipped, saying so. Returns what it used (for the review screen).
+    const dressOffers = async (result, tmpl) => {
+      const list = slots();
+      const ctx = { slots: list, used: offeredTo(), n: offerN(), perSpot: perSpot(), townOn: townOn(), towns: new Map(), townTrouble: false, tmpl };
+      if (ctx.townOn && result.sends.some(x => x.r.city || x.r.zip)) {
+        ctx.towns = await townsOn(Array.from(new Set(list.map(sl => sl.day))));
+        ctx.townTrouble = Array.from(ctx.towns.values()).some(v => !v);
+      }
+      const byCust = new Map(), sends = [];
+      result.sends.forEach(x => {
+        const k = x.r.customerId ? 'c' + x.r.customerId : 'j' + x.r.jobId;
+        let o = byCust.get(k);
+        if (!o) { o = pickOptions(x.r, ctx); byCust.set(k, o); o.opts.forEach(z => ctx.used.set(slotKey(z), (ctx.used.get(slotKey(z)) || 0) + 1)); }
+        if (!o.opts.length) { result.skips.push({ r: x.r, num: x.num, why: 'no opening left to offer them (add times or spots in 🗓️ Times to offer)', kind: 'skipped' }); return; }
+        x.offer = { opts: o.opts.map(z => Object.assign({}, z)), wish: o.wish, wishKept: o.wishKept };
+        x.text = offerFill(x, tmpl);
+        sends.push(x);
+      });
+      result.sends = sends;
+      return ctx;
     };
 
     // ---------- Settings ----------
@@ -4910,7 +5107,12 @@
     // 📥 Check replies: only on folders whose texts ask customers to reply C.
     const repliesBtn = smallBtn('📥 Check replies and confirm', () => openReplies(), 'margin-top:6px;' + FULL + 'padding:7px;border-color:var(--st-green);color:var(--st-green-d);font-weight:600');
     repliesBtn.title = 'Reads the replies to this folder\'s texts from everyone on the board (or the jobs you picked) for the day shown. Customers who answered C get their appointment confirmed; anyone who answered something else is listed for you to read. Nothing is sent.';
-    vMain.append(mainMsg, label('Folder'), folderRow, ruleLine, label('Message'), msgList, label('Who'), whoRow, whoBox, label('How'), modeRow, startBtn, repliesBtn, mainNav);
+    // 🗓️ Times to offer, and 📥 Check replies: only on folders that offer times.
+    const offerBox = el('div', 'display:none;margin-top:8px;border:1px solid var(--st-line);border-radius:8px;padding:7px 8px;background:var(--st-soft);font-size:12px');
+    offerBox.id = 'st-ct-offer-times';
+    const offerRepliesBtn = smallBtn('📥 Check replies to offers', () => openOfferReplies(), 'margin-top:6px;' + FULL + 'padding:7px;border-color:var(--st-green);color:var(--st-green-d);font-weight:600');
+    offerRepliesBtn.title = 'Reads the replies from everyone who was offered times, and lists who picked which one. Nothing is sent and nothing is booked.';
+    vMain.append(mainMsg, label('Folder'), folderRow, ruleLine, label('Message'), msgList, offerBox, label('Who'), whoRow, whoBox, label('How'), modeRow, startBtn, repliesBtn, offerRepliesBtn, mainNav);
     const say = s => { mainMsg.textContent = s; };
 
     let stopRun = false, running = false, stepResolve = null;
@@ -4942,7 +5144,7 @@
       };
       if (source === 'holds') {
         if (!holds) return out;
-        holds.jobs.forEach(h => { if (typeSel.has(h.type) && holdF.passes(h)) addOne({ jobId: h.jobId, customer: h.customer, customerId: h.customerId, tech: '', hold: true, listStatus: h.status, type: h.type }); });
+        holds.jobs.forEach(h => { if (typeSel.has(h.type) && holdF.passes(h)) addOne({ jobId: h.jobId, customer: h.customer, customerId: h.customerId, tech: '', hold: true, listStatus: h.status, type: h.type, city: h.city, zip: h.zip, summary: h.summary }); });
       } else {
         picker.ids().forEach(j => { const b = jobInfo(j) || {}; addOne({ jobId: j, customer: b.customer || picker.label(j) || '', customerId: b.customerId || null, tech: b.tech || '', day: jobDay(j), type: b.type || '' }); });
       }
@@ -4998,6 +5200,52 @@
       whoBox.appendChild(btns);
     };
     const sumOf = m => Array.from(m.values()).reduce((a, b) => a + b, 0);
+    // 🗓️ Times to offer: the openings (＋ and − change the spots, ✕ takes one off), one to add, and
+    // how many each customer is offered.
+    const SEL = 'padding:3px 5px;border:1px solid var(--st-ctl);border-radius:5px;font:inherit;font-size:12px;color:var(--st-ink);background:var(--st-bg);max-width:100%;';
+    let addDay = '', addWin = '12-5', addSpots = 2;
+    const pickList = (id, rows, cur, onPick) => {
+      const sel = el('select', SEL + 'cursor:pointer');
+      sel.id = id;
+      rows.forEach(([v, t]) => { const o = el('option', '', t); o.value = v; sel.appendChild(o); });
+      sel.value = cur;
+      sel.onchange = () => onPick(sel.value);
+      return sel;
+    };
+    const renderOfferBox = () => {
+      offerBox.textContent = '';
+      const list = slots(), used = offeredTo(), n = offerN();
+      offerBox.appendChild(el('div', 'font-weight:700', '🗓️ Times to offer'));
+      offerBox.appendChild(el('div', 'color:var(--st-ink-3);margin:1px 0 4px', list.length ? 'Each customer is offered ' + (n === 1 ? 'one' : 'up to ' + n) + ' of these, chosen for them. You see every text before it\'s sent.'
+        : 'Add the openings you want filled. Each customer is offered ' + (n === 1 ? 'one' : 'up to ' + n) + ' of them, chosen for them.'));
+      list.forEach(sl => {
+        const line = el('div', 'display:flex;gap:4px;align-items:center;padding:2px 0');
+        line.className = 'st-ct-slot';
+        const out = used.get(slotKey(sl)) || 0;
+        line.append(el('span', 'flex:1;min-width:0' + (sl.spots ? '' : ';color:var(--st-ink-3)'), slotLabel(sl) + ' · ' + (sl.spots ? s1(sl.spots, 'spot') : 'full') + (out ? ' · out to ' + out : '')),
+          smallBtn('−', () => { changeSlot(sl, -1); renderMain(); }, 'padding:0 7px'), smallBtn('＋', () => { changeSlot(sl, 1); renderMain(); }, 'padding:0 7px'),
+          smallBtn('✕', () => { dropSlot(sl); renderMain(); }, 'padding:0 7px;color:var(--st-red);border-color:var(--st-red-l)'));
+        offerBox.appendChild(line);
+      });
+      const days = [];
+      for (let i = 1; i <= 21; i++) { const d = today0(); d.setDate(d.getDate() + i); days.push([ymd(d), shortDay(ymd(d))]); }
+      if (!days.some(d => d[0] === addDay)) addDay = days[0][0];
+      const addRow = el('div', 'display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-top:5px');
+      const spotsIn = el('input', SEL + 'width:44px');
+      spotsIn.type = 'number'; spotsIn.min = '1'; spotsIn.max = '50'; spotsIn.value = String(addSpots); spotsIn.id = 'st-ct-offer-spots'; spotsIn.title = 'How many jobs this opening can take';
+      spotsIn.oninput = () => { addSpots = Math.max(1, Math.min(50, parseInt(spotsIn.value, 10) || 1)); };
+      addRow.append(pickList('st-ct-offer-day', days, addDay, v => { addDay = v; }), pickList('st-ct-offer-win', WINDOWS.map(w => [w.id, w.label]), addWin, v => { addWin = v; }),
+        spotsIn, el('span', '', 'spots'), smallBtn('＋ Add', () => { addSlot(addDay, addWin, addSpots); say('Added ' + slotLabel({ day: addDay, win: addWin }) + '.'); renderMain(); }, 'padding:2px 8px'));
+      offerBox.appendChild(addRow);
+      const opt = el('div', 'display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-top:6px;color:var(--st-ink-2)');
+      opt.append(el('span', '', 'Offer each customer'), pickList('st-ct-offer-n', [['1', '1 time'], ['2', '2 times'], ['3', '3 times']], String(n), v => { set(K.offerN, v); renderMain(); }),
+        el('span', '', '· each spot to up to'), pickList('st-ct-offer-per', [1, 2, 3, 4, 5].map(k => [String(k), s1(k, 'customer')]), String(perSpot()), v => { set(K.perSpot, v); renderMain(); }));
+      opt.lastChild.title = 'Most people don\'t answer, so each spot is offered to a few customers at once. 📥 Check replies warns when more pick a time than it has spots.';
+      offerBox.appendChild(opt);
+      const town = check('Say when we\'ll already be in their town that day', townOn(), v => { set(K.town, v ? '1' : '0'); });
+      town.l.title = 'Reads the schedule for each day you offer. A hold in a city or zip code where a job is already booked that day gets that day first, and the text says "(we\'ll already be in Magee that day)".';
+      offerBox.appendChild(town.l);
+    };
     const doLoadHolds = async () => {
       if (holdsLoading || running) return;
       if (!onBoard()) { say(board.need()); return; }
@@ -5092,15 +5340,22 @@
       folders.forEach((f, i) => folderRow.appendChild(chip(f.name, i === fIdx, () => {
         fIdx = i; set(K.folder, String(i));
         // The Holds folder usually goes with the Hold list; the others with picked jobs.
-        const want = /hold/i.test(f.name) ? 'holds' : 'picked';
+        const want = /hold/i.test(f.name) || isOfferFolder(f) ? 'holds' : 'picked';
         if (want !== source) { source = want; set(K.source, source); if (source !== 'picked') picker.setPicking(false); }
         renderMain();
       })));
       const f = curFolder();
-      ruleLine.textContent = '🔁 ' + ruleText(f) + (isConfirmFolder(f) ? '\n✅ Customers confirm by replying C: use 📥 Check replies afterwards.' : '');
+      ruleLine.textContent = '🔁 ' + ruleText(f) + (isConfirmFolder(f) ? '\n✅ Customers confirm by replying C: use 📥 Check replies afterwards.' : '') +
+        (isOfferFolder(f) ? '\n📲 Offers times: customers reply 1 or 2. Use 📥 Check replies to offers afterwards.' : '');
       ruleLine.style.whiteSpace = 'pre-wrap';
       repliesBtn.style.display = isConfirmFolder(f) ? 'block' : 'none';
       repliesBtn.disabled = !onBoard(); repliesBtn.style.opacity = onBoard() ? '1' : '.5';
+      const offering = isOfferFolder(f), out = offering ? offersOut().length : 0;
+      offerBox.style.display = offering ? 'block' : 'none';
+      if (offering) renderOfferBox();
+      offerRepliesBtn.style.display = offering ? 'block' : 'none';
+      offerRepliesBtn.textContent = '📥 Check replies to offers' + (out ? ' (' + out + ' out)' : '');
+      offerRepliesBtn.disabled = !onBoard() || !out; offerRepliesBtn.style.opacity = onBoard() && out ? '1' : '.5';
       msgList.textContent = '';
       if (!f.msgs.length) msgList.appendChild(el('div', 'font-size:12px;color:var(--st-ink-3)', 'No messages in this folder yet. Use ✏️ Edit messages.'));
       f.msgs.forEach(([name, text], i) => {
@@ -5124,20 +5379,22 @@
       );
       const r = recipients();
       const m = curMsg();
-      const ok = onBoard() && r.length > 0 && !!m;
+      const ok = onBoard() && r.length > 0 && !!m && (!offering || slots().some(sl => sl.spots > 0));
       startBtn.disabled = !ok; startBtn.style.opacity = ok ? '1' : '.5';
-      startBtn.textContent = (mode === 'auto' ? 'Review and send to ' : 'Start (type only): ') + s1(r.length, 'customer');
+      startBtn.textContent = offering ? 'Review each text: ' + s1(r.length, 'customer') : (mode === 'auto' ? 'Review and send to ' : 'Start (type only): ') + s1(r.length, 'customer');
       picker.render();   // the list and its highlights
       if (!onBoard()) say(board.need());
       else if (m && uses(m[1], 'dispatcher') && !myName()) say('⚠️ This message uses {dispatcher}, but your name couldn\'t be found. Set it in ⚙️ Settings.');
-      else if (!mainMsg.textContent || /^(Open the Dispatch|Switch the Dispatch|Wait for the Dispatch|⚠️ This message uses)/.test(mainMsg.textContent)) say(myName() ? 'Texts are signed as ' + myName() + '.' : '');
+      else if (m && offering && !uses(m[1], 'options')) say('⚠️ This message has no {options}, so it wouldn\'t say which times you\'re offering. Add {options} in ✏️ Edit messages.');
+      else if (m && !offering && uses(m[1], 'options')) say('⚠️ This message uses {options}, which only works in a folder that offers times (📁 Edit folders).');
+      else if (!mainMsg.textContent || /^(Open the Dispatch|Switch the Dispatch|Wait for the Dispatch|⚠️ This message (uses|has))/.test(mainMsg.textContent)) say(myName() ? 'Texts are signed as ' + myName() + '.' : '');
     };
 
     // ===== Edit messages =====
     const vEdit = mkView('edit');
     const editHead = head('');
     const editMsg = msgLine();
-    const EDIT_HINT = 'Fill-ins: {dispatcher} = your first name, {first} = customer\'s first name, {tech} = the tech\'s first name (jobs on the board only), {when} = when their appointment is: "today", "tomorrow" or "on Friday, October 30" (not for holds). Saved in this browser.';
+    const EDIT_HINT = 'Fill-ins: {dispatcher} = your first name, {first} = customer\'s first name, {tech} = the tech\'s first name (jobs on the board only), {when} = when their appointment is: "today", "tomorrow" or "on Friday, October 30" (not for holds), {about} = what the job is, from its job type ("your water heater quote"). {options} = the times offered to that customer (only in a folder that offers times). Saved in this browser.';
     const ed = listEditor('message', 'Button name (e.g. 🆓 Free quote)', 'Message text', 'calc(100vh - 320px)', { allowEmpty: true });
     const editNav = row();
     editNav.append(
@@ -5171,14 +5428,16 @@
         rule.append(document.createTextNode('Skip if texted in the last'), days, document.createTextNode('days (0 = never skip, 1 = today)'));
         const sameOnly = check('Only count this same message (not other texts)', f.same, v => { f.same = v; });
         sameOnly.l.style.marginTop = '3px';
-        const confirms = check('✅ Customers confirm by replying C (for 📥 Check replies)', !!f.confirm, v => { f.confirm = v; });
+        const confirms = check('✅ Customers confirm by replying C (for 📥 Check replies)', !!f.confirm, v => { f.confirm = v; if (v && f.offer) { f.offer = false; renderFolders(); } });
+        const offers = check('📲 Offers times: customers reply 1 or 2 (its messages use {options})', !!f.offer, v => { f.offer = v; if (v && f.confirm) { f.confirm = false; renderFolders(); } });
+        offers.l.title = 'Turn on for a folder whose messages offer openings from 🗓️ Times to offer. Each customer gets their own times, you see every text before it goes, and 📥 Check replies to offers lists who picked what.';
         confirms.l.title = 'Turn on for reminder texts that ask customers to reply C. 📥 Check replies then confirms the appointments of everyone who answered C. Leave it off for every other folder (OutReach, Holds...): replies to those are never read as a confirmation.';
         const tools = el('div', 'display:flex;gap:4px;margin-top:5px;align-items:center');
         const mv = d => () => { const j = i + d; if (j < 0 || j >= draftF.length) return; const t = draftF[i]; draftF[i] = draftF[j]; draftF[j] = t; renderFolders(); };
         tools.append(smallBtn('↑', mv(-1), i === 0 ? 'opacity:.4' : ''), smallBtn('↓', mv(1), i === draftF.length - 1 ? 'opacity:.4' : ''),
           el('span', 'flex:1;color:var(--st-ink-3);padding-left:4px', s1(f.msgs.length, 'message')),
           smallBtn('Delete', () => { draftF.splice(i, 1); renderFolders(); }, 'color:var(--st-red);border-color:var(--st-red-l)'));
-        r.append(nm, rule, sameOnly.l, confirms.l, tools);
+        r.append(nm, rule, sameOnly.l, confirms.l, offers.l, tools);
         foldBox.appendChild(r);
       });
     };
@@ -5193,17 +5452,18 @@
         if (new Set(names).size !== names.length) { foldMsg.textContent = '⚠️ Two folders have the same name.'; return; }
         folders = clean; saveFolders();
         confirmKeys = clean.filter((f, i) => kept[i].confirm).map(f => folderKey(f.name)); saveConfirm();
+        offerKeys = clean.filter((f, i) => kept[i].offer && !kept[i].confirm).map(f => folderKey(f.name)); saveOffer();
         fIdx = Math.min(fIdx, folders.length - 1); set(K.folder, String(fIdx));
         sub('main'); say('✅ Folders saved.'); renderMain();
       }, PRIMARY),
       smallBtn('Cancel', () => { sub('main'); renderMain(); }),
-      smallBtn('+ Add folder', () => { draftF.push({ name: '', days: 1, same: true, confirm: false, msgs: [] }); renderFolders(); foldBox.scrollTop = foldBox.scrollHeight; }),
-      smallBtn('Reset to original', () => { draftF = cloneDefaults().map(f => Object.assign(f, { confirm: CONFIRM_DEFAULT.indexOf(f.name) > -1 })); renderFolders(); foldMsg.textContent = 'Back to the original folders and messages. Press Save to keep this.'; })
+      smallBtn('+ Add folder', () => { draftF.push({ name: '', days: 1, same: true, confirm: false, offer: false, msgs: [] }); renderFolders(); foldBox.scrollTop = foldBox.scrollHeight; }),
+      smallBtn('Reset to original', () => { draftF = cloneDefaults().map(f => Object.assign(f, { confirm: CONFIRM_DEFAULT.indexOf(f.name) > -1, offer: OFFER_DEFAULT.indexOf(f.name) > -1 })); renderFolders(); foldMsg.textContent = 'Back to the original folders and messages. Press Save to keep this.'; })
     );
     vFolders.append(head('📁 Edit folders'), foldMsg, foldBox, foldNav);
     const openFolders = () => {
       if (running) return;
-      draftF = folders.map(f => ({ name: f.name, days: f.days, same: f.same, confirm: isConfirmFolder(f), msgs: f.msgs.map(m => m.slice()) }));
+      draftF = folders.map(f => ({ name: f.name, days: f.days, same: f.same, confirm: isConfirmFolder(f), offer: isOfferFolder(f), msgs: f.msgs.map(m => m.slice()) }));
       foldMsg.textContent = 'Each folder has its own repeat rule. Deleting a folder deletes its messages when you Save.';
       renderFolders(); sub('folders');
     };
@@ -5265,14 +5525,88 @@
     const confNav = row();
     let checkId = 0;   // a newer check (or Cancel) makes an older one stop updating the screen
     confNav.append(confGo, smallBtn('Cancel', () => { checkId++; sub('main'); renderMain(); }));
-    vConfirm.append(confHead, confText, confAsk, confNav);
-    let planned = null;   // { sends: [...], skips: [...], customers }
+    // A folder that offers times: every customer's text as a card, to change before anything is sent.
+    const confCards = el('div', 'display:none;max-height:calc(100vh - 430px);min-height:150px;overflow:auto;margin-top:6px');
+    confCards.id = 'st-ct-offer-cards';
+    vConfirm.append(confHead, confText, confCards, confAsk, confNav);
+    let planned = null;   // { sends: [...], skips: [...], customers, offer (a folder that offers times: what dressOffers used) }
+    const liveSends = () => planned ? planned.sends.filter(x => !x.off && norm(x.text)) : [];
+    // What's asked before sending: how many texts (Auto-send: typed in to confirm).
+    const askFor = n => {
+      confAsk.textContent = ''; confInput.value = '';
+      if (!n) { confAsk.textContent = planned && planned.sends.length ? 'Nobody to text: everyone is taken off.' : 'Nobody to text: everyone was skipped.'; confGo.style.display = 'none'; return; }
+      confGo.style.display = 'inline-block';
+      if (mode === 'auto') {
+        confAsk.append(document.createTextNode('Auto-send is on. To confirm, type how many texts this sends (' + n + '):'), confInput);
+        confGo.textContent = 'Send ' + s1(n, 'text');
+      } else {
+        confAsk.textContent = 'Type only: it opens each conversation and types the message. You press Send, and it moves to the next one.';
+        confGo.textContent = 'Start';
+      }
+      confAsk.appendChild(el('div', 'color:var(--st-ink-3);margin-top:4px', 'Keep this tab on screen while it runs (browsers slow down hidden tabs). About 3 to 4 seconds per text.'));
+    };
+    // One customer's text: their times (change them and the text is written again), the text itself
+    // (type over it), ↺ back to the written one, and ✕ to leave them out.
+    const offerCard = x => {
+      const ctx = planned.offer, r = x.r;
+      const c = el('div', 'border:1px solid var(--st-line);border-radius:10px;padding:8px 10px;margin-bottom:6px;font-size:12px;background:var(--st-bg);color:var(--st-ink)' + (x.off ? ';opacity:.55' : ''));
+      c.className = 'st-ct-offer';
+      c.setAttribute('data-job', String(r.jobId));
+      const again = () => { const k = offerCard(x); c.replaceWith(k); askFor(liveSends().length); return k; };
+      const top = el('div', 'display:flex;gap:6px;align-items:baseline');
+      top.append(el('div', 'flex:1;font-weight:700;font-size:13px;word-break:break-word', r.customer || 'Job #' + r.jobId), el('div', 'color:var(--st-ink-3);white-space:nowrap', showNum(x.num) + ' · #' + r.jobId));
+      c.appendChild(top);
+      const why = [];
+      if (r.type) why.push(r.type);
+      const ww = wishWords(x.offer.wish);
+      if (ww) why.push('🕑 Summary asks for ' + ww + (x.offer.wishKept ? '' : ' (no opening like that)'));
+      const townDays = x.offer.opts.filter(o => o.town).map(o => shortDay(o.day));
+      if (townDays.length) why.push('📍 Already in ' + (townName(r.city) || 'their area') + ' ' + townDays.join(' and '));
+      if (why.length) c.appendChild(el('div', 'color:var(--st-ink-2);margin-top:2px', why.join(' · ')));
+      if (x.off) {
+        c.appendChild(el('div', 'margin-top:4px;color:var(--st-ink-3)', 'Left out: they won\'t be texted.'));
+        c.appendChild(smallBtn('↩ Text them after all', () => { x.off = false; again(); }, 'margin-top:5px;padding:3px 7px'));
+        return c;
+      }
+      const rows = [['', '— no time —']].concat(ctx.slots.filter(sl => sl.spots > 0 || x.offer.opts.some(o => slotKey(o) === slotKey(sl))).map(sl => [slotKey(sl), slotLabel(sl)]));
+      const sels = el('div', 'display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-top:6px');
+      const chosen = [];
+      for (let i = 0; i < Math.max(ctx.n, x.offer.opts.length); i++) {
+        const sel = pickList('', rows, x.offer.opts[i] ? slotKey(x.offer.opts[i]) : '', () => {
+          const keys = Array.from(new Set(chosen.map(z => z.value).filter(Boolean)));
+          x.offer.opts = keys.map(k => { const sl = ctx.slots.find(z => slotKey(z) === k); return { day: sl.day, win: sl.win, town: ctx.townOn && inTown(r, ctx.towns.get(sl.day)) }; }).sort(bySlot);
+          if (!x.offer.opts.length) { x.off = true; again(); return; }
+          x.text = offerFill(x, ctx.tmpl); x.edited = false;
+          again();
+        });
+        sel.removeAttribute('id'); sel.className = 'st-ct-offer-opt'; sel.style.flex = '1'; sel.style.minWidth = '110px';
+        sel.title = 'Time ' + (i + 1) + ' offered to them. Changing it writes their text again.';
+        chosen.push(sel); sels.appendChild(sel);
+      }
+      c.appendChild(sels);
+      const ta = el('textarea', FULL + FIELD + 'margin-top:6px;resize:vertical;line-height:1.35');
+      ta.rows = 9; ta.value = x.text; ta.className = 'st-ct-offer-text';
+      const reset = smallBtn('↺ Written text', () => { x.text = offerFill(x, ctx.tmpl); x.edited = false; again(); }, 'padding:3px 7px;display:' + (x.edited ? 'inline-block' : 'none'));
+      reset.title = 'Puts back the text as written from the message and their times';
+      const count = el('span', 'flex:1;color:var(--st-ink-3);font-size:11px');
+      const sizeUp = () => { count.textContent = x.text.length + ' characters' + (x.edited ? ' · changed by you' : ''); };
+      ta.oninput = () => { x.text = ta.value; x.edited = x.text !== offerFill(x, ctx.tmpl); reset.style.display = x.edited ? 'inline-block' : 'none'; sizeUp(); askFor(liveSends().length); };
+      sizeUp();
+      const foot = el('div', 'display:flex;gap:5px;align-items:center;margin-top:5px');
+      foot.append(count, reset, smallBtn('✕ Leave out', () => { x.off = true; again(); }, 'padding:3px 7px'));
+      c.append(ta, foot);
+      return c;
+    };
     const openConfirm = async () => {
       if (running) return;
       if (lock) return say('Wait for ' + lock + ' to finish first.');
       const m = curMsg();
       if (!m) return say('Pick a message first.');
       if (uses(m[1], 'dispatcher') && !myName()) return say('⚠️ Set your name in ⚙️ Settings first (the message uses {dispatcher}).');
+      const offering = isOfferFolder(curFolder());
+      if (offering && !uses(m[1], 'options')) return say('⚠️ This message has no {options}, so it wouldn\'t say which times you\'re offering. Add {options} in ✏️ Edit messages.');
+      if (!offering && uses(m[1], 'options')) return say('⚠️ This message uses {options}, which only works in a folder that offers times (📁 Edit folders).');
+      if (offering && !slots().some(sl => sl.spots > 0)) return say('Add at least one opening under 🗓️ Times to offer first.');
       const pending = recipients();
       if (!pending.length) return say(source === 'holds' ? 'Load the holds and tick at least one kind.' : 'Pick some jobs first.');
       picker.setPicking(false);
@@ -5282,6 +5616,8 @@
       planned = null;
       confHead.textContent = 'Checking before texting';
       confText.textContent = 'Checking ' + s1(pending.length, 'customer') + '…';
+      confText.style.maxHeight = offering ? '120px' : 'calc(100vh - 340px)';
+      confCards.style.display = 'none'; confCards.textContent = '';
       confAsk.textContent = ''; confGo.style.display = 'none';
       sub('confirm');
       const t0 = Date.now();
@@ -5292,12 +5628,29 @@
         confText.textContent = '⚠️ ' + st.SIGNED_OUT + '\n\nNothing was sent.';
         return;
       }
-      planned = Object.assign(result, { customers: pending.length });
+      // A folder that offers times: each customer gets their times and their own text.
+      let offer = null;
+      if (offering) {
+        confText.textContent = 'Choosing times for ' + s1(result.sends.length, 'customer') + '…';
+        try { offer = await dressOffers(result, tmpl); }
+        catch (e) {
+          if (id !== checkId) return;
+          confHead.textContent = 'Couldn\'t check';
+          confText.textContent = '⚠️ ' + (st.isSignedOut(e) ? st.SIGNED_OUT : 'The times couldn\'t be chosen: ' + errText(e)) + '\n\nNothing was sent.';
+          return;
+        }
+        if (id !== checkId) return;
+      }
+      planned = Object.assign(result, { customers: pending.length, offer });
       const sends = result.sends, skips = result.skips;
       const sample = sends[0] || null;
       const why = {};
       skips.forEach(x => { const k = x.why.replace(/ (today|yesterday|\d+ days ago)$/, ' recently'); why[k] = (why[k] || 0) + 1; });
-      const lines = [
+      const lines = offering ? [
+        'Folder: ' + f.name + '   🔁 ' + ruleText(f),
+        'Checked ' + s1(pending.length, 'customer') + (source === 'holds' ? ' from the Hold list' : '') + ' in ' + Math.max(1, Math.round((Date.now() - t0) / 1000)) + 's.',
+        '✅ ' + s1(sends.length, 'text') + ' below, each with that customer\'s own times. Change the times or the words for anyone, or ✕ Leave out.'
+      ] : [
         'Folder: ' + f.name + '   🔁 ' + ruleText(f),
         'Message' + (sample ? ' (as the first customer will see it)' : '') + ':',
         '"' + (sample ? sample.text : tmpl) + '"',
@@ -5307,8 +5660,9 @@
         '',
         '✅ Will text ' + s1(sends.length, 'number') + ':'
       ];
-      sends.slice(0, 40).forEach(x => lines.push('• ' + (x.r.customer || 'job #' + x.r.jobId) + ' ' + showNum(x.num) + '  (#' + x.r.jobId + ')' + (x.unchecked ? '  (checked on its page instead)' : '')));
-      if (sends.length > 40) lines.push('…and ' + (sends.length - 40) + ' more');
+      if (offering && offer.townTrouble) lines.push('ℹ️ The schedule for one of the days couldn\'t be read, so "already in their town" may be missing for it.');
+      if (!offering) sends.slice(0, 40).forEach(x => lines.push('• ' + (x.r.customer || 'job #' + x.r.jobId) + ' ' + showNum(x.num) + '  (#' + x.r.jobId + ')' + (x.unchecked ? '  (checked on its page instead)' : '')));
+      if (!offering && sends.length > 40) lines.push('…and ' + (sends.length - 40) + ' more');
       if (skips.length) {
         lines.push('', '⏭️ Skipping ' + skips.length + ': ' + Object.keys(why).map(k => why[k] + ' ' + k).join(', '));
         skips.slice(0, 40).forEach(x => lines.push('• ' + (x.r.customer || 'job #' + x.r.jobId) + (x.num ? ' ' + showNum(x.num) : '') + ': ' + x.why));
@@ -5317,21 +5671,9 @@
       if (jobRecordBlocked && pending.some(r => r.hold)) lines.push('', 'ℹ️ Your ServiceTitan login can\'t open job records, so holds booked since the Hold list loaded can\'t be spotted. Reload the Hold list first if it\'s been a while.');
       confHead.textContent = 'Check before texting';
       confText.textContent = lines.join('\n');
-      confAsk.textContent = ''; confInput.value = '';
-      if (!sends.length) {
-        confAsk.textContent = 'Nobody to text: everyone was skipped.';
-        return;
-      }
-      confGo.style.display = 'inline-block';
-      if (mode === 'auto') {
-        confAsk.append(document.createTextNode('Auto-send is on. To confirm, type how many texts this sends (' + sends.length + '):'), confInput);
-        confGo.textContent = 'Send ' + s1(sends.length, 'text');
-        setTimeout(() => confInput.focus(), 0);
-      } else {
-        confAsk.textContent = 'Type only: it opens each conversation and types the message. You press Send, and it moves to the next one.';
-        confGo.textContent = 'Start';
-      }
-      confAsk.appendChild(el('div', 'color:var(--st-ink-3);margin-top:4px', 'Keep this tab on screen while it runs (browsers slow down hidden tabs). About 3 to 4 seconds per text.'));
+      if (offering && sends.length) { sends.forEach(x => confCards.appendChild(offerCard(x))); confCards.style.display = 'block'; }
+      askFor(sends.length);
+      if (sends.length && mode === 'auto' && !offering) setTimeout(() => confInput.focus(), 0);
     };
     confInput.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); go(); } };
 
@@ -5602,7 +5944,8 @@
         const pickN = pickNumbers(info.phones);
         if (!pickN.nums.length) return { info, skips: [{ why: 'no mobile number on the Bill To', kind: 'skipped' }] };
         if (uses(tmpl, 'first') && !firstWord(name)) return { info, skips: [{ why: 'no customer name for {first}', kind: 'skipped' }] };
-        const text = fill(tmpl, { first: titleCase(firstWord(name)), tech: r.tech, when });
+        const vars = { first: titleCase(firstWord(name)), tech: r.tech, when, about: aboutOf(r.type) };
+        const text = fill(tmpl, vars);
         const nums = await Promise.all(pickN.nums.map(async num => {
           if (never.indexOf(num) > -1) return { num, skip: 'on your 🚫 never-text list', kind: 'skipped' };
           // If the chat data can't be read, the conversation's own page is checked during the run.
@@ -5615,7 +5958,7 @@
             return { num, ok: true, unchecked: errText(e) };
           }
         }));
-        return { info, text, note: pickN.note, nums };
+        return { info, text, vars, note: pickN.note, nums };
       }, progress, { stop });
       if (results.stopped) return { stopped: true };
       if (results.halted === 'signedOut') return { signedOut: true };
@@ -5630,7 +5973,7 @@
           if (n.skip) { skips.push({ r, num: n.num, why: n.skip, kind: n.kind }); return; }
           if (seen.has(n.num)) { skips.push({ r, num: n.num, why: 'same number as another customer in this run (texted once)', kind: 'skipped' }); return; }
           seen.add(n.num);
-          sends.push({ r, num: n.num, text: x.text, note: x.note, unchecked: n.unchecked || '' });
+          sends.push({ r, num: n.num, text: x.text, vars: x.vars, note: x.note, unchecked: n.unchecked || '' });
         });
       });
       return { sends, skips };
@@ -5649,13 +5992,17 @@
     // ---------- The run ----------
     const go = async () => {
       if (running || !planned) return;
-      const sends = planned.sends;
-      if (!sends.length) return;
-      if (mode === 'auto' && confInput.value.trim() !== String(sends.length)) {
-        if (confAsk.firstChild) confAsk.firstChild.textContent = '⚠️ That number doesn\'t match. Type ' + sends.length + ' to send ' + s1(sends.length, 'text') + ':';
+      // A folder that offers times: anyone you left out (or whose text you emptied) isn't texted.
+      const live = liveSends();
+      if (!live.length) return;
+      if (mode === 'auto' && confInput.value.trim() !== String(live.length)) {
+        if (confAsk.firstChild) confAsk.firstChild.textContent = '⚠️ That number doesn\'t match. Type ' + live.length + ' to send ' + s1(live.length, 'text') + ':';
         return;
       }
       if (lock) { sub('main'); return say('Wait for ' + lock + ' to finish first.'); }
+      planned.sends.forEach(x => { if (live.indexOf(x) < 0) planned.skips.push({ r: x.r, num: x.num, why: x.off ? 'left out by you' : 'its text was emptied', kind: 'skipped' }); });
+      planned.sends = live;
+      const sends = live;
       const f = curFolder(), m = curMsg();
       if (!m) { sub('main'); return; }
       running = true; stopRun = false; lock = TOOL;
@@ -5681,7 +6028,11 @@
       // A few seconds after each text, ServiceTitan's chat data says whether it really went out.
       // That's checked in the background so the next text doesn't have to wait for it.
       const checks = [];
+      // An offer that went out is kept (what was offered to whom), for 📥 Check replies to offers.
+      const offered = new Set();
+      const sentOffer = x => { if (x.offer) { recordOffer(x); offered.add(x.r.jobId + '|' + x.num); } };
       const failed = (r, num, code) => {
+        if (offered.has(r.jobId + '|' + num)) dropOffer(r.jobId, num);
         tally.sent = Math.max(0, (tally.sent || 0) - 1);
         out(r, num, 'ServiceTitan says it failed to send (code ' + (code || '?') + ')', 'problem');
         failsInRow++;
@@ -5798,11 +6149,11 @@
             ]);
             watch = false;
             if (stepResolve) stepResolve(null);
-            if (ans === 'sent') { out(r, num, 'sent by you' + x.note, 'sent'); deliveryCheck(r, num, text, Date.now()); await wait(300); continue; }
+            if (ans === 'sent') { out(r, num, 'sent by you' + x.note, 'sent'); sentOffer(x); deliveryCheck(r, num, text, Date.now()); await wait(300); continue; }
             const cNow = chatFor(num);
             if (ans === 'next') {
               if (cNow && norm(cNow.box.value)) { out(r, num, 'not sent? the text is still in the box', 'problem'); continue; }
-              out(r, num, 'sent by you' + x.note, 'sent'); continue;
+              out(r, num, 'sent by you' + x.note, 'sent'); sentOffer(x); continue;
             }
             if (cNow && norm(cNow.box.value) === norm(text)) clearIn(cNow);
             if (ans === 'stop') { stopRun = true; add('Stopped. ' + s1(sends.length - n, 'text') + ' not sent.'); break; }
@@ -5827,7 +6178,7 @@
             stopRun = true; break;
           }
           if (sent.SmsSendErrorCode || sent.HasNotBeenDelivered) { tally.sent = (tally.sent || 0) + 1; failed(r, num, sent.SmsSendErrorCode); }
-          else { out(r, num, 'sent' + x.note, 'sent'); deliveryCheck(r, num, text, sentAt); }
+          else { out(r, num, 'sent' + x.note, 'sent'); sentOffer(x); deliveryCheck(r, num, text, sentAt); }
           await wait(300);
         }
         // Give the last few background checks a moment to come back.
@@ -6029,6 +6380,30 @@
       return [t.ThreadId, t.BlockedStatus, m.SmsId, m.CreatedOn].join('|');
     };
 
+    // Reading an unread conversation without ServiceTitan marking it read: the first one read is
+    // looked at again right after, and if it turned read, no other unread one is read (readUnread
+    // then gives null). Shared by 📥 Check replies and 📥 Check replies to offers.
+    const unreadReader = () => {
+      const ctx = { markRead: false, markedNum: '', canary: null };
+      ctx.readUnread = async (t, num) => {
+        if (ctx.markRead) return null;
+        if (!ctx.canary) {
+          const p = (async () => {
+            const raw = await st.chatMessages(t.ThreadId, 60);
+            const t2 = await st.chatThread(num);
+            if (t2 && t2.ReadStatus !== codes().unread) { ctx.markRead = true; ctx.markedNum = num; }
+            return raw;
+          })();
+          ctx.canary = p.then(() => true, () => { ctx.canary = null; return false; });
+          return await p;
+        }
+        await ctx.canary;
+        if (ctx.markRead) return null;
+        return await st.chatMessages(t.ThreadId, 60);
+      };
+      return ctx;
+    };
+
     const vReplies = mkView('replies');
     const repHead = head('📥 Check replies');
     const repMsg = el('div', 'font-size:12px;color:var(--st-ink-2);margin-bottom:6px;min-height:16px;white-space:pre-wrap');
@@ -6087,23 +6462,7 @@
       // does that with a separate request, so reading the data shouldn't, but it's checked): the
       // first unread one read is looked at again right after. If it turned read, no other unread
       // conversation is read this time; those go to "Needs a look".
-      const ctx = { markRead: false, markedNum: '', canary: null };
-      ctx.readUnread = async (t, num) => {
-        if (ctx.markRead) return null;
-        if (!ctx.canary) {
-          const p = (async () => {
-            const raw = await st.chatMessages(t.ThreadId, 60);
-            const t2 = await st.chatThread(num);
-            if (t2 && t2.ReadStatus !== codes().unread) { ctx.markRead = true; ctx.markedNum = num; }
-            return raw;
-          })();
-          ctx.canary = p.then(() => true, () => { ctx.canary = null; return false; });
-          return await p;
-        }
-        await ctx.canary;
-        if (ctx.markRead) return null;
-        return await st.chatMessages(t.ThreadId, 60);
-      };
+      const ctx = unreadReader();
       const res = await st.pool(custs, 4, (cu, i, alive) => readReplies(cu, pats, fromT, toT, ctx, alive, day),
         (d, t) => { if (id === rCheckId) repMsg.textContent = 'Reading replies… ' + d + ' of ' + t; }, { stop: () => id !== rCheckId });
       if (id !== rCheckId || res.stopped) return;
@@ -6260,6 +6619,181 @@
       }
     };
 
+    // ===================================================================
+    // 📥 Check replies to offers (folders that offer times)
+    // Reads the conversation of everyone an offer is out to (nothing is sent) and sorts them:
+    //   - "1", "2", "option 2", "the first one", or the day they were offered ("Tuesday works")
+    //                                        -> Picked a time, with which one
+    //   - "either" / "any of them"           -> Picked a time (either works)
+    //   - "no", "not interested", STOP       -> Said no
+    //   - anything else, or an unread reply  -> Needs a look, with what they said
+    //   - nothing yet                        -> No reply yet
+    //   - no longer on the Hold list         -> listed once as booked or closed, then forgotten
+    // Nothing is booked from here: you open the job and book it, then ✓ Booked takes them off the
+    // list and one spot off that opening. A reply read wrong can be set right with → 1 / → 2.
+    // ===================================================================
+    const FLUFF = /^(thanks|thank you|thank u|thx|ty|great|perfect|awesome|sounds good|good|please|pls)[.! ]*$/i;
+    const YES_START = /^(yes|yeah|yep|yup|ok|okay|sure|sounds good|that works|that will work|works for me|perfect)\b/i;
+    const NUM_WORDS = { one: 1, first: 1, '1st': 1, two: 2, second: 2, '2nd': 2, three: 3, third: 3, '3rd': 3 };
+    const DAY_WORDS = [['sun', 'sunday'], ['mon', 'monday'], ['tue', 'tues', 'tuesday'], ['wed', 'weds', 'wednesday'], ['thu', 'thur', 'thurs', 'thursday'], ['fri', 'friday'], ['sat', 'saturday']];
+    const PART_IN = { am: /\b(mornings?|am)\b/, pm: /\bafternoons?\b/, eve: /\b(evenings?|nights?)\b/ };
+    // What one reply picks: { pick: 0-based } | { either } | { no } | null (not clear).
+    const pickIn = (body, opts, at) => {
+      const t = norm(String(body == null ? '' : body).replace(EMOJI_RE, ' ')).toLowerCase().replace(/["'‘’“”]/g, '');
+      if (!t) return null;
+      // A number: "1", "2 please", "#2", "option 1". Not a time ("2pm", "1:30", "1-2", "1 or 2").
+      let m = /^(?:option|number|choice|no\.)?\s*#?\s*([1-9])\b(?!\s*(?::\d|\d|[ap]\.?m\b|-\s*\d|(?:or|to|and)\s*\d))/.exec(t) || /\b(?:option|number|choice)\s*#?\s*([1-9])\b/.exec(t);
+      if (m) return Number(m[1]) <= opts.length ? { pick: Number(m[1]) - 1 } : null;
+      m = /^(?:actually|ok|okay|yes|yeah|sure|lets do|lets go with|well take|ill take|i will take|we will take|make it|go with|i choose|i pick|i want|i would like|id like|put me down for)\s+(?:option\s+|number\s+|#\s*)?([1-9])\b(?!\s*(?::\d|\d|[ap]\.?m\b))/.exec(t);
+      if (m) return Number(m[1]) <= opts.length ? { pick: Number(m[1]) - 1 } : null;
+      m = /^(?:the\s+)?(first|second|third|one|two|three|1st|2nd|3rd)\b(?=\s+(?:one|option|time|choice|works?|is|please|pls|will|would|sounds|for|thanks|thank)\b|[.!,]|$)/.exec(t);
+      if (m) return NUM_WORDS[m[1]] <= opts.length ? { pick: NUM_WORDS[m[1]] - 1 } : null;
+      if (/^(either|whichever|any|both)\b/.test(t) || /\b(either|both|any of (?:them|those))\b[^.?]{0,25}\b(works?|fine|good|ok|okay)\b/.test(t)) return opts.length > 1 ? { either: true } : { pick: 0 };
+      if (/^(no|nope|neither|none|not interested|not right now|not at this time)\b(?!\s+(?:problem|worries|rush|preference|pref))/.test(t)) return { no: true };
+      // The day they name, when it's one that was offered (and the time of day, if they say one, fits).
+      const named = new Set();
+      DAY_WORDS.forEach((ws, i) => { if (new RegExp('\\b(?:' + ws.join('|') + ')\\b').test(t)) named.add(i); });
+      if (/\btomorrow\b/.test(t) && at) named.add(new Date(at + 86400000).getDay());
+      const parts = Object.keys(PART_IN).filter(p => PART_IN[p].test(t));
+      if (named.size > 1 || (!named.size && !parts.length)) return null;
+      let hits = opts.map((o, i) => i);
+      if (named.size) hits = hits.filter(i => named.has(fromYmd(opts[i].day).getDay()));
+      if (parts.length) hits = hits.filter(i => parts.indexOf(winOf(opts[i].win).part) > -1);
+      return hits.length === 1 ? { pick: hits[0] } : null;
+    };
+    // All of a customer's replies after the offer: the last clear pick stands when everything said
+    // after it is just "thanks" / "ok". Anything else is for you to read.
+    const readPick = (replies, opts) => {
+      let pick = null, unclear = false, yes = false;
+      replies.forEach(m => {
+        const p = pickIn(m.Body, opts, timeOf(m));
+        if (p) { pick = p; unclear = false; return; }
+        const b = norm(m.Body);
+        // A yes: to one time, it picks it; to several, it doesn't say which (unless they already picked).
+        if (isYes(b) || (YES_START.test(b) && b.indexOf('?') < 0 && b.length <= 60)) { if (opts.length === 1) { pick = { pick: 0 }; unclear = false; } else if (!pick) yes = true; return; }
+        if (FLUFF.test(b) || isAlready(b)) return;
+        unclear = true;
+      });
+      if (pick && !unclear) return pick.no ? { kind: 'no', why: 'said no' } : { kind: 'pick', pick: pick.either ? 'either' : pick.pick };
+      if (!pick && yes && !unclear) return { kind: 'look', why: 'said yes, but not which time' };
+      return { kind: 'look', why: 'replied' };
+    };
+    // One offer's conversation: { kind: 'pick' | 'no' | 'look' | 'noReply', pick, why, said, answered }.
+    const readOffer = async (e, ctx, alive) => {
+      const c = codes();
+      const t = await st.chatThread(e.num);
+      if (!t) return { kind: 'look', why: 'their conversation wasn\'t found' };
+      if (t.BlockedStatus === c.blocked) return { kind: 'no', why: 'blocked in ServiceTitan (opted out)' };
+      let raw;
+      if (t.ReadStatus === c.unread) { raw = await ctx.readUnread(t, e.num); if (!raw) return { kind: 'look', why: 'has an unread message. Read it in the Chat Center' }; }
+      else raw = await st.chatMessages(t.ThreadId, 60);
+      if (!alive()) return null;
+      const msgs = asPageMsgs(raw, c).sort((a, b) => timeOf(a) - timeOf(b) || idOf(a) - idOf(b));
+      const ours = msgs.filter(m => m.IsOutbound && !m.IsNotification), since = e.at - 300000;
+      // The offer: the text as it was written, else (you changed it before pressing Send) the first one sent then.
+      const sent = ours.filter(m => norm(m.Body) === norm(e.text) && timeOf(m) >= since).pop() || ours.filter(m => timeOf(m) >= since)[0] || null;
+      if (!sent) return { kind: 'look', why: 'the offer text wasn\'t found in their conversation' };
+      if (sent.SmsSendErrorCode || sent.HasNotBeenDelivered) return { kind: 'look', why: 'the offer text didn\'t go through' };
+      const after = (m, z) => timeOf(m) > timeOf(z) || (timeOf(m) === timeOf(z) && idOf(m) > idOf(z));
+      const replies = msgs.filter(m => m.IsInbound && after(m, sent));
+      if (!replies.length) return { kind: 'noReply' };
+      const said = replies.map(m => norm(m.Body) || '(a picture or empty message)');
+      const answered = ours.some(m => after(m, replies[0]));   // one of us has texted them back since
+      if (optedOut(replies)) return { kind: 'no', why: 'replied STOP', said, answered };
+      return Object.assign(readPick(replies, e.opts), { said, answered });
+    };
+    const openJobTab = j => { try { window.open(location.href.split('#')[0] + '#/Job/Index/' + j, '_blank'); } catch (e) {} };
+    const offeredWords = e => e.opts.map((o, i) => (i + 1) + ': ' + slotLabel(o)).join('   ');
+    const openOfferReplies = async () => {
+      if (running || rBusy) return;
+      if (lock) return say('Wait for ' + lock + ' to finish first.');
+      if (!onBoard()) return say(board.need());
+      const list = offersOut();
+      if (!list.length) return say('No offers are out. Send some from this folder first.');
+      picker.setPicking(false);
+      const id = ++rCheckId;
+      rPlan = null;
+      repHead.textContent = '📥 Replies to offers';
+      repMsg.textContent = 'Reading the Hold list…'; cards.render([]);
+      showRep(false, false);
+      sub('replies');
+      const t0 = Date.now();
+      // Holds that have left the Hold list since (booked, or closed) are done with.
+      let onHold = null;
+      if (list.some(e => e.hold)) {
+        try { onHold = new Set((await loadHolds()).jobs.map(h => String(h.jobId))); }
+        catch (e) { if (st.isSignedOut(e)) { if (id === rCheckId) repMsg.textContent = '⚠️ ' + st.SIGNED_OUT; return; } }
+        if (id !== rCheckId) return;
+      }
+      const gone = onHold ? list.filter(e => e.hold && !onHold.has(String(e.jobId))) : [];
+      const todo = list.filter(e => gone.indexOf(e) < 0);
+      repMsg.textContent = 'Reading replies from ' + s1(todo.length, 'customer') + '…';
+      const ctx = unreadReader();
+      const res = await st.pool(todo, 4, (e, i, alive) => readOffer(e, ctx, alive),
+        (d, t) => { if (id === rCheckId) repMsg.textContent = 'Reading replies… ' + d + ' of ' + t; }, { stop: () => id !== rCheckId });
+      if (id !== rCheckId || res.stopped) return;
+      if (res.halted === 'signedOut') { repMsg.textContent = '⚠️ ' + st.SIGNED_OUT; return; }
+      const P = { rows: [], gone: [], notes: [] };
+      todo.forEach((e, i) => {
+        const r = res[i];
+        if (r === st.NOT_RUN) { P.rows.push({ e, kind: 'look', why: 'not checked: ServiceTitan is slow or not answering. Try again in a bit' }); return; }
+        if (!r || r.error) { P.rows.push({ e, kind: 'look', why: r && r.error ? errText(r.error) : 'not checked' }); return; }
+        P.rows.push(Object.assign({ e }, r));
+      });
+      // Booked or closed since: taken off the list (and one spot off the time they had picked).
+      gone.forEach(e => {
+        const o = typeof e.pick === 'number' ? e.opts[e.pick] : null;
+        const took = !!o && changeSlot(o, -1);
+        dropOffer(e.jobId, e.num);
+        P.gone.push({ e, took: took ? o : null });
+      });
+      if (!onHold && list.some(e => e.hold)) P.notes.push('ℹ️ The Hold list couldn\'t be read, so holds booked since aren\'t taken off the list this time.');
+      if (ctx.markRead) P.notes.push('ℹ️ ServiceTitan marked a conversation read when its replies were read (…' + ctx.markedNum.slice(-4) + '), so other unread ones were left unread and are under Needs a look.');
+      P.checked = 'Checked ' + s1(list.length, 'offer') + ' in ' + Math.max(1, Math.round((Date.now() - t0) / 1000)) + 's.';
+      showOffers(P, id);
+    };
+    const showOffers = (P, id) => {
+      if (id !== rCheckId) return;
+      const live = () => id === rCheckId && !running && !rBusy;
+      const again = () => showOffers(P, id);
+      const forget = x => ({ label: '🗑 Forget', title: 'Takes them off this list. Nothing changes in ServiceTitan.', onClick: () => { if (!live()) return; dropOffer(x.e.jobId, x.e.num); P.rows.splice(P.rows.indexOf(x), 1); again(); } });
+      const open = x => ({ label: '🔎 Open job', title: 'Opens the job in a new tab, to book it', onClick: () => openJobTab(x.e.jobId) });
+      // A time you set yourself (→ 1 / → 2) stands over what the reply was read as.
+      const pickOf = x => x.e.pick != null ? x.e.pick : x.kind === 'pick' ? x.pick : null;
+      const setPick = (x, v) => { if (!live()) return; x.e.pick = v; markOffer(x.e.jobId, x.e.num, v); again(); };
+      const setters = x => x.e.opts.map((o, i) => ({ label: '→ ' + (i + 1), title: 'They want ' + slotLabel(o) + ': moves them to Picked a time', onClick: () => setPick(x, i) }));
+      const picked = P.rows.filter(x => pickOf(x) != null), rest = P.rows.filter(x => pickOf(x) == null);
+      const spots = new Map(slots().map(sl => [slotKey(sl), sl.spots])), wants = new Map();
+      picked.forEach(x => { const v = pickOf(x); if (typeof v === 'number' && x.e.opts[v]) { const k = slotKey(x.e.opts[v]); wants.set(k, (wants.get(k) || 0) + 1); } });
+      const base = (x, status) => ({ customer: x.e.customer || '', phone: x.e.num, jobs: [String(x.e.jobId)], status, said: x.said || null });
+      const pickedItem = x => {
+        const v = pickOf(x), o = typeof v === 'number' ? x.e.opts[v] : null;
+        const it = base(x, (x.e.pick != null ? 'Set by you: ' : 'Picked ') + (o ? (v + 1) + ': ' + slotLabel(o) : 'either time: ' + x.e.opts.map(slotLabel).join(' or ')));
+        const notes = [];
+        if (o && spots.has(slotKey(o)) && wants.get(slotKey(o)) > spots.get(slotKey(o))) notes.push('⚠️ ' + wants.get(slotKey(o)) + ' picked this time and it has ' + s1(spots.get(slotKey(o)), 'spot'));
+        if (o && !spots.has(slotKey(o))) notes.push('ℹ️ This time is no longer in 🗓️ Times to offer');
+        if (x.answered) notes.push('↩️ One of us has texted them back since');
+        if (notes.length) it.note = notes.join(' · ');
+        it.actions = [{ label: '✓ Booked', style: 'border-color:var(--st-green);color:var(--st-green-d);font-weight:600',
+          title: 'Once you\'ve booked it in ServiceTitan: takes them off this list' + (o ? ' and one spot off ' + slotLabel(o) : ''),
+          onClick: () => { if (!live()) return; if (o) changeSlot(o, -1); dropOffer(x.e.jobId, x.e.num); P.rows.splice(P.rows.indexOf(x), 1); again(); } }, open(x)]
+          .concat(x.e.pick != null ? [{ label: '↩ Not picked', title: 'Puts them back where the reply was read', onClick: () => setPick(x, null) }] : [], [forget(x)]);
+        return it;
+      };
+      const item = (x, status) => { const it = base(x, status); if (x.answered) it.note = '↩️ One of us has texted them back since'; it.actions = setters(x).concat([open(x), forget(x)]); return it; };
+      const passed = e => e.opts.every(o => o.day <= ymd(today0()));
+      const daysOut = e => { const n = Math.floor((Date.now() - e.at) / 86400000); return n < 1 ? 'today' : n === 1 ? 'yesterday' : n + ' days ago'; };
+      cards.render([
+        { key: 'olook', title: '⚠️ Needs a look', tone: 'warn', open: true, items: rest.filter(x => x.kind === 'look').map(x => { const it = item(x, x.why); it.note = [it.note, 'Offered ' + offeredWords(x.e)].filter(Boolean).join(' · '); return it; }) },
+        { key: 'opick', title: '✅ Picked a time', tone: 'good', open: true, items: picked.map(pickedItem) },
+        { key: 'onone', title: '💤 No reply yet', tone: 'quiet', items: rest.filter(x => x.kind === 'noReply').map(x => item(x, 'No reply yet. Offered ' + daysOut(x.e) + ' — ' + offeredWords(x.e) + (passed(x.e) ? ' (those days have passed)' : ''))) },
+        { key: 'ono', title: '🚫 Said no or opted out', tone: 'faint', items: rest.filter(x => x.kind === 'no').map(x => item(x, x.why)) },
+        { key: 'ogone', title: '📗 Off the Hold list (booked or closed)', tone: 'done', items: P.gone.map(g => { const it = base(g, 'No longer on the Hold list. Taken off this list' + (g.took ? ', and one spot off ' + slotLabel(g.took) : '')); it.actions = [open(g)]; return it; }) }
+      ], P.notes);
+      repMsg.textContent = P.checked + ' ' + (picked.length ? s1(picked.length, 'customer') + ' picked a time. ' : '') + 'Nothing is booked from here: open the job, book it, then ✓ Booked.';
+      showRep(false, false);
+    };
+
     // Another tool (🧭 Tech Router's 🎯 Place a job, for a job to RS) hands over jobs to text, in the
     // first folder whose name matches folderRe (📅 Reschedule). Only these jobs are picked (anything
     // picked before is taken off). Nothing is sent until Start. Returns how many are picked, or -1 if busy.
@@ -6280,6 +6814,7 @@
     sub('main');
     return {
       takeJobs,
+      offers: { pickIn, readPick, wishOf, aboutOf, pickOptions, optionsText },   // for the tests
       refresh: () => { if (!running && !rBusy) { sub('main'); renderMain(); } },
       leave: () => { checkId++; rCheckId++; picker.setPicking(false); },
       isRunning: () => running || rBusy,
@@ -13190,7 +13725,7 @@
   closeX.onclick = close;
   // read: 📋 Quick Job Info's reading of a piece of text (what it's about, money, a call-back day), for
   // other tools and the tests. It reads only the text it's given.
-  window.__stToolbox = { version: VERSION, close, read: (text, at) => lang.read(text, at) };
+  window.__stToolbox = { version: VERSION, close, read: (text, at) => lang.read(text, at), offers: texts.offers };
 
   document.body.appendChild(panel);
   if (get('stMin') === '1') setMin(true);
