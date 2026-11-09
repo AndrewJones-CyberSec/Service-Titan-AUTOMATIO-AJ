@@ -34,8 +34,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.5';
+  const VERSION = '2.5.1';
   const WHATS_NEW = {
+    '2.5.1': '📱 Customer Texts: someone else having a customer\'s conversation open no longer stops the run. That customer is skipped and listed under Needs a look, and it goes on to the next (only 3 in a row stop it). ✅ Confirm Appt no longer texts customers whose appointments that day are already confirmed in ServiceTitan, checked again right before each text.',
     '2.5': 'New: 📋 Quick Job Info (it replaces 🧠 Toolbox AI). Open it on the board and click any job (holds too), then the next: everything about it on one card. What to do next, watch-outs (🚫 don\'t call, 📵 hard to reach from their call log, ☎️ they called us, 💬 texts back, 🗓️ another job booked, 🔥, 🧓…), the hold or appointment, address (opens Google Maps) and phones, the whole summary and notes, and the customer\'s history read by itself: every other job, club, lifetime total, equipment, who usually goes. Buttons open Customer Texts, Move Jobs and Tech Router with the job, and 📋 Copy job info copies the card. ⏸️ Holds lists the Hold list best to call first, with the 🔎 filter. 🔮 Chances and 👎 teaching stay; call scripts and 📚 Learn are gone (history is read fresh each time). Also: tools still being tested (🧭 Tech Router) are now under 🧪 Experimental tools at the bottom of the menu; tap it to open.',
     '2.4.4': '📱 Customer Texts never texts PHONE CALL ONLY jobs: they\'re a call, not a visit, so they\'re skipped and listed with why (from the board, the Unassigned list, the Hold list, picked or typed). A customer with a phone call and a visit gets texted about the visit. New 🌙 Late jobs: ＋ Everyone on the board and ＋ A department… leave out jobs starting at 6 PM or later (change the time, or turn it off, in ⚙️ Settings). A late job you click on the board or type in yourself is still texted.',
     '2.4.3': '📱 Customer Texts\' Hold list gets 🔎 Filter too: tick the kinds as before, then text only the holds in your 📍 areas (the same ones you teach 🧠 Toolbox AI), with a tag, in a state, with a hold reason, or created between two dates. Both filters now have 🗺️ State, 🗂️ Hold reason or status (from the Hold list, or a 📥 report\'s Hold Reason) and 📅 Created between two dates. 📌 Saved filters work in Customer Texts too.',
@@ -4710,6 +4711,40 @@
         .sort((a, b) => a - b);
       return days[0] || null;
     };
+    // ✅ Already confirmed (2.5.1): a folder whose texts ask customers to reply C (✅ Confirm Appt)
+    // doesn't text a job whose appointments that day are all confirmed already (by a coworker, by
+    // phone, or ServiceTitan's own reminder). Its live appointments on the day: [{ apptId, confirmed }].
+    // From the board's data for the board's day (timeline and Unassigned list), else from the job panel.
+    // The text is about the customer's day, so on the board every appointment of theirs that day
+    // counts: one confirmed and one not, and they're still texted.
+    const doneOrCanceled = s => s === 4 || s === 5 || (typeof s === 'string' && /^(done|completed|cancell?ed)$/i.test(norm(s)));
+    const apptsOnDay = async (jobId, day, customerId) => {
+      const j = String(jobId), cu = customerId != null && customerId !== '' ? String(customerId) : null, out = new Map();
+      const mine = x => x.jobId === j || (cu && x.customerId != null && String(x.customerId) === cu);
+      const take = (a, start, status, confirmed) => {
+        if (a == null || out.has(String(a)) || doneOrCanceled(status)) return;
+        if (start instanceof Date && !isNaN(start) && !sameDay(start, day)) return;
+        out.set(String(a), { apptId: String(a), confirmed: confirmed === true });
+      };
+      const bd = boardDay();
+      if (bd && sameDay(bd, day) && onBoard()) {
+        const s = board.latest();
+        if (s) s.appts.forEach(x => { if (mine(x)) take(x.apptId, x.start, x.status, x.confirmed); });
+        try { (await board.unassigned(TOOL)).rows.forEach(x => { if (mine(x)) take(x.apptId, x.start, x.status, x.confirmed); }); }
+        catch (e) { if (st.isSignedOut(e)) throw e; }
+        if (out.size) return Array.from(out.values());
+      }
+      const list = (await st.jobAppointments(j)).filter(a => !doneOrCanceled(a.status) && a.start && sameDay(new Date(a.start), day));
+      for (const a of list) out.set(String(a.id), { apptId: String(a.id), confirmed: (await st.apptConfirmed(a.id)).confirmed });
+      return Array.from(out.values());
+    };
+    const allConfirmed = appts => appts.length > 0 && appts.every(a => a.confirmed);
+    // Right before a text goes out: are they all confirmed now? (Read fresh. If it can't be read, no.)
+    const confirmedNow = async ids => {
+      if (!ids || !ids.length) return false;
+      try { return (await Promise.all(ids.map(a => st.apptConfirmed(a, 8000)))).every(x => x.confirmed && !doneOrCanceled(x.status)); }
+      catch (e) { if (st.isSignedOut(e)) throw e; return false; }
+    };
     // A picked job's appointment day: the board's day, for a job on the board's timeline that day
     // or added by ＋ Everyone on the board (that day's timeline and Unassigned list). null otherwise
     // (another tab of the Jobs Tray, a typed job): its next appointment is then read (nextApptDay).
@@ -5518,6 +5553,12 @@
         }
         list.forEach(r => { if (!r.type) r.type = types.get(String(r.jobId)) || ''; });
       }
+      // ✅ Confirm Appt: the board's day read fresh once (timeline and Unassigned list), so who's
+      // already confirmed is up to date (someone may have confirmed since the board loaded).
+      if (isConfirmFolder(f) && onBoard() && list.some(r => !r.hold)) {
+        try { await board.load({ fresh: true }); await board.unassigned(TOOL, { fresh: true }); }
+        catch (e) { if (st.isSignedOut(e)) return { signedOut: true }; }
+      }
       // If the chat data keeps failing, stop asking for it: those numbers get checked on their
       // conversation's page during the run instead (as when it can't be read at all).
       let chatTrouble = 0;
@@ -5525,20 +5566,34 @@
         if (isPhoneCall(r)) return { skips: [{ why: 'a PHONE CALL ONLY job (a call, not a visit), so it\'s never texted', kind: 'skipped' }] };
         if (uses(tmpl, 'tech') && !r.tech) return { skips: [{ why: 'no tech on the board for {tech}', kind: 'skipped' }] };
         let when = '';
-        if (uses(tmpl, 'when')) {
-          if (r.hold) return { skips: [{ why: 'on hold, so there\'s no appointment day for {when}', kind: 'skipped' }] };
+        const needWhen = uses(tmpl, 'when');
+        // A confirm folder (✅ Confirm Appt): a job already confirmed for its day isn't texted.
+        const confirmRun = isConfirmFolder(f) && !r.hold;
+        r.apptIds = null;
+        if (needWhen || confirmRun) {
+          if (r.hold && needWhen) return { skips: [{ why: 'on hold, so there\'s no appointment day for {when}', kind: 'skipped' }] };
           let day = r.day;
-          if (!day) {
+          if (!day && !r.hold) {
             try { day = await nextApptDay(r.jobId); }
             catch (e) {
               if (st.isSignedOut(e)) throw e;
-              return { skips: [{ why: 'its appointment couldn\'t be read for {when} (' + errText(e) + ')', kind: 'problem' }] };
+              if (needWhen) return { skips: [{ why: 'its appointment couldn\'t be read for {when} (' + errText(e) + ')', kind: 'problem' }] };
             }
             if (!alive()) return null;
-            if (!day) return { skips: [{ why: 'no upcoming appointment for {when}', kind: 'skipped' }] };
+            if (!day && needWhen) return { skips: [{ why: 'no upcoming appointment for {when}', kind: 'skipped' }] };
           }
-          when = whenText(day);
-          if (when === null) return { skips: [{ why: 'their appointment day has already passed', kind: 'skipped' }] };
+          if (day && needWhen) {
+            when = whenText(day);
+            if (when === null) return { skips: [{ why: 'their appointment day has already passed', kind: 'skipped' }] };
+          }
+          if (day && confirmRun) {
+            let appts = null;
+            try { appts = await apptsOnDay(r.jobId, day, r.customerId); }
+            catch (e) { if (st.isSignedOut(e)) throw e; /* can't tell: they're texted as before */ }
+            if (!alive()) return null;
+            if (appts && allConfirmed(appts)) return { skips: [{ why: 'already confirmed in ServiceTitan, so no confirm text needed', kind: 'skipped' }] };
+            if (appts) r.apptIds = appts.map(a => a.apptId);
+          }
         }
         const info = await billTo(r, alive);
         if (!alive()) return null;
@@ -5612,7 +5667,7 @@
       sub('run');
       add((auto ? 'Auto-send' : 'Type only') + ' · ' + f.name + ' · "' + m[0] + '" · ' + s1(planned.customers, 'customer') + ' checked, ' + s1(sends.length, 'text') + ' to send');
       const tally = {}, look = [];
-      let failsInRow = 0, signedOut = false;
+      let failsInRow = 0, signedOut = false, noBoxInRow = 0;
       const out = (r, num, text, kind) => {
         tally[kind] = (tally[kind] || 0) + 1;
         add('#' + r.jobId + ' ' + (r.customer || '') + (num ? ' ' + showNum(num) : '') + ': ' + text);
@@ -5673,9 +5728,14 @@
           if (never.indexOf(num) > -1) { ahead = null; out(r, num, 'skipped: on your 🚫 never-text list', 'skipped'); continue; }
           const look = ahead && ahead.x === x && Date.now() - ahead.at <= LOOK_FRESH_MS ? ahead : null;
           ahead = null;
+          // ✅ Confirm Appt: confirmed since the check (a coworker, a call, ServiceTitan's reminder)?
+          // Read at the same time as the look below, so it adds no wait.
+          const cfP = isConfirmFolder(f) && r.apptIds && r.apptIds.length ? confirmedNow(r.apptIds) : null;
+          if (cfP) cfP.catch(() => {});
           let fresh = null;
           try {
-            if (look) {
+            if (cfP && await cfP) fresh = { skip: 'already confirmed in ServiceTitan, so no confirm text needed', kind: 'skipped' };
+            else if (look) {
               let early = null;
               try { early = await look.p; } catch (e) { if (st.isSignedOut(e)) throw e; }
               if (early && early.skip) fresh = early;
@@ -5691,14 +5751,23 @@
           if (fresh && fresh.skip) { out(r, num, 'skipped: ' + fresh.skip, fresh.kind); continue; }
           const c = await openChat(num, r.jobId);
           if (!c) {
+            // No message box: usually someone else has their conversation open (ServiceTitan hides
+            // the box from everyone else then). That customer is skipped and listed under Needs a
+            // look, and the run goes on. Only 3 in a row means the Chat Center itself has changed.
             if (!document.querySelector(BOX)) {
-              health.flag(TOOL, 'the Chat Center\'s message box didn\'t show up', BOX);
-              out(r, num, 'stopped: the Chat Center didn\'t open.', 'problem');
-              add('Stopped the run.' + CHANGED);
-              stopRun = true; break;
+              noBoxInRow++;
+              out(r, num, 'skipped: their conversation had no message box (someone else may have it open). Text them later', 'look');
+              if (noBoxInRow >= 3) {
+                health.flag(TOOL, 'the Chat Center\'s message box didn\'t show up for 3 customers in a row', BOX);
+                add('3 conversations in a row had no message box. Stopped the run.' + CHANGED);
+                stopRun = true; break;
+              }
+              continue;
             }
+            noBoxInRow = 0;
             out(r, num, 'skipped: the conversation didn\'t load', 'problem'); continue;
           }
+          noBoxInRow = 0;
           // The same checks again on the open conversation, as a last guard.
           const hist = messagesOf(c.vm);
           if (optedOut(hist)) { out(r, num, 'skipped: they replied STOP', 'skipped'); continue; }

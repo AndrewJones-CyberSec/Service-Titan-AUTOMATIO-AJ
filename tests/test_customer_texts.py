@@ -267,17 +267,18 @@ with sync_playwright() as p:
     saved = json.loads(page.evaluate("() => localStorage.getItem('stCtFolders')"))
     check(saved[0]['days'] == 0 and len(saved[1]['msgs']) == 2, 'folders and messages saved in the browser')
 
-    # Broken Chat Center → yellow bar and stop
+    # A conversation with no message box (someone else has it open) → skipped, run goes on
     B(page, '📅 Reschedule').click()
     B(page, 'Clear').click()
     add_jobs(page, '7001 6001')
     review(page, 'Review and send to 2 customers')
     page.fill('#st-ct-confirm-count', '2')
     B(page, 'Send 2 texts').click()
-    check(wait_done(page, 60), 'broken chat run ends')
+    check(wait_done(page, 60), 'no-box run ends')
     lg = log_text(page); print(lg)
-    check("Chat Center didn't open" in lg and 'Stopped the run' in lg, 'missing chat box stops the run')
-    check('ServiceTitan may have changed' in panel_text(page), 'yellow warning bar shown')
+    check('no message box' in lg and 'Stopped the run' not in lg, 'one conversation with no message box is skipped, the run goes on')
+    check('#6001' in lg.split('no message box')[1] and 'sent' in lg.split('no message box')[1], 'the next customer is still texted')
+    check('ServiceTitan may have changed' not in panel_text(page), 'no yellow warning bar for one')
 
     # Stop + close while running
     back_to_main(page)

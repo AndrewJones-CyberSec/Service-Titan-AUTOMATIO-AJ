@@ -220,7 +220,8 @@
     if ((m = /^#\/ChatCenter\/(\d+)/.exec(h))) {
       const num = m[1];
       window.chatOpened.push(num);
-      if (num === '6015559999') return;   // a broken Chat Center: no message box
+      // No message box: 6015559999 always, and NO_BOX numbers (someone else has their conversation open).
+      if (num === '6015559999' || (window.NO_BOX || []).indexOf(num) > -1) return;
       const chat = chatOf(num);
       setTimeout(() => {
         if (location.hash.split('?')[0] !== h) return;

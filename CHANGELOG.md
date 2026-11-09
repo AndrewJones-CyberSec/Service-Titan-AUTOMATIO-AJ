@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.1
+
+- **📱 Customer Texts: someone else having a conversation open no longer stops the run.** ServiceTitan hides the message box while another user has a customer's conversation open. That customer is now skipped (*their conversation had no message box (someone else may have it open). Text them later*), listed under **Needs a look**, and the run goes on to the next one. Only 3 in a row stops the run, with the yellow bar, since that means the Chat Center itself has changed.
+- **✅ Confirm Appt skips customers already confirmed.** A customer whose appointments that day are all confirmed in ServiceTitan (a coworker, a call, ServiceTitan's own reminder) isn't sent a confirm text: they're on the check screen under Skipping with why (*already confirmed in ServiceTitan, so no confirm text needed*). The board's day is read fresh for the check, and each customer's appointments are read again right before their text, so one confirmed while the run goes is skipped too. A customer with one confirmed appointment and one not is still texted. Works for ＋ Everyone on the board, ＋ A department…, picked and typed jobs. Other folders (Tech Updates, Reschedule, OutReach…) text confirmed jobs as before.
+- Tests: new `tests/test_confirm_skip.py` (confirmed skipped on the check screen and during the run; a customer half confirmed; typed jobs; other folders; one no-box conversation skipped and the run goes on; 3 in a row stop it). `tests/test_customer_texts.py` checks the run goes on past a conversation with no message box. The fake board (`board_texts.html`) takes `NO_BOX`.
+
 ## 2.5
 
 - **New: 📋 Quick Job Info. It replaces 🧠 Toolbox AI.** One card with everything about a job, quick to read. It only reads; it never changes a job, sends a text or adds a note by itself.
