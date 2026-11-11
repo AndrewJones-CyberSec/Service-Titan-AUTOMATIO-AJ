@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.5.2
+
+- **🔀 Move Jobs: new 📅 Move picked jobs to another day (same techs).** For moving a handful of jobs on several techs, like all of the day's phone calls, without moving anyone's whole day. Pick the jobs (on the board, from the Unassigned list, or typed in) and the **Day** (it starts as the day after the board's). Each picked job goes to that day **at the same time and the same length, on exactly the techs it has now**: only its day changes, and no tech is added or taken off.
+  - Every visit of a picked job on the board's day moves. A job with two techs moves for both (no *other techs* warning, since that's the point).
+  - **Review** checks everyone on each job for being **already booked** on the new day (other jobs, time off, meetings, every branch and team); the picked jobs don't count as booked for each other. Also jobs that aren't Scheduled and a time outside the arrival window. Done and Canceled jobs and jobs that aren't on the board's day are left alone, saying why.
+  - It's the same careful run as 📅 Move a tech's day (2.1.6–2.1.8): the board's own request for a new time, one job first, a job changed since the review left alone, a lost answer checked by reading the job, and the run says how many arrival windows still show the old date.
+  - The board's own day and a day that has passed are refused. **↩ Put back** sets the days back.
+- Tests: new `tests/test_move_jobs_day.py`.
+
 ## 2.5.1
 
 - **📱 Customer Texts: someone else having a conversation open no longer stops the run.** ServiceTitan hides the message box while another user has a customer's conversation open. That customer is now skipped (*their conversation had no message box (someone else may have it open). Text them later*), listed under **Needs a look**, and the run goes on to the next one. Only 3 in a row stops the run, with the yellow bar, since that means the Chat Center itself has changed.
