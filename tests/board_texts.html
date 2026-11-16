@@ -140,7 +140,8 @@
         return json({ Jobs: rows.slice(b.QueryFilter.Skip, b.QueryFilter.Skip + b.QueryFilter.Take), Count: rows.length });
       }
       if (b.JobType !== 'Hold') return json({ Jobs: [], Count: 0 });
-      const rows = HOLDS.map(h => ({ JobId: h[0], Customer: C[h[1]].name + ' ', CustomerId: h[1], Type: window.JOB_TYPES[h[0]] || h[2], CustomerPhone: C[h[1]].c[0][1], JobStatus: LIST_STATUS[h[0]] || 'Hold', AppointmentStatus: 'Hold' }));
+      // HOLD_MORE[job] = { City, Zip, Summary, CreatedOn } adds to a hold's row; HOLD_GONE[job] = true takes it off the list (booked).
+      const rows = HOLDS.filter(h => !(window.HOLD_GONE || {})[h[0]]).map(h => Object.assign({ JobId: h[0], Customer: C[h[1]].name + ' ', CustomerId: h[1], Type: window.JOB_TYPES[h[0]] || h[2], CustomerPhone: C[h[1]].c[0][1], JobStatus: LIST_STATUS[h[0]] || 'Hold', AppointmentStatus: 'Hold' }, (window.HOLD_MORE || {})[h[0]] || {}));
       return json({ Jobs: rows.slice(b.QueryFilter.Skip, b.QueryFilter.Skip + b.QueryFilter.Take), Count: rows.length });
     }
     // The job panel's appointment data and its Confirm / Remove confirmation request.
@@ -209,6 +210,8 @@
     }),
     tray: () => [5002, 5006].map(j => ({ job: j, customer: C[JOBCUST[j]].name + ' ', customerId: JOBCUST[j], appt: j + 100000 })),
     trayTab: 'Hold',
+    // OTHER_DAYS['2026-11-12'] = { appts: [{ id, job, techs: [1], customer, start, end, city, zip }] }: another day's schedule (📲 Offer times reads the days it offers).
+    other: iso => (window.OTHER_DAYS || {})[iso] || null,
     onCard: job => window.opened.push(String(job))
   });
   function render() {

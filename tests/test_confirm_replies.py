@@ -112,7 +112,7 @@ with sync_playwright() as p:
     boxes = page.locator('#st-toolbox label:visible', has_text='Customers confirm by replying C')
     names = page.locator('#st-toolbox input[placeholder="Folder name"]:visible').evaluate_all("l => l.map(i => i.value)")
     ticks = boxes.evaluate_all("l => l.map(x => x.querySelector('input').checked)")
-    check(dict(zip(names, ticks)) == {'⏸️ Holds': False, '🚚 Tech Updates': False, '📅 Reschedule': False, '✅ Confirm Appt': True, '📣 OutReach': False}, 'only Confirm Appt is ticked: %s' % dict(zip(names, ticks)))
+    check(dict(zip(names, ticks)) == {'⏸️ Holds': False, '🚚 Tech Updates': False, '📅 Reschedule': False, '✅ Confirm Appt': True, '📣 OutReach': False, '📲 Offer times': False}, 'only Confirm Appt is ticked: %s' % dict(zip(names, ticks)))
     boxes.nth(names.index('✅ Confirm Appt')).locator('input').uncheck()
     B(page, 'Save').click()
     check(not B(page, 'Check replies').is_visible(), 'unticked: Check replies hidden')
