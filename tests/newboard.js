@@ -84,8 +84,9 @@
       await new Promise(r => setTimeout(r, window.BOARD_DELAY || 20));
       if (window.API_401) return new Response('', { status: 401 });
       if (window.BOARD_DOWN) return json({ error: 'down' }, 500);
-      const team = t => ({ id: t.id, name: t.name, teamId: t.teamId || 1, teamName: t.team || '' });
-      if (u.indexOf('/dispatch-center/technicians/resources') === 0) { NB.lastResources = body; return json({ items: techs().filter(t => !t.offBoard).map(team) }); }
+      const team = t => ({ id: t.id, name: t.name, teamId: t.teamId === null ? null : t.teamId || 1, teamName: t.team || '' });
+      // The board's Teams filter (teamIds) is kept to, like the real one: a tech on another team isn't listed.
+      if (u.indexOf('/dispatch-center/technicians/resources') === 0) { NB.lastResources = body; NB.resourceCalls = (NB.resourceCalls || []).concat([body]); return json({ items: techs().filter(t => !t.offBoard && (!(body.teamIds || []).length || body.teamIds.indexOf(Number(t.teamId || 1)) > -1)).map(team) }); }
       if (u.indexOf('/dispatch-center/technicians/activity-history') === 0) {
         const hist = NB.cfg.history ? NB.cfg.history() : [];
         return json({ items: body.technicianIds.map(id => ({ technicianId: id, technicianActivityHistory: hist.filter(h => h.tech === id).map(h => ({ jobId: h.job, jobAppointmentId: h.appt, jobAppointmentAssignmentId: 1, status: h.status, activityTimestamp: new Date(h.at).toISOString() })) })).filter(x => x.technicianActivityHistory.length), page: 1, pageSize: body.pageSize, totalCount: 0 });

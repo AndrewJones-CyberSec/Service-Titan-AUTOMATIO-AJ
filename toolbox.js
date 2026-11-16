@@ -37,7 +37,7 @@
 (() => {
   const VERSION = '2.6';
   const WHATS_NEW = {
-    '2.6': 'New in 📱 Customer Texts: 📲 Offer times. A folder that texts customers on hold a couple of openings to reply 1 or 2 to. List the openings you want filled under 🗓️ Times to offer (a day, a window, how many spots). Each customer gets their own: a time of day their summary asks for ("prefers afternoons", "not home until 2"), a day we\'re already in their town first (and the text says so), and no opening offered to too many at once. Their name and what the hold is ({about}: "your water heater quote") are filled in, and you see every text before it goes: change the times or the words for anyone, or ✕ Leave out. Then 📥 Check replies to offers lists who picked which time ("2", "the first one", "Thursday works"), who needs a look, who said no and who hasn\'t answered. Nothing is booked by the Toolbox: open the job, book it, then ✓ Booked. A hold booked in ServiceTitan leaves the list by itself.',
+    '2.6': 'New in 📱 Customer Texts: 📲 Offer times. A folder that texts customers on hold a couple of openings to reply 1 or 2 to. List the openings you want filled under 🗓️ Times to offer (a day, a window, how many spots). Each customer gets their own: a time of day their summary asks for ("prefers afternoons", "not home until 2"), a day we\'re already in their town first (and the text says so), and no opening offered to too many at once. Their name and what the hold is ({about}: "your water heater quote") are filled in, and you see every text before it goes: change the times or the words for anyone, or ✕ Leave out. Then 📥 Check replies to offers lists who picked which time ("2", "the first one", "Thursday works"), who needs a look, who said no and who hasn\'t answered. Nothing is booked by the Toolbox: open the job, book it, then ✓ Booked. A hold booked in ServiceTitan leaves the list by itself. Fixed: 💬 Tech Messages → 👥 Choose techs could hide a whole team (like the service techs) with only a count. It now names each hidden team and why (not set up in 🛡️ yet, blocked, or hidden by the board\'s Teams filter), with 🛡️ Allow teams…; a team renamed for a new lead keeps its setting; and ticking (no team) works.',
     '2.5.2': 'New in 🔀 Move Jobs: 📅 Move picked jobs to another day (same techs). Pick any jobs on any techs (all the day\'s phone calls, say) and the day: each one goes to that day at the same time and length, on exactly the techs it has now. Review first as always (it warns if anyone on a job has something else then), and ↩ Put back puts them back.',
     '2.5.1': '📱 Customer Texts: someone else having a customer\'s conversation open no longer stops the run. That customer is skipped and listed under Needs a look, and it goes on to the next (only 3 in a row stop it). ✅ Confirm Appt no longer texts customers whose appointments that day are already confirmed in ServiceTitan, checked again right before each text.',
     '2.5': 'New: 📋 Quick Job Info (it replaces 🧠 Toolbox AI). Open it on the board and click any job (holds too), then the next: everything about it on one card. What to do next, watch-outs (🚫 don\'t call, 📵 hard to reach from their call log, ☎️ they called us, 💬 texts back, 🗓️ another job booked, 🔥, 🧓…), the hold or appointment, address (opens Google Maps) and phones, the whole summary and notes, and the customer\'s history read by itself: every other job, club, lifetime total, equipment, who usually goes. Buttons open Customer Texts, Move Jobs and Tech Router with the job, and 📋 Copy job info copies the card. ⏸️ Holds lists the Hold list best to call first, with the 🔎 filter. 🔮 Chances and 👎 teaching stay; call scripts and 📚 Learn are gone (history is read fresh each time). Also: tools still being tested (🧭 Tech Router) are now under 🧪 Experimental tools at the bottom of the menu; tap it to open.',
@@ -615,18 +615,29 @@
     // request, which ServiceTitan has to answer before the schedule can be asked for. A fresh read
     // of the board after TECHS_TTL, or with { techs: true }, reads the list again too.
     const TECHS_TTL = 2 * 60000;
-    let techCache = null;
+    // One list per day and filter (a few kept), so a read without the board's Teams filter (💬 Tech
+    // Messages, to say who that filter hides) doesn't throw away the board's own.
+    const techCache = new Map();
     const techList = async (d, f, again) => {
       const key = keyFor(d, f);
-      if (!again && techCache && techCache.key === key && Date.now() - techCache.at < TECHS_TTL) return techCache.techs;
+      const c = techCache.get(key);
+      if (!again && c && Date.now() - c.at < TECHS_TTL) return c.techs;
       const fl = f || { bus: [], teams: [], skills: [] };
       const next = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
       const res = await st.getJSON('/dispatch-center/technicians/resources', 30000, { page: 1, pageSize: 100000, businessUnitIds: fl.bus, skillIds: fl.skills, teamIds: fl.teams,
         workstreamIds: [], shiftTypes: [], technicianIds: [], orderBy: ['Team', 'Technician'], includeSkills: false, applyTeamsManagement: true, includeLicenseTypes: false, startDate: iso(d), endDate: iso(next) });
       if (!res || !Array.isArray(res.items)) throw bad('technician list');
       const techs = res.items.filter(t => t && t.id != null).map(t => ({ id: String(t.id), name: norm(t.name), team: norm(t.teamName), teamId: t.teamId }));
-      techCache = { key, at: Date.now(), techs };
+      techCache.delete(key); techCache.set(key, { at: Date.now(), techs });
+      if (techCache.size > 4) techCache.delete(techCache.keys().next().value);
       return techs;
+    };
+    // The techs the board would show for its day and branches with no Teams or Skills filter, or
+    // null when the board has neither (then the board already shows every tech of its branches).
+    const techsUnfiltered = async () => {
+      const d = day(), f = filters();
+      if (!d || !f || (!f.teams.length && !f.skills.length)) return null;
+      return techList(d, { bus: f.bus, teams: [], skills: [] });
     };
     const startOfToday = () => { const t = new Date(); t.setHours(0, 0, 0, 0); return t; };
     const load = async opts => {
@@ -960,7 +971,7 @@
       if (any) tagTray();
     }, 700);
 
-    return { host, root, q, qa, view, isDay, need, onPage, homeHash, HOME, day, dayText, iso, isoT, sameDay, filters, bus, load, latest, snap: () => snap, unassigned, dayData,
+    return { host, root, q, qa, view, isDay, need, onPage, homeHash, HOME, day, dayText, iso, isoT, sameDay, filters, bus, load, latest, snap: () => snap, unassigned, dayData, techsUnfiltered,
       onChange: fn => listeners.push(fn), apptsOf, jobOfAppt, job, techJobs, techName, firstName, historyOf, live, isCanceled, tagOf,
       clickedJob, clickedTech, rowInfo, trayRows, trayTab, mount, unmount, jobsCss, techsCss, refresh, showTech, headerOf, findUp,
       stop: () => { clearInterval(timer); Array.from(styles).forEach(unmount); } };
@@ -3137,13 +3148,17 @@
     // After a message is sent, the panel isn't switched to the next tech for this long. The next
     // tech's row and menu are got ready meanwhile, so it no longer adds to each send's time.
     const SEND_GAP = 1200;
-    const K = { msgs: 'stMsgs', teams: 'stMsgTeams', never: 'stMsgNever', sel: 'stMsgSel', mode: 'stMsgMode', jobsOnly: 'stMsgJobsOnly', pick: 'stMsgPick', teamMap: 'stMsgTeamMap' };
+    const K = { msgs: 'stMsgs', teams: 'stMsgTeams', teamIds: 'stMsgTeamIds', never: 'stMsgNever', sel: 'stMsgSel', mode: 'stMsgMode', jobsOnly: 'stMsgJobsOnly', pick: 'stMsgPick' };
     const loadJSON = (k, d) => { try { const v = JSON.parse(get(k)); return v == null ? d : v; } catch (e) { return d; } };
     const validMsgs = v => Array.isArray(v) && v.length > 0 && v.every(n => Array.isArray(n) && n.length === 2 && typeof n[0] === 'string' && typeof n[1] === 'string');
     let list = (() => { const v = loadJSON(K.msgs, null); return validMsgs(v) ? v : DEFAULT_MSGS.map(n => n.slice()); })();
     // teamRules: { teamName: true (OK) | false (blocked) }, or null if never set up.
     // never: { techId: name }. selected: tech IDs picked last time.
     let teamRules = loadJSON(K.teams, null);
+    // teamIdRules: { teamId: true | false }, saved with teamRules. ServiceTitan's team names carry
+    // their leads' names ("Level 1 Service - Mike T."), so a new lead renames the team; its id
+    // doesn't change, so the team keeps its setting (Nov 2026).
+    let teamIdRules = loadJSON(K.teamIds, {});
     let never = loadJSON(K.never, {});
     // The 🛡️ settings are read again before they're used (the list, picking, Start, and right
     // before each person), so blocking someone or unticking a team in another tab counts here too.
@@ -3152,6 +3167,8 @@
     const syncSafety = () => {
       const r = readSaved(K.teams, null, teamRules);
       teamRules = isMap(r) ? r : null;
+      const ids = readSaved(K.teamIds, {}, teamIdRules);
+      teamIdRules = isMap(ids) ? ids : {};
       const n = readSaved(K.never, {}, never);
       if (isMap(n)) never = n;
     };
@@ -3188,12 +3205,23 @@
     const boardTechs = () => {
       const out = new Map(), s = board.latest();
       if (!s) return out;
-      s.techs.forEach(t => { if (t.name) out.set(t.id, { id: t.id, name: t.name, team: t.team || null, jobs: board.techJobs(t.id).length, status: liveStatus.get(t.id) || '' }); });
+      s.techs.forEach(t => { if (t.name) out.set(t.id, { id: t.id, name: t.name, team: t.team || null, teamId: t.teamId != null ? String(t.teamId) : null, jobs: board.techJobs(t.id).length, status: liveStatus.get(t.id) || '' }); });
       return out;
     };
-    const teamsOnBoard = () => { const s = board.latest(); return s ? s.teams.slice().concat(s.techs.some(t => !t.team) ? ['(no team)'] : []) : []; };
-    const teamAllowed = team => !!(teamRules && team && teamRules[team] === true);
-    const canMessage = t => !!t && teamAllowed(t.team) && !never[t.id];
+    // A tech's team as the 🛡️ settings know it: their team's name, or (no team).
+    const NO_TEAM = '(no team)';
+    const teamKey = t => (t && t.team) || NO_TEAM;
+    // The 🛡️ setting for a tech's team: true (OK), false (blocked), or undefined (a team that
+    // hasn't been set up yet, which is blocked too). By name; for a team renamed since, by its id.
+    // (no team) is a setting like any other (Nov 2026: ticking it did nothing before).
+    const ruleFor = t => {
+      if (!teamRules || !t) return undefined;
+      const k = teamKey(t);
+      if (Object.prototype.hasOwnProperty.call(teamRules, k)) return teamRules[k] === true;
+      if (t.team && t.teamId != null && Object.prototype.hasOwnProperty.call(teamIdRules, t.teamId)) return teamIdRules[t.teamId] === true;
+      return undefined;
+    };
+    const canMessage = t => !!t && ruleFor(t) === true && !never[t.id];
     const firstName = name => norm(name).split(' ')[0] || '';
     const STATUS_MARK = { Dispatched: '🚚 Dispatched', Working: '🔧 Working' };
 
@@ -3519,7 +3547,7 @@
       if (!t) { say('That tech isn\'t in the board\'s data yet. Try again in a moment.'); board.load({ fresh: true }).catch(() => {}); return; }
       syncSafety();
       if (selected.has(id)) { selected.delete(id); say('Took ' + t.name + ' off.'); }
-      else if (!canMessage(t)) { say('🛡️ ' + t.name + ' can\'t be messaged: ' + (never[id] ? 'they\'re on the never-message list.' : !t.team ? 'they aren\'t on a team.' : 'their team (' + t.team + ') is blocked.')); return; }
+      else if (!canMessage(t)) { say('🛡️ ' + t.name + ' can\'t be messaged: ' + (never[id] ? 'they\'re on the never-message list.' : ruleFor(t) === undefined ? (t.team ? 'their team (' + t.team + ')' : 'techs with no team') + ' hasn\'t been set up in 🛡️ Who can be messaged yet.' : !t.team ? 'techs with no team are blocked in 🛡️ Who can be messaged.' : 'their team (' + t.team + ') is blocked.')); return; }
       else { selected.add(id); say('Added ' + t.name + '.'); }
       saveSel(); renderMain();
     };
@@ -3549,14 +3577,51 @@
     };
     const workingBtn = statusBtn('Working', '＋ 🔧 Working'), dispatchedBtn = statusBtn('Dispatched', '＋ 🚚 Dispatched');
     statusRow.append(workingBtn, dispatchedBtn);
-    vPick.append(head('👥 Choose techs'), pickMsg, search, jobsOnlyRow, statusRow, pickList, pickNav);
+    // Who isn't in the list, and why: a team not set up yet or blocked in 🛡️, the never-message
+    // list, or the board's Teams / Skills filter (a tech has to be on the board to be messaged).
+    const hiddenBox = el('div', 'display:none;margin:0 0 6px;padding:6px 8px;border:1px solid var(--st-amber-l);background:var(--st-amber-s);border-radius:6px;font-size:12px;color:var(--st-ink)');
+    hiddenBox.id = 'st-msg-hidden';
+    vPick.append(head('👥 Choose techs'), pickMsg, hiddenBox, search, jobsOnlyRow, statusRow, pickList, pickNav);
     search.oninput = () => renderPicker();
     let shown = [];
     const saveSel = () => { set(K.sel, JSON.stringify(Array.from(selected))); paintTechs(); };
+    // Techs the board's Teams / Skills filter hides (null: no such filter, or not read yet).
+    let offBoard = null;
+    const loadOffBoard = async () => {
+      offBoard = null;
+      const s = board.latest();
+      const all = await board.techsUnfiltered().catch(() => null);
+      if (!all || !s) return;
+      const on = new Set(s.techs.map(t => t.id));
+      offBoard = all.filter(t => t.name && !on.has(t.id));
+    };
     const openPicker = () => {
       if (!teamRules) return openSafety();
       sub('pick'); renderPicker();
-      board.load().then(() => loadStatus()).then(() => { if (views.pick.style.display !== 'none') renderPicker(); }, () => {});
+      board.load().then(() => Promise.all([loadStatus(), loadOffBoard()])).then(() => { if (views.pick.style.display !== 'none') renderPicker(); }, () => {});
+    };
+    const teamCounts = list => {
+      const m = new Map();
+      list.forEach(t => { const k = teamKey(t); m.set(k, (m.get(k) || 0) + 1); });
+      return Array.from(m.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([k, n]) => k + ' (' + n + ')').join(', ');
+    };
+    const renderHidden = techs => {
+      hiddenBox.textContent = '';
+      const notSet = techs.filter(t => !never[t.id] && ruleFor(t) === undefined);
+      const blocked = techs.filter(t => !never[t.id] && ruleFor(t) === false);
+      const nv = techs.filter(t => never[t.id]);
+      const lines = [];
+      if (notSet.length) lines.push(['🆕 Not set up in 🛡️ yet, so hidden: ', teamCounts(notSet)]);
+      if (blocked.length) lines.push(['🛡️ Blocked teams: ', teamCounts(blocked)]);
+      if (nv.length) lines.push(['🚫 Never-message list: ', plural(nv.length, 'person', 'people')]);
+      if (offBoard && offBoard.length) lines.push(['🔎 Not on the board (its Teams or Skills filter hides them, so they can\'t be messaged): ', teamCounts(offBoard) + '. Clear that filter on the board to message them.']);
+      lines.forEach(([a, b]) => { const d = el('div', 'margin:1px 0'); d.append(el('b', '', a), document.createTextNode(b)); hiddenBox.appendChild(d); });
+      if (notSet.length || blocked.length) {
+        const go = smallBtn('🛡️ Allow teams…', () => openSafety(), 'margin-top:5px;padding:3px 8px');
+        go.title = 'Opens 🛡️ Who can be messaged, to tick the teams that are OK to message';
+        hiddenBox.appendChild(go);
+      }
+      hiddenBox.style.display = lines.length ? 'block' : 'none';
     };
     const renderPicker = () => {
       syncSafety();
@@ -3580,10 +3645,11 @@
           pickList.appendChild(c);
         });
       });
+      const noJobs = jobsOnly ? techs.filter(t => canMessage(t) && !t.jobs && (!qtext || t.name.toLowerCase().indexOf(qtext) > -1)).length : 0;
       if (!shown.length) pickList.appendChild(el('div', 'font-size:12px;color:var(--st-ink-3);padding:6px 0', jobsOnly ? 'No allowed techs with jobs on the board. Untick "Only show techs with jobs" or check 🛡️ Who can be messaged.' : 'No allowed techs found. Check 🛡️ Who can be messaged.'));
-      const blockedCount = techs.filter(t => !canMessage(t)).length;
-      pickMsg.textContent = !board.latest() ? (onBoard() ? 'Reading the board…' : board.need()) :
-        selected.size + ' picked. ' + blockedCount + ' people are hidden because their team is blocked or they\'re on the never-message list.';
+      else if (noJobs) pickList.appendChild(el('div', 'font-size:11px;color:var(--st-ink-3);padding:6px 0 0', '…and ' + plural(noJobs, 'tech') + ' with no jobs on the board (untick "Only show techs with jobs" to see them).'));
+      renderHidden(board.latest() ? techs.filter(t => !canMessage(t)) : []);
+      pickMsg.textContent = !board.latest() ? (onBoard() ? 'Reading the board…' : board.need()) : selected.size + ' picked.';
       pickMsg.style.whiteSpace = 'pre-wrap';
       const nW = shown.filter(t => t.status === 'Working').length, nD = shown.filter(t => t.status === 'Dispatched').length;
       workingBtn.textContent = '＋ 🔧 Working (' + nW + ')'; dispatchedBtn.textContent = '＋ 🚚 Dispatched (' + nD + ')';
@@ -3614,10 +3680,15 @@
       }
       // Start from what's saved right now, so saving here doesn't undo a change made in another tab.
       syncSafety();
-      const teams = teamsOnBoard();
       draftRules = Object.assign({}, teamRules || {});
-      // First time: suggest. Later: any team we haven't seen before starts blocked.
-      teams.forEach(t => { if (!(t in draftRules)) draftRules[t] = teamRules ? false : !SUGGEST_BLOCK.test(t) && t !== '(no team)'; });
+      // First time: suggest. Later: any team we haven't seen before starts blocked (one renamed
+      // since, found by its id, keeps its setting).
+      Array.from(boardTechs().values()).forEach(t => {
+        const k = teamKey(t);
+        if (k in draftRules) return;
+        const r = ruleFor(t);
+        draftRules[k] = r !== undefined ? r : teamRules ? false : !SUGGEST_BLOCK.test(k) && k !== NO_TEAM;
+      });
       draftNever = Object.assign({}, never);
       sub('safe');
       renderSafety();
@@ -3626,7 +3697,7 @@
       const techs = Array.from(boardTechs().values());
       const counts = {};
       techs.forEach(t => { const k = t.team || '(no team)'; counts[k] = (counts[k] || 0) + 1; });
-      const isNew = t => teamRules && !(t in teamRules);
+      const isNew = k => teamRules && !(k in teamRules) && !techs.some(t => teamKey(t) === k && ruleFor(t) !== undefined);
       safeMsg.textContent = (teamRules ? 'Ticked teams can be messaged. Anything unticked can never be picked.' : 'First-time setup: these are suggestions. Untick any team that isn\'t field techs (leadership, office, owner\'s team), then Save.');
       teamList.textContent = '';
       Object.keys(counts).sort((a, b) => a.localeCompare(b)).forEach(team => {
@@ -3656,7 +3727,10 @@
     neverAdd.oninput = renderNeverSearch;
     const saveSafety = () => {
       teamRules = draftRules; never = draftNever;
+      // Each team's id gets its team's setting, for when the team is renamed.
+      Array.from(boardTechs().values()).forEach(t => { if (t.team && t.teamId != null && t.team in teamRules) teamIdRules[t.teamId] = teamRules[t.team] === true; });
       set(K.teams, JSON.stringify(teamRules));
+      set(K.teamIds, JSON.stringify(teamIdRules));
       set(K.never, JSON.stringify(never));
       sub('main');
       say('🛡️ Saved. ' + Object.values(teamRules).filter(v => v).length + ' teams can be messaged, ' + Object.keys(never).length + ' people are blocked.');

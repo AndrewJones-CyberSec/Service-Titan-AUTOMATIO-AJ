@@ -19,6 +19,13 @@
     - **✓ Booked**, once you've booked it in ServiceTitan, takes them off the list and one spot off that opening. 🔎 Open job opens the job; 🗑 Forget just takes them off.
   - Which folders offer times is the **📲 Offers times** box in 📁 Edit folders (on for Offer times). What's been offered to whom is kept in this browser for 45 days.
   - Someone who already saved their own folders gets 📲 Offer times once, at the end of their list.
+- **Fixed: 💬 Tech Messages → 👥 Choose techs hid a whole team with only a count to say so** (*"it doesn't show the service techs"*). A team that wasn't on the board when 🛡️ Who can be messaged was set up starts blocked, as it should, but nothing said which team or how to fix it. Now Choose techs names every team it's hiding and why, with **🛡️ Allow teams…**:
+  - **🆕 Not set up in 🛡️ yet** (a new team), **🛡️ Blocked teams**, and **🚫 Never-message list**.
+  - **🔎 Not on the board:** techs the board's Teams or Skills filter hides (a tech has to be on the board to be messaged), by team, with what to do.
+  - *…and 3 techs with no jobs on the board* when "Only show techs with jobs" is hiding some.
+  - **A team renamed for a new lead keeps its setting.** ServiceTitan's team names carry their leads' names (*Level 1 Service - Mike T.*); the 🛡️ settings now remember each team's id too, so a new name doesn't block the team again.
+  - **(no team) works:** ticking it in 🛡️ now lets techs with no team be picked (it did nothing before). Clicking a blocked tech on the board says which of these it is.
+- Tests: new `tests/test_msg_teams.py` (a service team added after setup: named, 🛡️ Allow teams…, still blocked until ticked, then listed; a renamed team kept by its id; (no team) ticked and unticked; the board's Teams filter). The fake board's tech list keeps to its Teams filter.
 - Tests: new `tests/test_offers.py` (reading replies, time-of-day wishes and `{about}` by themselves; the folder and its openings; each customer's times and text; changing a text and a time, leaving someone out, the count; what's kept after the run, a failed text not kept; picks, more picks than spots, a reply set by you, an unread one left unread, ✓ Booked, a hold booked since, STOP, 🗑 Forget; no opening left; Type only; `{options}` in another folder, making a folder offer times). The fake board (`board_texts.html`) takes `HOLD_MORE`, `HOLD_GONE` and `OTHER_DAYS`.
 
 ## 2.5.2
