@@ -1,7 +1,7 @@
 /*
   ServiceTitan Toolbox
   ====================
-  One panel with eight tools for the ServiceTitan Dispatch board:
+  One panel with nine tools for the ServiceTitan Dispatch board:
     - Notes: adds a ready-made note (sorted into folders) to a job's customer in one click.
     - Job Notifications: shows whether job notifications are on or off for the jobs you pick (one at a time,
       a tech's day, a job type, or the whole board), and turns them off or on; job types can be set on or
@@ -24,6 +24,9 @@
       appointment, address and phone, summary, notes, and the customer's history (other jobs, calls, club,
       lifetime total), with buttons into the other tools. A Holds tab lists the Hold list best to call
       first. It only reads.
+    - Job Review (Beta, being tested): reviews a completed job (completed, tech notes, invoice $0.00 or
+      Requested funds, pictures, open estimates), and types the review note into the job record for you
+      to save, or copies a Teams message for Kyle when it fails.
 
   HOW TO RELEASE AN UPDATE
     1. Edit this file on GitHub.
@@ -35,8 +38,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.6';
+  const VERSION = '2.7';
   const WHATS_NEW = {
+    '2.7': 'New under 🧪 Experimental tools: 🔍 Job Review (Beta), for reviewing completed jobs. Type a job number (or open the job record and press 📄 This job record) and it checks by itself: is the job completed, did the tech leave notes, is the invoice at $0.00 (or tagged Requested funds), are there pictures, is there an open estimate. 📷 Photo review or 📋 PC review (quotes and Project Coordinator jobs, no pictures). You look at the pictures and notes, tick anything wrong, pick Miranda or Mary Beth for an open estimate, and it writes the note ("Job reviewed, no action needed." or what it found) and types it into the job record\'s Leave a note box for you to save. A failed review gets 💬 Copy Teams message for Kyle. Add your NAME REVIEWED tag yourself for now (🏷️ Copy tag). Anything it couldn\'t read shows ❔: check it on the job record.',
     '2.6': 'New in 📱 Customer Texts: 📲 Offer times. A folder that texts customers on hold a couple of openings to reply 1 or 2 to. List the openings you want filled under 🗓️ Times to offer (a day, a window, how many spots). Each customer gets their own: a time of day their summary asks for ("prefers afternoons", "not home until 2"), a day we\'re already in their town first (and the text says so), and no opening offered to too many at once. Their name and what the hold is ({about}: "your water heater quote") are filled in, and you see every text before it goes: change the times or the words for anyone, or ✕ Leave out. Then 📥 Check replies to offers lists who picked which time ("2", "the first one", "Thursday works"), who needs a look, who said no and who hasn\'t answered. Nothing is booked by the Toolbox: open the job, book it, then ✓ Booked. A hold booked in ServiceTitan leaves the list by itself. Fixed: 💬 Tech Messages → 👥 Choose techs could hide a whole team (like the service techs) with only a count. It now names each hidden team and why (not set up in 🛡️ yet, blocked, or hidden by the board\'s Teams filter), with 🛡️ Allow teams…; a team renamed for a new lead keeps its setting; and ticking (no team) works.',
     '2.5.2': 'New in 🔀 Move Jobs: 📅 Move picked jobs to another day (same techs). Pick any jobs on any techs (all the day\'s phone calls, say) and the day: each one goes to that day at the same time and length, on exactly the techs it has now. Review first as always (it warns if anyone on a job has something else then), and ↩ Put back puts them back.',
     '2.5.1': '📱 Customer Texts: someone else having a customer\'s conversation open no longer stops the run. That customer is skipped and listed under Needs a look, and it goes on to the next (only 3 in a row stop it). ✅ Confirm Appt no longer texts customers whose appointments that day are already confirmed in ServiceTitan, checked again right before each text.',
@@ -1802,11 +1806,12 @@
   const movesPane = el('div', 'display:none;overflow-y:auto');
   const routerPane = el('div', 'display:none;overflow-y:auto');
   const aiPane = el('div', 'display:none;overflow-y:auto');
-  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane, texts: textsPane, moves: movesPane, router: routerPane, ai: aiPane };
+  const reviewPane = el('div', 'display:none;overflow-y:auto');
+  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane, texts: textsPane, moves: movesPane, router: routerPane, ai: aiPane, review: reviewPane };
   Object.keys(views).forEach(k => { views[k].classList.add('st-view'); if (k === 'menu') views[k].classList.add('st-view-menu'); });
   news.classList.add('st-bar');
   health.bar.classList.add('st-bar');
-  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts', moves: '🔀 Move Jobs', router: '🧭 Tech Router (Beta)', ai: '📋 Quick Job Info' };
+  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts', moves: '🔀 Move Jobs', router: '🧭 Tech Router (Beta)', ai: '📋 Quick Job Info', review: '🔍 Job Review (Beta)' };
   const showView = name => {
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
     titleText.textContent = TITLES[name];
@@ -1827,6 +1832,8 @@
     if (name === 'router' && typeof router !== 'undefined') router.refresh();
     if (name !== 'ai' && typeof ai !== 'undefined') ai.leave();
     if (name === 'ai' && typeof ai !== 'undefined') ai.refresh();
+    if (name !== 'review' && typeof review !== 'undefined') review.leave();
+    if (name === 'review' && typeof review !== 'undefined') review.refresh();
   };
 
   // The menu: one tile per tool.
@@ -1838,7 +1845,8 @@
     ['texts', '📱', 'Customer Texts', 'Text customers, confirm appointments', '#e3f5e9'],
     ['moves', '🔀', 'Move Jobs', 'Move, add, unassign or swap techs', '#f3e9fb'],
     ['router', '🧭', 'Tech Router', 'Fill open time, plan and score routes', '#ddf3f0', 'Beta'],
-    ['ai', '📋', 'Quick Job Info', 'Everything about a job or a hold, at a glance', '#fde7f3']
+    ['ai', '📋', 'Quick Job Info', 'Everything about a job or a hold, at a glance', '#fde7f3'],
+    ['review', '🔍', 'Job Review', 'Review a completed job and fill in the review note', '#f5e8fd', 'Beta']
   ];
   const tiles = el('div', 'display:grid;gap:6px');
   // 🧪 Experimental tools: the ones still being built and tested (Beta), below the finished ones,
@@ -1884,7 +1892,7 @@
     if (names.length) menuMsg.append(pill(names.length > 2 ? names.length + ' branches' : names.join(', '), 'var(--st-soft-2)', 'var(--st-ink-2)'));
   };
   board.onChange(() => { if (menuPane.style.display !== 'none') renderMenuMsg(); });
-  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane, movesPane, routerPane, aiPane);
+  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane, movesPane, routerPane, aiPane, reviewPane);
 
   // ===================================================================
   // Tool 1: Notes
@@ -13674,6 +13682,350 @@
   })();
 
   // ===================================================================
+  // Tool 9: Job Review (Beta)
+  // The review of a completed job: is it Completed, did the tech leave notes, is the invoice paid
+  // ($0.00 balance, or a "Requested funds" tag), are there pictures, is there an open estimate.
+  // It reads all of that by itself and lists it; you check the pictures and the notes by eye,
+  // pick what's wrong (if anything), and it writes the review note and the Teams message for Kyle.
+  // Two kinds: 📷 Photo review (a person checks serial numbers and plates are readable) and
+  // 📋 PC review (quote and Project Coordinator jobs: no pictures to check).
+  // It only reads. Typing the note into the job record's "Leave a note..." box is the one thing it
+  // does on the page, and you save the note yourself. The tag is added by hand for now.
+  // ===================================================================
+  const review = (() => {
+    const TOOL = 'Job Review';
+    const KEY_NAME = 'stReviewName';
+    const CLEAN_NOTE = 'Job reviewed, no action needed.';
+    const TASK_PEOPLE = ['Miranda', 'Mary Beth'];
+    // Things that can be wrong, ticked by the reviewer (the automatic checks add their own).
+    const PROBLEMS = {
+      photo: ['Pictures missing', 'Serial number / data plate not readable', 'Tech notes missing or unclear', 'Follow-up job not booked'],
+      pc: ['Tech notes missing or unclear', 'Estimate not presented / not in ServiceTitan', 'Sold job not booked correctly', 'Follow-up job not booked']
+    };
+    const S = x => String(x == null ? '' : x);
+    const money = n => '$' + Number(n).toFixed(2);
+    const jobFromHash = () => (/#\/Job\/Index\/(\d+)/i.exec(location.hash) || [])[1] || '';
+    const tagName = () => (norm(get(KEY_NAME)) || 'NAME').toUpperCase() + ' REVIEWED';
+
+    // ---- Reading a job record's data without knowing its exact shape ----
+    // ServiceTitan's job record data (/Job/Index) hasn't been mapped for reviews yet, so these look
+    // for what they need by name. Anything they can't find shows as ❔ (check it on the job record),
+    // never as a pass.
+    const walk = (o, fn, path, depth, seen) => {
+      if (!o || typeof o !== 'object' || depth > 5) return;
+      seen = seen || new Set();
+      if (seen.has(o)) return;
+      seen.add(o);
+      Object.keys(o).forEach(k => {
+        const v = o[k], p = path ? path + '.' + k : k;
+        fn(k, v, p);
+        if (v && typeof v === 'object') walk(v, fn, p, depth + 1, seen);
+      });
+    };
+    const findBalance = rec => {
+      let best = null;
+      walk(rec, (k, v, p) => {
+        if (typeof v !== 'number' || !isFinite(v) || !/balance/i.test(k) || /customer|account|membership|credit/i.test(p)) return;
+        const score = (/invoice/i.test(p) ? 2 : 0) + (/^(invoice)?balance$/i.test(k) ? 1 : 0);
+        if (!best || score > best.score) best = { value: v, score, path: p };
+      });
+      return best;
+    };
+    const findList = (rec, re, avoid) => {
+      let best = null;
+      walk(rec, (k, v, p) => {
+        if (!re.test(k) || (avoid && avoid.test(p))) return;
+        if (Array.isArray(v)) { if (!best || v.length > best.list.length) best = { list: v, path: p }; }
+        else if (typeof v === 'number' && /count$/i.test(k) && !best) best = { list: new Array(Math.max(0, v)).fill(null), path: p };
+      });
+      return best;
+    };
+    const isPicture = x => !x || typeof x !== 'object' || /\.(jpe?g|png|heic|gif|webp)\b|image|photo/i.test(JSON.stringify(x).slice(0, 600));
+    const statusWord = x => {
+      if (!x || typeof x !== 'object') return '';
+      const s = x.status != null ? x.status : x.Status != null ? x.Status : x.statusName != null ? x.statusName : x.StatusName;
+      return typeof s === 'string' ? s : s && typeof s === 'object' ? S(s.name || s.Name) : S(s);
+    };
+    // Only names and kinds, never values: what a job record's data holds, to send for setting this up.
+    const shapeOf = (o, depth) => {
+      if (Array.isArray(o)) return o.length ? [shapeOf(o[0], (depth || 0) + 1)] : [];
+      if (o && typeof o === 'object') { if ((depth || 0) > 4) return '{…}'; const r = {}; Object.keys(o).forEach(k => { r[k] = shapeOf(o[k], (depth || 0) + 1); }); return r; }
+      return o === null ? 'null' : typeof o;
+    };
+
+    // ---- UI ----
+    const wrap = el('div', 'display:grid;gap:8px;padding:10px 12px 12px');
+    const small = (t, css) => el('div', 'font-size:11.5px;line-height:1.4;' + (css || ''), t);
+    const sec = t => el('div', 'font-size:11px;font-weight:800;letter-spacing:.04em;color:var(--st-ink-3);margin-top:4px', t.toUpperCase());
+    const msg = small('', 'color:var(--st-ink-2);min-height:16px');
+    const say = t => { msg.textContent = t; };
+
+    const nameRow = el('label', 'display:flex;gap:6px;align-items:center;font-size:12px;flex-wrap:wrap');
+    const nameIn = el('input', FIELD + 'width:120px');
+    nameIn.id = 'st-rv-name'; nameIn.placeholder = 'Your first name'; nameIn.value = get(KEY_NAME) || '';
+    const tagPreview = el('span', 'padding:1px 8px;border-radius:9px;background:#d946ef;color:#fff;font-weight:800;font-size:11px');
+    nameIn.oninput = () => { set(KEY_NAME, norm(nameIn.value)); tagPreview.textContent = tagName(); render(); };
+    nameRow.append(document.createTextNode('Reviewer:'), nameIn, document.createTextNode('Tag:'), tagPreview);
+    tagPreview.textContent = tagName();
+
+    const row = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap');
+    const jobIn = el('input', FIELD + 'width:130px');
+    jobIn.id = 'st-rv-job'; jobIn.placeholder = 'Job #'; jobIn.inputMode = 'numeric';
+    const goBtn = smallBtn('🔎 Review', () => start(jobIn.value), PRIMARY);
+    goBtn.id = 'st-rv-go';
+    const hereBtn = smallBtn('📄 This job record', () => { const j = jobFromHash(); if (j) { jobIn.value = j; start(j); } else say('Open a job record first (or type the job number).'); });
+    jobIn.addEventListener('keydown', e => { if (e.key === 'Enter') start(jobIn.value); });
+    row.append(jobIn, goBtn, hereBtn);
+
+    const kindRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    const photoBtn = smallBtn('📷 Photo review', () => { kind = 'photo'; render(); });
+    const pcBtn = smallBtn('📋 PC review (quote / PC)', () => { kind = 'pc'; render(); });
+    kindRow.append(photoBtn, pcBtn);
+
+    const out = el('div', 'display:grid;gap:6px');
+    const navRow = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+    navRow.append(smallBtn('← Menu', () => showView('menu')));
+    wrap.append(small('🧪 Being tested. It reads the job and fills in the note; you look at the pictures and notes, and you save the note and add the tag yourself.', 'color:var(--st-amber)'),
+      nameRow, row, msg, out, navRow);
+    reviewPane.appendChild(wrap);
+
+    // ---- State ----
+    let J = null, kind = 'photo', runId = 0;
+    let ticks = new Set(), other = '', taskTo = '', sold = null, notesOk = false, picsOk = false, noteText = '', noteEdited = false;
+    const reset = () => { ticks = new Set(); other = ''; taskTo = ''; sold = null; notesOk = false; picsOk = false; noteText = ''; noteEdited = false; };
+
+    const start = async raw => {
+      const j = S(raw).replace(/\D/g, '');
+      if (!j) { say('Type a job number.'); return; }
+      if (!norm(get(KEY_NAME))) { say('Type your first name first (it goes on the tag).'); nameIn.focus(); return; }
+      const my = ++runId;
+      reset(); J = null; out.textContent = '';
+      goBtn.disabled = true; goBtn.textContent = 'Reading…';
+      say('Reading job #' + j + '…');
+      const tries = await Promise.all([
+        st.jobAppointments(j).then(v => ({ v }), e => ({ e })),
+        st.jobOverview(j).then(v => ({ v }), e => ({ e })),
+        st.ownerNotes(j).then(v => ({ v }), e => ({ e })),
+        st.job(j).then(v => ({ v }), e => ({ e }))
+      ]);
+      if (my !== runId) return;
+      goBtn.disabled = false; goBtn.textContent = '🔎 Review';
+      const signedOut = tries.find(t => t.e && st.isSignedOut(t.e));
+      if (signedOut) { say('⚠️ ' + st.SIGNED_OUT); return; }
+      const [ap, ov, nt, rec] = tries;
+      if (ap.e && ov.e) { say('⚠️ Couldn\'t read job #' + j + ' (' + errText(ap.e) + '). Check the number.'); return; }
+      J = { j, appts: ap.v || null, ov: ov.v || null, notes: nt.v || null, rec: rec.v || null, recErr: rec.e || null, notesErr: nt.e || null };
+      kind = guessKind(J);
+      say('');
+      render();
+    };
+
+    // PC review for quotes and Project Coordinator jobs, from the job's type, business unit and tags.
+    const guessKind = x => {
+      const words = [x.ov && x.ov.bu && x.ov.bu.name, typeText(x)].concat(x.ov ? x.ov.jobTags.map(t => t.name) : []).join(' ');
+      return /quote|estimate|sales|project ?coord|\bpc\b/i.test(words) ? 'pc' : 'photo';
+    };
+    const typeText = x => {
+      let t = '';
+      if (x.rec) walk(x.rec, (k, v) => { if (!t && /^(job)?type(name)?$/i.test(k)) t = typeof v === 'string' ? v : v && typeof v === 'object' ? S(v.name || v.Name) : ''; });
+      return norm(t);
+    };
+
+    // ---- The checks ----
+    // Each: { key, label, state ('ok' | 'bad' | 'unknown' | 'info'), detail, problem (the words for the note when bad) }
+    const checks = () => {
+      const x = J, out = [];
+      const tags = x.ov ? x.ov.jobTags.map(t => t.name) : [];
+      // 1. Completed (the green block): every appointment that isn't canceled is Done.
+      if (x.appts) {
+        const live = x.appts.filter(a => a.status !== 5);
+        const done = live.length && live.every(a => a.status === 4);
+        out.push({ key: 'done', label: 'Job completed', state: done ? 'ok' : 'bad', detail: done ? 'Every visit is Done.' : live.length ? 'Not every visit is Done yet.' : 'No visits.', problem: 'job not completed' });
+      } else out.push({ key: 'done', label: 'Job completed', state: 'unknown', detail: 'Couldn\'t read its visits. Check it\'s the green Completed block.' });
+      // 2. Invoice: $0.00 balance, or the Requested funds tag.
+      const funds = tags.some(t => /requested funds|funds requested/i.test(t));
+      const bal = x.rec ? findBalance(x.rec) : null;
+      if (bal && Math.abs(bal.value) < 0.005) out.push({ key: 'inv', label: 'Invoice paid', state: 'ok', detail: 'Balance $0.00.' });
+      else if (bal && funds) out.push({ key: 'inv', label: 'Invoice paid', state: 'ok', detail: 'Balance ' + money(bal.value) + ', but it has the Requested funds tag.' });
+      else if (bal) out.push({ key: 'inv', label: 'Invoice paid', state: 'bad', detail: 'Balance ' + money(bal.value) + ' and no Requested funds tag.', problem: 'invoice balance of ' + money(bal.value) + ' with no funds requested' });
+      else out.push({ key: 'inv', label: 'Invoice paid', state: 'unknown', detail: (funds ? 'Has the Requested funds tag. ' : '') + 'Couldn\'t read the balance' + (x.recErr ? ' (' + errText(x.recErr) + ')' : '') + '. Check the invoice says 0.00.' });
+      // 3. Tech notes.
+      if (x.notes) {
+        const real = x.notes.filter(n => !/job review/i.test(n.text));
+        out.push({ key: 'notes', label: 'Tech left notes', state: real.length ? 'ok' : 'bad', detail: real.length ? plural(real.length, 'note') + ' on the job. Read them below.' : 'No notes on the job.', problem: 'no tech notes' });
+      } else out.push({ key: 'notes', label: 'Tech left notes', state: 'unknown', detail: 'Couldn\'t read the job\'s notes. Check the History.' });
+      // 4. Pictures (photo reviews).
+      if (kind === 'photo') {
+        const files = x.rec ? findList(x.rec, /attachment|photo|image|picture|file/i, /customer|location|form/i) : null;
+        if (files) {
+          const pics = files.list.filter(isPicture).length;
+          out.push({ key: 'pics', label: 'Pictures on the job', state: pics ? 'ok' : 'bad', detail: pics ? plural(pics, 'picture') + '. Open the job record and check they can be read.' : 'No pictures found.', problem: 'no pictures' });
+        } else out.push({ key: 'pics', label: 'Pictures on the job', state: 'unknown', detail: 'Couldn\'t find the pictures in the job\'s data. Check the Files tab on the job record.' });
+      }
+      // 5. Estimates: an open one means a task for Miranda or Mary Beth.
+      const ests = x.rec ? findList(x.rec, /estimate/i, /customer|location/i) : null;
+      if (ests && ests.list.length) {
+        const words = ests.list.map(statusWord);
+        const open = words.filter(w => !/sold|dismiss|declin|cancel|clos/i.test(w)).length, soldN = words.filter(w => /sold/i.test(w)).length;
+        out.push({ key: 'est', label: 'Estimates', state: 'info', detail: plural(ests.list.length, 'estimate') + (soldN ? ', ' + soldN + ' sold' : '') + (open ? ', ' + open + ' open' : '') + '.', open, sold: soldN });
+      } else if (ests) out.push({ key: 'est', label: 'Estimates', state: 'info', detail: 'No estimates.', open: 0, sold: 0 });
+      else out.push({ key: 'est', label: 'Estimates', state: 'unknown', detail: 'Couldn\'t read the estimates. Check for an open estimate on the job record.' });
+      // Already reviewed?
+      const by = tags.filter(t => /reviewed/i.test(t));
+      if (by.length) out.unshift({ key: 'already', label: 'Already reviewed', state: 'info', detail: 'Has ' + by.join(', ') + '.' });
+      return out;
+    };
+
+    const ICON = { ok: '✅', bad: '⚠️', unknown: '❔', info: 'ℹ️' };
+    const problemsNow = cs => {
+      const list = cs.filter(c => c.state === 'bad' && c.problem).map(c => c.problem);
+      ticks.forEach(t => { const w = t.toLowerCase(); if (list.indexOf(w) < 0) list.push(w); });
+      if (norm(other)) list.push(norm(other).replace(/\.$/, ''));
+      return list;
+    };
+    const buildNote = cs => {
+      const probs = problemsNow(cs);
+      const est = taskTo ? ' Open estimate, tasked ' + taskTo + '.' : '';
+      if (!probs.length) return CLEAN_NOTE + est;
+      return 'Job review, found ' + probs.join('; ') + '.' + est + ' Sent to Kyle. Job review complete.';
+    };
+    const teamsMsg = cs => {
+      return 'Job review failed: job #' + J.j + '\n' + problemsNow(cs).map(p => '- ' + p).join('\n') + '\n' + location.origin + '/#/Job/Index/' + J.j + '\n– ' + (norm(get(KEY_NAME)) || '');
+    };
+
+    const box = (css) => el('div', 'display:grid;gap:4px;padding:8px 10px;border:1px solid var(--st-line);border-radius:10px;background:var(--st-bg);' + (css || ''));
+    const check = (label, on, fn) => {
+      const l = el('label', 'display:flex;gap:6px;align-items:flex-start;font-size:12px;cursor:pointer');
+      const c = el('input'); c.type = 'checkbox'; c.checked = !!on; c.onchange = () => fn(c.checked);
+      l.append(c, el('span', '', label));
+      return l;
+    };
+
+    const render = () => {
+      out.textContent = '';
+      if (!J) return;
+      const cs = checks();
+      const setOnB = (b, on) => { b.style.background = on ? 'var(--st-blue)' : ''; b.style.color = on ? '#fff' : ''; b.style.borderColor = on ? 'var(--st-blue)' : ''; };
+      setOnB(photoBtn, kind === 'photo'); setOnB(pcBtn, kind === 'pc');
+      out.append(el('div', 'font-weight:800;font-size:13px', 'Job #' + J.j + (J.ov && J.ov.bu && J.ov.bu.name ? ' · ' + J.ov.bu.name : '')), kindRow);
+
+      // What it read by itself.
+      out.append(sec('Checked by itself'));
+      const auto = box();
+      cs.forEach(c => {
+        const r = el('div', 'display:grid;grid-template-columns:20px 1fr;gap:4px;font-size:12px');
+        r.append(el('span', '', ICON[c.state]), el('span', '', ''));
+        r.lastChild.append(el('b', '', c.label + ' '), document.createTextNode(c.detail || ''));
+        auto.appendChild(r);
+      });
+      out.append(auto);
+
+      // The notes, to read.
+      if (J.notes && J.notes.length) {
+        const nb = box('max-height:160px;overflow:auto');
+        J.notes.slice().sort((a, b) => (b.at || 0) - (a.at || 0)).forEach(n => {
+          nb.appendChild(small((n.pinned ? '📌 ' : '') + (n.at ? n.at.toLocaleDateString() + ' · ' : '') + norm(n.text.replace(/<[^>]+>/g, ' ')), 'border-bottom:1px solid var(--st-line);padding-bottom:3px'));
+        });
+        out.append(sec('Notes on the job'), nb);
+      }
+
+      // What you check.
+      out.append(sec('You check'));
+      const mine = box();
+      if (kind === 'photo') mine.append(check('Pictures can be read (serial numbers, data plates)', picsOk, v => { picsOk = v; render(); }));
+      mine.append(check('Notes read and make sense', notesOk, v => { notesOk = v; render(); }));
+      const est = cs.find(c => c.key === 'est');
+      const estRow = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px');
+      estRow.append(el('span', '', (est && est.open ? '⚠️ Open estimate. ' : 'Open estimate? ') + 'Task:'));
+      ['None'].concat(TASK_PEOPLE).forEach(p => {
+        const b = smallBtn(p, () => { taskTo = p === 'None' ? '' : p; render(); });
+        setOnB(b, (taskTo || 'None') === p);
+        estRow.appendChild(b);
+      });
+      mine.append(estRow);
+      if (kind === 'pc') {
+        const soldRow = el('div', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px');
+        soldRow.append(el('span', '', 'Sold?'));
+        [['No', false], ['Yes, booked correctly', true]].forEach(([t, v]) => { const b = smallBtn(t, () => { sold = v; render(); }); setOnB(b, sold === v); soldRow.appendChild(b); });
+        mine.append(soldRow);
+        if (sold) mine.append(small('Review the estimate and check the follow-up job is booked the way it was sold. If it isn\'t, tick "Sold job not booked correctly" below.', 'color:var(--st-ink-2)'));
+      }
+      out.append(mine);
+
+      // What's wrong.
+      out.append(sec('Anything wrong?'));
+      const wrong = box();
+      PROBLEMS[kind].forEach(p => wrong.append(check(p, ticks.has(p), v => { if (v) ticks.add(p); else ticks.delete(p); render(); })));
+      const otherIn = el('input', FIELD + 'width:100%');
+      otherIn.placeholder = 'Something else (e.g. no follow up job booked for start up)'; otherIn.value = other;
+      otherIn.oninput = () => { other = otherIn.value; noteEdited = false; noteBoxEl.value = buildNote(checks()); refreshButtons(); };
+      wrong.append(otherIn);
+      out.append(wrong);
+
+      // The result.
+      const probs = problemsNow(cs), unknown = cs.filter(c => c.state === 'unknown').length;
+      const needMine = (kind === 'photo' && !picsOk) || !notesOk;
+      const verdict = probs.length ? '⚠️ Failed: send it to Kyle.' : needMine ? '👀 Finish your checks above.' : unknown ? '❔ Passes so far. Check the ❔ items on the job record first.' : '✅ Passes.';
+      out.append(sec('Review note'), el('div', 'font-weight:800;font-size:12.5px', verdict));
+      const noteBoxEl = el('textarea', FIELD + 'width:100%;min-height:64px;resize:vertical');
+      noteBoxEl.id = 'st-rv-note';
+      if (!noteEdited) noteText = buildNote(cs);
+      noteBoxEl.value = noteText;
+      noteBoxEl.oninput = () => { noteText = noteBoxEl.value; noteEdited = true; };
+      out.append(noteBoxEl, small(noteEdited ? 'You changed the note; it won\'t be rewritten.' : 'Change it if you fixed something (e.g. "Job is now booked.").', 'color:var(--st-ink-3)'));
+
+      const acts = el('div', 'display:flex;gap:6px;flex-wrap:wrap');
+      const putBtn = smallBtn('📝 Put note in job record', () => putNote(noteBoxEl.value), PRIMARY);
+      putBtn.id = 'st-rv-put';
+      const tagBtn = smallBtn('🏷️ Copy tag', async () => { await copy(tagName()); say('Copied "' + tagName() + '". Add it on the job record (tags, under Job Actions).'); });
+      const kyleBtn = smallBtn('💬 Copy Teams message for Kyle', async () => { await copy(teamsMsg(checks())); say('Copied. Paste it to Kyle in Teams.'); });
+      kyleBtn.id = 'st-rv-kyle';
+      const openBtn = smallBtn('📂 Open job record', () => { location.hash = '#/Job/Index/' + J.j; });
+      const setupBtn = smallBtn('🔧 Copy setup info', async () => {
+        const info = { version: VERSION, job: shapeOf(J.rec), recError: J.recErr ? errText(J.recErr) : null, overview: shapeOf(J.ov), apptStatuses: J.appts ? J.appts.map(a => a.status) : null, noteBoxFound: !!findNoteBox() };
+        await copy(JSON.stringify(info));
+        say('Copied the job data\'s field names (no customer info). Send it over so the ❔ checks can be filled in.');
+      });
+      setupBtn.title = 'Copies only the names of the fields in this job\'s data, never their values.';
+      acts.append(putBtn, tagBtn, kyleBtn, openBtn, setupBtn);
+      out.append(acts);
+      const refreshButtons = () => { kyleBtn.style.display = problemsNow(checks()).length ? '' : 'none'; };
+      refreshButtons();
+    };
+
+    // ---- Typing the note into the job record ----
+    // The History section's "Leave a note..." box (seen Nov 2026 in a screenshot; not mapped in the
+    // page's code yet, so it's found by its words).
+    const findNoteBox = () => Array.from(document.querySelectorAll('textarea, input[type="text"], input:not([type]), [contenteditable="true"]'))
+      .find(x => !x.closest('#' + ID) && /leave a note/i.test(x.getAttribute('placeholder') || x.getAttribute('aria-label') || x.getAttribute('data-placeholder') || '') && visible(x)) || null;
+    const putNote = async text => {
+      if (!J || !norm(text)) return;
+      const my = runId;
+      if (jobFromHash() !== J.j) { say('Opening job #' + J.j + '…'); location.hash = '#/Job/Index/' + J.j; }
+      let b = await until(findNoteBox, 20000, 200);
+      if (my !== runId) return;
+      if (!b) { await copy(text); health.flag(TOOL, 'can\'t find the job record\'s "Leave a note..." box', 'placeholder "Leave a note..."'); say('⚠️ Couldn\'t find the "Leave a note..." box. The note is copied: paste it in yourself.'); return; }
+      b.scrollIntoView({ block: 'center' });
+      b.click(); b.focus();
+      await wait(400);
+      // Clicking can swap the one-line box for a bigger one.
+      const b2 = findNoteBox() || (document.activeElement && !document.activeElement.closest('#' + ID) && /TEXTAREA|INPUT/.test(document.activeElement.tagName) ? document.activeElement : b);
+      if (b2.value && b2.value.indexOf(text) > -1) { say('✅ The note is already in the box. Check it, then save it.'); return; }
+      insert(b2, text);
+      await wait(300);
+      if ((b2.value || b2.textContent || '').indexOf(text.trim()) > -1) say('✅ Note typed in. Check it, then save it. Then add the ' + tagName() + ' tag.');
+      else { await copy(text); say('⚠️ The box didn\'t keep the note. It\'s copied: paste it in yourself.'); }
+    };
+
+    return {
+      leave: () => {},
+      refresh: () => { const j = jobFromHash(); if (j && !jobIn.value) jobIn.value = j; },
+      isRunning: () => false,
+      cleanup: () => { runId++; }
+    };
+  })();
+
+  // ===================================================================
   // Dragging, closing, and starting up
   // ===================================================================
   header.addEventListener('mousedown', e => {
@@ -13774,6 +14126,7 @@
     moves.cleanup();
     router.cleanup();
     ai.cleanup();
+    review.cleanup();
     board.stop();
     delete window.__stToolbox;
     const gone = () => { panel.remove(); sheet.remove(); };
@@ -13826,6 +14179,6 @@
   document.body.appendChild(panel);
   if (get('stMin') === '1') setMin(true);
   const startView = get('stView');
-  showView(['notes', 'jobs', 'msgs', 'biz', 'texts', 'moves', 'router', 'ai'].indexOf(startView) > -1 ? startView : 'menu');
+  showView(['notes', 'jobs', 'msgs', 'biz', 'texts', 'moves', 'router', 'ai', 'review'].indexOf(startView) > -1 ? startView : 'menu');
   health.checkBoard(false);
 })();

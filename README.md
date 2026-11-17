@@ -164,6 +164,15 @@ Everything about one job, at a glance. It only reads: it never changes a job, se
 - **⚙️ More:** **📥 Add a report (CSV)** and **🗑️ Forget what it kept**.
 - A conversation with an **unread** reply isn't read, so it stays unread for you.
 
+**🔍 Job Review (Beta)**
+For reviewing completed jobs. Type your first name once (it makes your tag, like *ANDREW REVIEWED*), then type a job number, or open the job record and press **📄 This job record**.
+
+- **Checked by itself:** the job is completed (every visit Done), the tech left notes, the invoice balance is $0.00 (or the job has the **Requested funds** tag), the job has pictures (photo reviews), any estimates and whether one is open, and whether someone already reviewed it. Anything it can't read shows **❔**: check it on the job record. A ❔ is never a pass.
+- **📷 Photo review or 📋 PC review** (quotes and Project Coordinator jobs, no pictures). It picks one from the job's type and branch; tap the other to switch.
+- **You check:** the pictures can be read (serial numbers, data plates) and the notes make sense; the job's notes are listed to read. An open estimate: pick **Miranda** or **Mary Beth** for the task. A PC review asks whether it sold and was booked correctly.
+- **Anything wrong?** Tick what's wrong or type it. The note is written for you: *Job reviewed, no action needed.* when it passes, or *Job review, found … Sent to Kyle. Job review complete.* Change it if you fixed something; your changes are kept.
+- **📝 Put note in job record** opens the job record and types the note into **Leave a note...**. You save it. **🏷️ Copy tag** copies your tag to add on the job (by hand for now). A failed review gets **💬 Copy Teams message for Kyle**. **🔧 Copy setup info** copies only the names of the fields in the job's data (never customer info), to finish mapping the ❔ checks.
+
 **🩺 Health check**
 If ServiceTitan changes something a tool relies on, a yellow bar at the top of the Toolbox says which tool is affected and what's missing, instead of the tool failing quietly. Use **Copy report** to pass the details along, or **🩺 Check** in the menu to check any time.
 

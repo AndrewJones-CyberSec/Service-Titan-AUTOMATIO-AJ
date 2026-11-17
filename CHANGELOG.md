@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.7
+
+- **New under 🧪 Experimental tools: 🔍 Job Review (Beta)**, for reviewing completed jobs.
+  - **Checked by itself:** completed (every visit Done), the tech left notes, the invoice balance is $0.00 or the job has the Requested funds tag, pictures (photo reviews), estimates and whether one is open, and an existing REVIEWED tag. What it can't read shows ❔ (check it on the job record), never a pass.
+  - **📷 Photo review or 📋 PC review** (quotes and Project Coordinator jobs), picked from the job's type and branch.
+  - **You check** the pictures and notes, pick Miranda or Mary Beth for an open estimate, say whether a PC job sold and was booked correctly, and tick anything wrong.
+  - **The note:** *Job reviewed, no action needed.*, or *Job review, found … Sent to Kyle. Job review complete.* **📝 Put note in job record** types it into the job record's Leave a note... box; you save it. **🏷️ Copy tag** (NAME REVIEWED, added by hand for now), **💬 Copy Teams message for Kyle** on a failed review, **🔧 Copy setup info** (field names only).
+- Tests: new `tests/test_job_review.py`.
+
 ## 2.6
 
 - **New in 📱 Customer Texts: 📲 Offer times.** A folder that texts customers on hold a couple of openings to reply 1 or 2 to, each customer their own, and then lists who picked which. Nothing is booked by the Toolbox.
