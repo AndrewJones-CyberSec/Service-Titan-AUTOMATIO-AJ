@@ -92,11 +92,11 @@ with sync_playwright() as p:
     check(o == ['＋ A department…', 'Install HVAC  (3 jobs)', 'Unassigned list'], 'one team on the board: one choice with all its jobs (%s)' % o)
     t = pick_dept(page, 'Install HVAC')
     check(picked(page) == ['6001', '6002', '6003'], 'it adds those jobs (%s)' % picked(page))
-    # ＋ Everyone on the board works as before.
+    # ＋ Everyone on the board: the timeline only, never the Unassigned list (Nov 2026).
     B(page, 'Clear').click()
     B(page, 'Everyone on the board').click()
     page.wait_for_function("() => /Added \\d+ job/.test(document.getElementById('st-toolbox').innerText)", timeout=10000)
-    check('Added 5 jobs from the board (3 on the timeline, 2 unassigned, 2 canceled left out)' in panel_text(page), '＋ Everyone on the board unchanged')
+    check('Added 3 jobs from the board (3 on techs\' schedules; Unassigned left out' in panel_text(page) and picked(page) == ['6001', '6002', '6003'], '＋ Everyone on the board adds the timeline only, no Unassigned jobs (%s)' % picked(page))
 
     check(not errors, 'no page errors: %s' % errors)
     b.close()

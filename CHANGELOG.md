@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.6.1
+
+- **Fixed: 📱 Customer Texts → ＋ Everyone on the board texted Unassigned customers.** Since 1.6.1 it added the timeline *and* the whole Unassigned list. It now adds only jobs on a tech's schedule for the day the board shows. 🔕 Job Notifications' ＋ Whole board is unchanged.
+- ＋ Jobs with a tag… in Customer Texts adds only timeline jobs too.
+- The Unassigned list can still be texted on purpose: ＋ A department… → Unassigned list, or click/type the jobs.
+- **Check before texting** warns at the top when any customers in the list are Unassigned (with the count) and marks each one **⚠️ UA**, so they can be taken off before Send.
+
 ## 2.6
 
 - **New in 📱 Customer Texts: 📲 Offer times.** A folder that texts customers on hold a couple of openings to reply 1 or 2 to, each customer their own, and then lists who picked which. Nothing is booked by the Toolbox.

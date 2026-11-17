@@ -91,23 +91,23 @@ with sync_playwright() as p:
     B(page, 'Everyone on the board').click()
     page.wait_for_function("() => /Added \\d+ job/.test(document.getElementById('st-toolbox').innerText)", timeout=10000)
     page.locator('#st-toolbox label:visible', has_text='Auto-send').locator('input').check()
-    t = review(page, 'Review and send to 4 customers')
+    t = review(page, 'Review and send to 3 customers')
     msg = t.split('Message (as the first customer will see it):')[1].split('Numbers:')[0]
     check('Hey, this is Andrew with AirSouth' in msg and 'Reply STOP to opt out.' in msg, 'starter message filled in and ends with the opt-out line')
     check('601-' not in msg and 'call' not in msg.lower(), 'starter message has no phone number or "call us"')
-    check('Will text 4 numbers' in t, 'everyone on the board will be texted: ' + t.split('Will text')[1][:30])
+    check('Will text 3 numbers' in t and 'Pia Lane' not in t, 'everyone on the board (not the Unassigned list) will be texted: ' + t.split('Will text')[1][:30])
     # A STOP that arrives after the next customer's fresh look was taken is still caught, by the
     # open conversation's own check right before typing.
-    page.fill('#st-ct-confirm-count', '4')
+    page.fill('#st-ct-confirm-count', '3')
     mo_threads, mo_msgs = thread_calls(page, '6015550022'), msg_calls(page, '6015550022')
-    B(page, 'Send 4 texts').click()
+    B(page, 'Send 3 texts').click()
     page.wait_for_function("() => window.chatOpened.indexOf('6015550020') > -1", timeout=15000)
     page.evaluate("() => { window.CHATS['6015550021'] = { unread: false, msgs: [{ Body: 'STOP', IsInbound: true, CreatedOn: new Date().toISOString() }] }; }")
     check(wait_done(page, 120), 'OutReach run finishes')
     lg = log_text(page); print(lg)
     sent = page.evaluate("() => window.SENT.slice()")
     nums = [x[0] for x in sent]
-    check(sorted(nums) == sorted(['6015550020', '6015550022', '6015550031']), 'three texted: %s' % nums)
+    check(sorted(nums) == sorted(['6015550020', '6015550022']), 'two texted, no Unassigned customer: %s' % nums)
     check('Lou Ng …0021: skipped: they replied STOP' in lg and '6015550021' not in nums, 'a STOP that arrives after the look-ahead is still caught at their turn')
     # Reads of Mo's conversation during the run: the full look ahead (conversation + messages), one
     # quick read at his turn (conversation only), and the delivery check after his text (both).
@@ -117,8 +117,8 @@ with sync_playwright() as p:
 
     # Second time: everyone got it already (30-day rule)
     if B(page, '← Back').count(): B(page, '← Back').click()
-    t = review(page, 'Review and send to 4 customers')
-    check('Nobody to text' in t and t.count('got this message today') == 3, '30-day rule skips everyone who already got it')
+    t = review(page, 'Review and send to 3 customers')
+    check('Nobody to text' in t and t.count('got this message today') == 2, '30-day rule skips everyone who already got it')
     B(page, 'Cancel').click()
 
     # Type only: a look-ahead more than 15 seconds old (you took your time) is taken again
@@ -137,7 +137,7 @@ with sync_playwright() as p:
     check(thread_calls(page, '6015550022') - n_before == 2, 'stale look-ahead taken again (looked ahead once, then again at its turn)')
     page.click('.chat button[type=submit]')
     check(wait_done(page, 30), 'type-only run finishes')
-    check(len(page.evaluate("() => window.SENT")) == 5, 'both typed texts sent by the person')
+    check(len(page.evaluate("() => window.SENT")) == 4, 'both typed texts sent by the person')
     page.evaluate("() => window.__stToolbox.close()")
 
     # Someone who already saved their own folders gets OutReach once, at the end

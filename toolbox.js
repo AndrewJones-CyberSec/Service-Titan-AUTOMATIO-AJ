@@ -35,8 +35,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.6';
+  const VERSION = '2.6.1';
   const WHATS_NEW = {
+    '2.6.1': 'Fixed: 📱 Customer Texts → ＋ Everyone on the board was also adding the whole Unassigned list, so Unassigned customers got texted. It now adds only jobs on a tech\'s schedule. ＋ Jobs with a tag… in Customer Texts leaves Unassigned out too. To text the Unassigned list on purpose, pick ＋ A department… → Unassigned list. And Check before texting now warns ⚠️ how many customers are UNASSIGNED and marks each one ⚠️ UA, so you can take them off before anything is sent.',
     '2.6': 'New in 📱 Customer Texts: 📲 Offer times. A folder that texts customers on hold a couple of openings to reply 1 or 2 to. List the openings you want filled under 🗓️ Times to offer (a day, a window, how many spots). Each customer gets their own: a time of day their summary asks for ("prefers afternoons", "not home until 2"), a day we\'re already in their town first (and the text says so), and no opening offered to too many at once. Their name and what the hold is ({about}: "your water heater quote") are filled in, and you see every text before it goes: change the times or the words for anyone, or ✕ Leave out. Then 📥 Check replies to offers lists who picked which time ("2", "the first one", "Thursday works"), who needs a look, who said no and who hasn\'t answered. Nothing is booked by the Toolbox: open the job, book it, then ✓ Booked. A hold booked in ServiceTitan leaves the list by itself. Fixed: 💬 Tech Messages → 👥 Choose techs could hide a whole team (like the service techs) with only a count. It now names each hidden team and why (not set up in 🛡️ yet, blocked, or hidden by the board\'s Teams filter), with 🛡️ Allow teams…; a team renamed for a new lead keeps its setting; and ticking (no team) works.',
     '2.5.2': 'New in 🔀 Move Jobs: 📅 Move picked jobs to another day (same techs). Pick any jobs on any techs (all the day\'s phone calls, say) and the day: each one goes to that day at the same time and length, on exactly the techs it has now. Review first as always (it warns if anyone on a job has something else then), and ↩ Put back puts them back.',
     '2.5.1': '📱 Customer Texts: someone else having a customer\'s conversation open no longer stops the run. That customer is skipped and listed under Needs a look, and it goes on to the next (only 3 in a row stop it). ✅ Confirm Appt no longer texts customers whose appointments that day are already confirmed in ServiceTitan, checked again right before each text.',
@@ -1354,6 +1355,7 @@
   //     css(ids): more highlight styling, added after the usual outline (only while shown()).
   //     hint: what to say when picking turns on, and in the empty list.
   //     byTag: false to leave out ＋ Jobs with a tag.
+  //     noUnassigned: true so ＋ Jobs with a tag… adds only timeline jobs, never the Unassigned list.
   // ===================================================================
   const jobPicker = opts => {
     const picked = new Map();   // job number -> { label (usually the customer's name), tags }
@@ -1502,7 +1504,7 @@
       say('Finding the jobs tagged ' + name + '…');
       try {
         const s = await board.load();
-        const un = await board.unassigned(opts.tool || 'Toolbox');
+        const un = opts.noUnassigned ? { rows: [] } : await board.unassigned(opts.tool || 'Toolbox');
         unassignedSeen = { key: s.key, rows: un.rows };
         const onLine = [], unas = [], seen = new Set();
         s.appts.forEach(a => { if (board.live(a) && a.tags.some(t => t.name === name) && !seen.has(a.jobId)) { seen.add(a.jobId); onLine.push(a.jobId); } });
@@ -1757,7 +1759,10 @@
     // Returns { jobs: [{ jobId, customer, customerId, tech, day, teams, tags, unassigned, type (its job type),
     // start (its first appointment's start that day, or null) }], onTimeline,
     // unassigned, canceled }. teams: the job's teams (timeline jobs only).
-    const whole = async tool => {
+    // opts.unassigned: false leaves the Unassigned list out (📱 Customer Texts, Nov 2026: Unassigned
+    // customers must never be texted by ＋ Everyone on the board).
+    const whole = async (tool, opts) => {
+      const withUn = !(opts && opts.unassigned === false);
       if (!onBoard()) throw new Error(board.need().replace(/\.$/, '').toLowerCase());
       const s = await board.load({ fresh: true });
       const jobs = [], byJob = new Map(), canceledJobs = new Set();
@@ -1775,7 +1780,7 @@
         jobs.push(x);
       });
       jobs.forEach(x => { if (x.teams.length > 1) x.teams = x.teams.filter(t => t !== NO_TEAM); });
-      const un = await board.unassigned(tool, { fresh: true });
+      const un = withUn ? await board.unassigned(tool, { fresh: true }) : { rows: [], canceled: 0 };
       un.rows.forEach(r => {
         if (byJob.has(r.jobId) || canceledJobs.has(r.jobId)) return;
         unassignedN++;
@@ -5123,14 +5128,16 @@
     const isPhoneCall = r => PHONE_ONLY.test((r && r.type) || '');
 
     // ---------- ＋ Everyone on the board ----------
-    // Every job on the day the board shows: the timeline (with your board's filters) plus the whole
-    // Unassigned list (all pages, for your board's branches). Holds aren't included: they have
-    // their own choice under Who. Canceled appointments are left out.
+    // Every job on a tech's schedule the day the board shows (the timeline, with your board's
+    // filters). The Unassigned list is NOT included (Nov 2026: Unassigned customers were being
+    // texted). Holds aren't included: they have their own choice under Who. Canceled appointments are left out.
     let everyoneLoading = false;
     const boardDay = () => board.day();
     const sameDay = (a, b) => board.sameDay(a, b);
     // The board's whole day (shared with Job Notifications' ＋ Whole board).
-    const loadEveryone = () => boardData.whole(TOOL);
+    // Timeline only: Unassigned customers are never added by ＋ Everyone (Nov 2026). The Unassigned
+    // list can still be added on purpose with ＋ A department… → Unassigned list, or by clicking jobs.
+    const loadEveryone = () => boardData.whole(TOOL, { unassigned: false });
 
     // ---------- UI ----------
     const pane = el('div', 'padding:8px 10px 10px');
@@ -5199,7 +5206,8 @@
       busy: () => running,
       say: t => say(t),
       changed: () => renderMain(),
-      tool: TOOL
+      tool: TOOL,
+      noUnassigned: true
     });
     let mode = get(K.mode) === 'auto' ? 'auto' : 'type';
     const openGroups = new Set();
@@ -5331,7 +5339,7 @@
     };
 
     const everyoneBtn = smallBtn('＋ Everyone on the board', () => addEveryone());
-    everyoneBtn.title = 'Adds every job on the board for the day it shows: the timeline and the whole Unassigned list (all pages, your board\'s branches). Holds aren\'t included. Take anyone off with ✕.';
+    everyoneBtn.title = 'Adds every job on a tech\'s schedule for the day the board shows. Unassigned jobs and holds are NOT included (pick ＋ A department… → Unassigned list if you really mean to text them). Take anyone off with ✕.';
     // ＋ A department…: everyone on one team's schedule (the team names on the board, like Level 1
     // Service or Installers), or the Unassigned list. Pick more than one to add them all.
     const deptSel = el('select', 'padding:4px 6px;border:1px solid var(--st-ctl);border-radius:5px;font:inherit;font-size:12px;color:var(--st-ink);background:var(--st-bg);max-width:100%;cursor:pointer');
@@ -5376,7 +5384,7 @@
       everyoneLoading = true; renderMain();
       say('Loading ' + what + '…');
       try {
-        const r = await loadEveryone();
+        const r = await (name === UNASSIGNED_OPT ? boardData.whole(TOOL) : loadEveryone());
         r.jobs.forEach(x => { boardInfo.set(x.jobId, x); });
         const all = r.jobs.filter(x => name === UNASSIGNED_OPT ? x.unassigned : (x.teams || []).indexOf(name) > -1);
         const jobs = all.filter(x => !isLate(x)), late = all.length - jobs.length;
@@ -5403,7 +5411,7 @@
         r.jobs.forEach(x => { boardInfo.set(x.jobId, x); labels[x.jobId] = { label: x.customer, tags: x.tags, customerId: x.customerId }; });
         const jobs = r.jobs.filter(x => !isLate(x)), late = r.jobs.length - jobs.length;
         const n = picker.addMany(jobs.map(x => x.jobId), labels);
-        say('Added ' + s1(n, 'job') + ' from the board (' + r.onTimeline + ' on the timeline, ' + r.unassigned + ' unassigned' +
+        say('Added ' + s1(n, 'job') + ' from the board (' + r.onTimeline + ' on techs\' schedules; Unassigned left out' +
           (r.canceled ? ', ' + r.canceled + ' canceled left out' : '') + ')' + lateLine(late) + '. That\'s ' + s1(recipients().length, 'customer') + ' (one text each). Take anyone off with ✕.');
       } catch (e) { say('⚠️ Couldn\'t load everyone on the board: ' + errText(e)); }
       finally { everyoneLoading = false; renderMain(); }
@@ -5718,6 +5726,15 @@
       }
       planned = Object.assign(result, { customers: pending.length, offer });
       const sends = result.sends, skips = result.skips;
+      // ⚠️ Unassigned customers in the list (Nov 2026: they must never be texted by mistake).
+      let uaSet = new Set();
+      if (source !== 'holds') {
+        try { (await board.unassigned(TOOL)).rows.forEach(x => uaSet.add(String(x.jobId))); } catch (e) {}
+        boardInfo.forEach((x, j) => { if (x && x.unassigned) uaSet.add(String(j)); });
+        if (id !== checkId) return;
+      }
+      const isUA = r => uaSet.has(String(r.jobId));
+      const uaSends = sends.filter(x => isUA(x.r));
       const sample = sends[0] || null;
       const why = {};
       skips.forEach(x => { const k = x.why.replace(/ (today|yesterday|\d+ days ago)$/, ' recently'); why[k] = (why[k] || 0) + 1; });
@@ -5735,8 +5752,9 @@
         '',
         '✅ Will text ' + s1(sends.length, 'number') + ':'
       ];
+      if (uaSends.length) lines.unshift('⚠️ ' + s1(uaSends.length, 'customer') + ' below ' + (uaSends.length === 1 ? 'is' : 'are') + ' UNASSIGNED (marked ⚠️ UA). Press Cancel and take them off with ✕ unless you mean to text them.', '');
       if (offering && offer.townTrouble) lines.push('ℹ️ The schedule for one of the days couldn\'t be read, so "already in their town" may be missing for it.');
-      if (!offering) sends.slice(0, 40).forEach(x => lines.push('• ' + (x.r.customer || 'job #' + x.r.jobId) + ' ' + showNum(x.num) + '  (#' + x.r.jobId + ')' + (x.unchecked ? '  (checked on its page instead)' : '')));
+      if (!offering) sends.slice(0, 40).forEach(x => lines.push('• ' + (isUA(x.r) ? '⚠️ UA  ' : '') + (x.r.customer || 'job #' + x.r.jobId) + ' ' + showNum(x.num) + '  (#' + x.r.jobId + ')' + (x.unchecked ? '  (checked on its page instead)' : '')));
       if (!offering && sends.length > 40) lines.push('…and ' + (sends.length - 40) + ' more');
       if (skips.length) {
         lines.push('', '⏭️ Skipping ' + skips.length + ': ' + Object.keys(why).map(k => why[k] + ' ' + k).join(', '));

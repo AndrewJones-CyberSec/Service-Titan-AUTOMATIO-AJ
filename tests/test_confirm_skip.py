@@ -85,8 +85,15 @@ with sync_playwright() as p:
     will, skip = split(t)
     check('Lou Ng' in skip and 'already confirmed' in skip and 'Lou Ng' not in will, 'a confirmed job is skipped, saying why')
     check('Kim Wu' in will, 'Kim Wu (one appointment confirmed, one not) is still texted')
-    check('Mo Day' in will and 'Pia Lane' in will, 'unconfirmed jobs are texted')
+    check('Mo Day' in will, 'unconfirmed jobs are texted')
+    check('Pia Lane' not in t, 'an Unassigned customer is never added by ＋ Everyone on the board (Nov 2026)')
     B(page, 'Cancel').click()
+
+    # The Unassigned list, added on purpose (＋ A department… → Unassigned list), then cleared:
+    # its jobs' days are known from it.
+    B(page, 'Clear').click()
+    page.locator('#st-toolbox select:visible').filter(has_text='A department').first.select_option(value='\u0001unassigned')
+    page.wait_for_function("() => /Added \\d+ job/.test(document.getElementById('st-toolbox').innerText)", timeout=15000)
 
     # ---- Typed in: the same ----
     B(page, 'Clear').click()
@@ -105,6 +112,7 @@ with sync_playwright() as p:
     t = review(page, 'Review and send to 2 customers')
     will, _ = split(t)
     check('Mo Day' in will and 'Pia Lane' in will, 'both on the list before the run')
+    check('below is UNASSIGNED' in t and '⚠️ UA  Pia Lane' in will and '⚠️ UA  Mo Day' not in will, 'the Unassigned customer is called out with ⚠️ UA before sending')
     page.evaluate("() => { window.CONFIRMED[106003] = true; }")   # a coworker confirms Mo Day
     page.fill('#st-ct-confirm-count', '2')
     B(page, 'Send 2 texts').click()
