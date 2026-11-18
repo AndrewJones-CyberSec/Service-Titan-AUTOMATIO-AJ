@@ -99,14 +99,16 @@
       if (!job) return json({}, 404);
       return json({ Id: Number(j), BusinessUnitId: job.bu, BusinessUnit: nameOf(job.bu), IsBusinessUnitReadOnly: job.mode === 'locked' });
     }
-    return json({ Id: Number(j), NotificationsEnabled: j in window.NOTIF ? window.NOTIF[j] : true, BusinessUnit: job ? nameOf(job.bu) : 'Commercial' });
+    window.PRO = window.PRO || {};
+    return json({ Id: Number(j), NotificationsEnabled: j in window.NOTIF ? window.NOTIF[j] : true, IsSmartDispatchEnabled: !!window.PRO[j], BusinessUnit: job ? nameOf(job.bu) : 'Commercial' });
   };
   // The new Dispatch board (newboard.js). Tech One has the DB jobs under 900000. With ?full, Tech
   // Two (901001, 901002), a job of Tech One's further along the day (912345), a canceled
   // appointment (901005) and tomorrow's (901006) are in the board's data too. The Jobs Tray shows
   // the Hold tab (901003, 901004), and with FILLER 60 more rows under a tall board.
   NB.setup({
-    techs: () => [{ id: 1, name: 'Tech One', team: 'Install HVAC', teamId: 1 }].concat(window.FULL ? [{ id: 2, name: 'Tech Two', team: 'Install HVAC', teamId: 1 }] : []),
+    // EXTRA_TECHS: techs added to ServiceTitan while the board is open (a new hire). NO_TECH_ONE: Tech One has left.
+    techs: () => (window.NO_TECH_ONE ? [] : [{ id: 1, name: 'Tech One', team: 'Install HVAC', teamId: 1 }]).concat(window.FULL ? [{ id: 2, name: 'Tech Two', team: 'Install HVAC', teamId: 1 }] : [], window.EXTRA_TECHS || []),
     appts: () => window.FULL
       ? window.FULL_ASSIGNMENTS.map(a => ({ id: a.Id, job: a.JobId, techs: (a.Technicians || []).map(t => t.Id), customer: a.Customer, customerId: a.CustomerId, start: a.Start, status: a.AppointmentStatus === 5 ? 'Canceled' : 'Scheduled', jobType: (window.TYPES || {})[a.JobId] }))
       : Object.keys(DB).filter(j => j < 900000).map((j, i) => ({ id: 7000 + i, job: Number(j), techs: [1], customer: 'Cust ' + j, customerId: Number(j) })),
@@ -167,6 +169,22 @@
           if (window.NOTIF_STUCK && window.NOTIF_STUCK[j]) { const was = !e.target.checked; setTimeout(() => { e.target.checked = was; }, 200); return; }
           window.NOTIF[j] = e.target.checked;
         });
+        // ⚡ Dispatch Pro, right below, as ServiceTitan draws it (Nov 2026): its own widget with the
+        // switch in a shadow root. PRO[job]: on or off. PRO_LOCKED: this login can't change it (the
+        // switch is disabled, with a tooltip). PRO_DONE[job]: a done job, which has no switch.
+        window.PRO = window.PRO || {};
+        if (!(window.PRO_DONE && window.PRO_DONE[j])) {
+          const host = document.createElement('servicetitan-dispatch-pro-job-details-0c64bc86');
+          host.setAttribute('data-component-type', 'DispatchProToggle');
+          host.setAttribute('data-job-id', j);
+          const sr = host.attachShadow({ mode: 'open' });
+          setTimeout(() => {
+            sr.innerHTML = '<div><label class="_switch"><input type="checkbox" role="switch" data-cy="dispatch-pro-switch"' + (window.PRO[j] ? ' checked' : '') + (window.PRO_LOCKED ? ' disabled' : '') + '><span>Dispatch Pro</span></label>' +
+              (window.PRO_LOCKED ? '<div role="tooltip">You don\'t have permission to perform this action</div>' : '') + '</div>';
+            sr.querySelector('input').addEventListener('change', e => { (window.proClicks = window.proClicks || []).push(j); window.PRO[j] = e.target.checked; });
+          }, 150);
+          root.appendChild(host);
+        }
       }, 300);
     }
   }

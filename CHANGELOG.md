@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.7
+
+- **New in 🔕 Job Notifications: ⚡ Dispatch Pro** (asked for by Kyle). A row at the top picks the switch: **🔔 Job Notifications** or **⚡ Dispatch Pro**. The same list, buttons, 🗂️ By job type, cards and retries work for both.
+  - Each job's Dispatch Pro setting is read from the job's data (*IsSmartDispatchEnabled*) as it's added, without opening anything: **⚡ on** / **⭕ off**.
+  - Turning it off or on opens only the jobs that need it, flips the switch in the Dispatch Pro widget below Job Notifications (`servicetitan-dispatch-pro-job-details`, switch `data-cy="dispatch-pro-switch"`), and checks it stuck.
+  - **No permission:** a login that can't change Dispatch Pro gets a grayed-out switch. It's never clicked: the run stops at the first job, says the login has no permission, and changes nothing (no *Try again*).
+  - A done job has no Dispatch Pro switch: shown as a problem, not retried.
+  - 🔔 and ⚡ keep their own readings and their own job type settings (`stProTypes`); the choice is remembered (`stSwitchKind`).
+- **Techs stay up to date** (*"I had to delete and redo the bookmark so it could pull up new techs"*):
+  - The Toolbox listens for the board's own reads of its techs and day (its 🔄 Refresh, a new day or filter) and reads the board again too. It only listens; it never changes them, and puts the page back the way it was when closed.
+  - Every 3 minutes, and when you come back to the tab, it checks the day's tech list (one small read). Someone added or removed: it reads the board fresh, presses the board's own 🔄 Refresh (never while a tool is running) so the board shows them too, and says who in the bar at the top (*👷 Tech list updated (new: … · no longer on the board: …)*).
+  - Anyone who left comes off 💬 Tech Messages' saved picks.
+- **Never off the bottom of the screen:**
+  - The Toolbox is never taller than the screen: the title bar stays put and the tool inside scrolls, for every tool (before, only some tools did, and a long list could push the buttons out of reach).
+  - When a tool fills up and the Toolbox would reach past the bottom of the screen, it moves up. Dragging it by the title bar keeps its bottom on screen too.
+  - **Taller or shorter:** drag the new grip on its bottom edge, or the bottom-right corner for both ways at once. Remembered; double-click to fit it to what's in it again.
+- Tests: new `tests/test_dispatch_pro.py` (picking the switch, reading, turning on and off only the jobs that need it, notifications untouched, no permission, a job with no switch, remembered) and `tests/test_new_techs.py` (a new hire and someone who left, the board's Refresh pressed, saved picks cleaned up, the page's XMLHttpRequest put back); `tests/test_panel_size.py` checks the bottom edge, the screen's height, and a short screen. The fake job page (`tests/board.html`) has the Dispatch Pro widget.
+
 ## 2.6.1
 
 - **Fixed: 📱 Customer Texts → ＋ Everyone on the board texted Unassigned customers.** Since 1.6.1 it added the timeline *and* the whole Unassigned list. It now adds only jobs on a tech's schedule for the day the board shows. 🔕 Job Notifications' ＋ Whole board is unchanged.

@@ -106,7 +106,37 @@ with sync_playwright() as p:
     page.locator('#st-toolbox .st-head button', has_text='–').click()
     check(not ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox .st-grip')).some(g => g.offsetParent)"), 'folded: no grips')
     page.locator('#st-toolbox .st-head button').first.click()
-    check(ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox .st-grip')).filter(g => g.offsetParent).length") == 2, 'opened back up: both grips back')
+    check(ev(page, "() => Array.from(document.querySelectorAll('#st-toolbox .st-grip')).filter(g => g.offsetParent).length") == 3, 'opened back up: all three grips back')
+
+    # ---- Taller or shorter (2.7): the bottom edge ----
+    def height(): return round(ev(page, "() => document.getElementById('st-toolbox').getBoundingClientRect().height"))
+    def vdrag(sel, dy):
+        box = page.locator(sel).bounding_box()
+        x, y = box['x'] + box['width'] / 2, box['y'] + box['height'] / 2
+        page.mouse.move(x, y); page.mouse.down(); page.mouse.move(x, y + dy / 2, steps=4); page.mouse.move(x, y + dy, steps=4); page.mouse.up()
+    move_by_title(page, 0, -2000)
+    time.sleep(0.5)   # let the Toolbox finish sliding into place
+    h0 = height()
+    vdrag('#st-toolbox .st-grip-b', 150)
+    check(abs(height() - (h0 + 150)) <= 3, 'the bottom edge makes it taller (%d -> %d)' % (h0, height()))
+    check(ev(page, "() => localStorage.getItem('stHeight')") == str(height()), 'the height is remembered')
+    time.sleep(0.3)
+    vdrag('#st-toolbox .st-grip-b', 5000)
+    top = ev(page, "() => document.getElementById('st-toolbox').getBoundingClientRect().bottom")
+    check(top <= ev(page, "() => innerHeight"), 'never taller than the screen (bottom %d)' % top)
+    page.locator('#st-toolbox .st-grip-b').dblclick()
+    check(ev(page, "() => localStorage.getItem('stHeight')") in (None, ''), 'double-click: back to fitting what\'s in it')
+
+    # ---- A tool with a long list never runs off the bottom of the screen ----
+    page.set_viewport_size({'width': 1400, 'height': 500})
+    move_by_title(page, 0, 300)
+    open_tool(page, 'Notes')
+    time.sleep(0.4)
+    r = ev(page, "() => { const p = document.getElementById('st-toolbox').getBoundingClientRect(); const h = document.querySelector('#st-toolbox .st-head').getBoundingClientRect(); return [p.top, p.bottom, h.top, innerHeight]; }")
+    check(r[1] <= r[3] and r[2] >= 0, 'on a short screen the Toolbox moves up to stay on it: title bar and bottom both showing (%s)' % r)
+    scroll = ev(page, "() => { const v = Array.from(document.querySelectorAll('#st-toolbox > .st-view')).find(v => v.offsetParent); return v ? [v.scrollHeight, v.clientHeight, getComputedStyle(v).overflowY] : null; }")
+    check(scroll and scroll[2] == 'auto', 'the tool inside scrolls when there\'s more than fits (%s)' % scroll)
+    page.set_viewport_size({'width': 1400, 'height': 900})
 
     # ---- A smaller browser window: it stays inside ----
     page.set_viewport_size({'width': 420, 'height': 800})

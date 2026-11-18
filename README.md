@@ -11,7 +11,9 @@ Version 2.0 works on ServiceTitan's new Dispatch board, on its **Day** view. On 
 - **The whole day in one request:** ＋ Whole board, ＋ Everyone on the board and ＋ A department… read the day's jobs, techs and teams the way the board does, so they're quicker and don't miss jobs scrolled out of view.
 - **The Jobs Tray** under the board (Unassigned, Hold and the other tabs): click jobs in it to pick them, or **+ Tray page** to add the tab and page that are open.
 - **A new look**, matching the new board. **–** folds the Toolbox down to its title bar; click it again to open it back up.
-- **Make it wider or narrower** by dragging its left edge or bottom-right corner. It remembers the width; double-click either one for the usual width. Nothing inside scrolls sideways.
+- **Make it wider or narrower** by dragging its left edge, **taller or shorter** by dragging its bottom edge, or both with the bottom-right corner. It remembers the size; double-click a grip to go back to the usual size. Nothing inside scrolls sideways.
+- **Never off the screen (2.7):** when a tool fills up (a long list, a run's results), the Toolbox moves up to stay on screen, and if it's taller than the screen the tool inside scrolls, so its buttons can always be reached.
+- **Techs stay up to date (2.7):** new hires and people who've left show up by themselves, without redoing the bookmark. The Toolbox hears whenever the board reloads its techs, and checks the tech list every few minutes (and when you come back to the tab). When someone was added or removed it refreshes the board, says who in the bar at the top, and takes anyone who left off 💬 Tech Messages' saved picks.
 - **Quick animations** (fading in and out, tools sliding in, smooth folding, loading spinners). If your computer is set to reduce motion, they're turned off.
 
 ## Tools
@@ -25,7 +27,9 @@ Ready-made notes sorted into folders: **📞 Updates** (no answer, left a voicem
 - **✏️ Edit notes** (inside a folder) to change, add, remove or reorder its notes, or move a note to another folder.
 - Edits are saved in your own browser. Notes from before folders were added are in **Updates**.
 
-**🔕 Job Notifications**
+**🔕 Job Notifications** (and **⚡ Dispatch Pro**)
+At the top, pick the switch the tool works on: **🔔 Job Notifications** or **⚡ Dispatch Pro** (the switch right below Job Notifications on the job page). Everything below works the same for both, with ⚡ on / ⭕ off for Dispatch Pro; each keeps its own readings and its own 🗂️ By job type settings, and the choice is remembered. Turning Dispatch Pro off or on needs permission to change it in ServiceTitan: without it, the job page's switch is grayed out, and the tool stops at the first job, says so, and changes nothing. A done job has no Dispatch Pro switch, so it's shown as a problem instead of being changed.
+
 One list of jobs, filled any way you like (picked jobs get an orange outline on the board):
 
 - **🖱️ Pick on board**: click jobs on the timeline or in the Jobs Tray under the board. Click a **tech's name** to add their whole day (click it again to take it off).
