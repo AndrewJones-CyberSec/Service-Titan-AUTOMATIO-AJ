@@ -35,8 +35,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.7.1';
+  const VERSION = '2.7.2';
   const WHATS_NEW = {
+    '2.7.2': 'The whole board never includes phone calls or interviews. ＋ Whole board and a tech\'s whole day (🔕 Job Notifications), 🗂️ By job type, and ＋ Everyone on the board / ＋ A department… (📱 Customer Texts) leave out PHONE CALL ONLY jobs and any job type with "interview" in it, and say how many (📞 Left out 1 phone call and 2 interviews). Clicking one on the board or typing its number still adds it. Fixed: 📲 Offer times read "Can he come Saturday at 3 instead?" as picking Saturday; a day with a time of their own, or "instead", now goes to ⚠️ Needs a look.',
     '2.7.1': 'New in 📱 Customer Texts → 📥 Check replies: ☎️ Talked with them today = confirmed. A customer we spoke with on the phone today (they called us, or our call lasted a minute or more) or who texted us today goes on the ✅ Will confirm list when their appointment starts within 24 hours, even without a C, and the card says how ("Talked with them today: we called them at 10:42 AM (3 min)"). Not if they said STOP, or anything about canceling or another day: those go to Needs a look. It\'s on to start; untick it at the top of Check replies to go back to C replies only. Nothing is confirmed until you press Confirm, and ↩ Take off puts anyone back.',
     '2.7': 'New in 🔕 Job Notifications: ⚡ Dispatch Pro. Pick 🔔 Job Notifications or ⚡ Dispatch Pro at the top of the tool, and the same list shows and turns that switch off or on (jobs by type too). Turning Dispatch Pro off or on needs permission to change it in ServiceTitan; without it, the tool says so and changes nothing. Also: new hires and people who left show up by themselves (no need to redo the bookmark), and the Toolbox never runs off the bottom of the screen: it moves up, scrolls inside, and its bottom edge makes it taller or shorter.',
     '2.6.1': 'Fixed: 📱 Customer Texts → ＋ Everyone on the board was also adding the whole Unassigned list, so Unassigned customers got texted. It now adds only jobs on a tech\'s schedule. ＋ Jobs with a tag… in Customer Texts leaves Unassigned out too. To text the Unassigned list on purpose, pick ＋ A department… → Unassigned list. And Check before texting now warns ⚠️ how many customers are UNASSIGNED and marks each one ⚠️ UA, so you can take them off before anything is sent.',
@@ -1821,6 +1822,19 @@
     // Teams (departments, like Level 1 Service or Installers) come with each tech in the board's
     // data, so a board filter no longer hides them. A job with no tech on the board's list is in NO_TEAM.
     const NO_TEAM = 'Other (no team)';
+    // Never part of the whole board, in any tool (Nov 2026): PHONE CALL ONLY jobs (a call, not a
+    // visit) and interviews (any job type with "interview" in it). Clicking one on the board, or
+    // typing its number, still adds it.
+    const PHONE_RE = /\bphone call\b/i, INTERVIEW_RE = /\binterview/i;
+    const leftOutKind = type => PHONE_RE.test(type || '') ? 'phone' : INTERVIEW_RE.test(type || '') ? 'interview' : null;
+    // What a tool says about them: ". 📞 Left out 2 phone calls and 1 interview".
+    // keep(x): only those of r.leftOut ({ jobId, kind, unassigned, teams }) the tool was adding.
+    const leftOutLine = (r, keep) => {
+      const list = ((r && r.leftOut) || []).filter(x => !keep || keep(x));
+      const p = list.filter(x => x.kind === 'phone').length, i = list.filter(x => x.kind === 'interview').length;
+      if (!p && !i) return '';
+      return '. 📞 Left out ' + [p ? plural(p, 'phone call') : '', i ? plural(i, 'interview') : ''].filter(Boolean).join(' and ') + ' (never part of the whole board)';
+    };
     const teamsOf = (s, a) => {
       const ts = Array.from(new Set(a.techs.map(id => { const t = s.techById.get(id); return t && t.team; }).filter(Boolean)));
       return ts.length ? ts : [NO_TEAM];
@@ -1832,7 +1846,7 @@
       if (!s) return [];
       const byJob = new Map();
       s.appts.forEach(a => {
-        if (!board.live(a)) return;
+        if (!board.live(a) || leftOutKind(a.jobType)) return;
         if (!byJob.has(a.jobId)) byJob.set(a.jobId, new Set());
         teamsOf(s, a).forEach(t => byJob.get(a.jobId).add(t));   // a two-tech job: both techs' teams
       });
@@ -1855,11 +1869,20 @@
       const withUn = !(opts && opts.unassigned === false);
       if (!onBoard()) throw new Error(board.need().replace(/\.$/, '').toLowerCase());
       const s = await board.load({ fresh: true });
-      const jobs = [], byJob = new Map(), canceledJobs = new Set();
+      const jobs = [], byJob = new Map(), canceledJobs = new Set(), outJobs = new Map();
       let onTimeline = 0, unassignedN = 0;
+      const leaveOut = (jobId, type, a) => {
+        const k = leftOutKind(type);
+        if (!k) return false;
+        const x = outJobs.get(String(jobId)) || { jobId: String(jobId), kind: k, unassigned: !a, teams: [] };
+        if (a) teamsOf(s, a).forEach(t => { if (x.teams.indexOf(t) < 0) x.teams.push(t); });
+        outJobs.set(String(jobId), x);
+        return true;
+      };
       s.appts.forEach(a => { if (!board.live(a)) canceledJobs.add(a.jobId); });
       s.appts.forEach(a => {
         if (!board.live(a)) return;
+        if (leaveOut(a.jobId, a.jobType, a)) { canceledJobs.delete(a.jobId); return; }
         canceledJobs.delete(a.jobId);   // another visit of it isn't canceled
         const had = byJob.get(a.jobId);
         // A two-tech job, or a job with two visits: one entry, with every team and tag.
@@ -1872,19 +1895,20 @@
       jobs.forEach(x => { if (x.teams.length > 1) x.teams = x.teams.filter(t => t !== NO_TEAM); });
       const un = withUn ? await board.unassigned(tool, { fresh: true }) : { rows: [], canceled: 0 };
       un.rows.forEach(r => {
-        if (byJob.has(r.jobId) || canceledJobs.has(r.jobId)) return;
+        if (byJob.has(r.jobId) || canceledJobs.has(r.jobId) || outJobs.has(String(r.jobId))) return;
+        if (leaveOut(r.jobId, norm(r.raw && r.raw.Type))) return;
         unassignedN++;
         const x = { jobId: r.jobId, customer: r.customer, customerId: r.customerId, tech: '', day: s.day, teams: [], tags: r.tags, unassigned: true, type: norm(r.raw && r.raw.Type), start: r.start || null };
         byJob.set(r.jobId, x);
         jobs.push(x);
       });
       health.clear(tool);
-      return { jobs, onTimeline, unassigned: unassignedN, canceled: un.canceled + canceledJobs.size };
+      return { jobs, onTimeline, unassigned: unassignedN, canceled: un.canceled + canceledJobs.size, leftOut: Array.from(outJobs.values()) };
     };
     // A tech's jobs on the day the board shows, from the board's data (every job, even ones
-    // scrolled out of view). Canceled appointments are left out. [job numbers]
-    const techJobs = techId => board.techJobs(techId);
-    return { whole, techJobs, day: () => board.day(), teams, NO_TEAM };
+    // scrolled out of view). Canceled appointments, phone calls and interviews are left out. [job numbers]
+    const techJobs = techId => board.techJobs(techId).filter(j => !board.apptsOf(j).some(a => board.live(a) && leftOutKind(a.jobType)));
+    return { whole, techJobs, day: () => board.day(), teams, NO_TEAM, leftOutLine, leftOutKind };
   })();
 
   const menuPane = el('div', 'display:none;padding:10px 12px 12px');
@@ -2920,7 +2944,7 @@
         r.jobs.forEach(x => { labels[x.jobId] = { label: x.customer, tags: x.tags }; });
         const n = picker.addMany(r.jobs.map(x => x.jobId), labels);
         say('Added ' + plural(n, 'job') + ' from ' + boardDate() + ' (' + r.onTimeline + ' on the timeline, ' + r.unassigned + ' unassigned' +
-          (r.canceled ? ', ' + r.canceled + ' canceled left out' : '') + ')' + (n < r.jobs.length ? '. ' + (r.jobs.length - n) + ' were already picked' : '') + '. Take any off with ✕.');
+          (r.canceled ? ', ' + r.canceled + ' canceled left out' : '') + ')' + boardData.leftOutLine(r) + (n < r.jobs.length ? '. ' + (r.jobs.length - n) + ' were already picked' : '') + '. Take any off with ✕.');
       } catch (e) { say('⚠️ ' + (st.isSignedOut(e) ? e.message : 'Couldn\'t load the whole board: ' + errText(e))); }
       finally { wholeLoading = false; wholeBtn.textContent = '＋ Whole board'; wholeBtn.classList.remove('st-busy'); dim(wholeBtn, running); fillTechs(true); }
     };
@@ -5593,7 +5617,7 @@
         const labels = {};
         jobs.forEach(x => { labels[x.jobId] = { label: x.customer, tags: x.tags, customerId: x.customerId }; });
         const n = picker.addMany(jobs.map(x => x.jobId), labels);
-        say('Added ' + s1(n, 'job') + ' from ' + what + (n < jobs.length ? ' (' + (jobs.length - n) + ' already picked)' : '') + lateLine(late) +
+        say('Added ' + s1(n, 'job') + ' from ' + what + (n < jobs.length ? ' (' + (jobs.length - n) + ' already picked)' : '') + lateLine(late) + boardData.leftOutLine(r, x => name === UNASSIGNED_OPT ? x.unassigned : x.teams.indexOf(name) > -1) +
           '. That\'s ' + s1(recipients().length, 'customer') + ' in the list (one text each). Take anyone off with ✕.');
       } catch (e) { say('⚠️ Couldn\'t load ' + what + ': ' + errText(e)); }
       finally { everyoneLoading = false; deptKey = null; renderMain(); }
@@ -5612,7 +5636,7 @@
         const jobs = r.jobs.filter(x => !isLate(x)), late = r.jobs.length - jobs.length;
         const n = picker.addMany(jobs.map(x => x.jobId), labels);
         say('Added ' + s1(n, 'job') + ' from the board (' + r.onTimeline + ' on techs\' schedules; Unassigned left out' +
-          (r.canceled ? ', ' + r.canceled + ' canceled left out' : '') + ')' + lateLine(late) + '. That\'s ' + s1(recipients().length, 'customer') + ' (one text each). Take anyone off with ✕.');
+          (r.canceled ? ', ' + r.canceled + ' canceled left out' : '') + ')' + lateLine(late) + boardData.leftOutLine(r) + '. That\'s ' + s1(recipients().length, 'customer') + ' (one text each). Take anyone off with ✕.');
       } catch (e) { say('⚠️ Couldn\'t load everyone on the board: ' + errText(e)); }
       finally { everyoneLoading = false; renderMain(); }
     };
@@ -7040,6 +7064,8 @@
       if (/^(either|whichever|any|both)\b/.test(t) || /\b(either|both|any of (?:them|those))\b[^.?]{0,25}\b(works?|fine|good|ok|okay)\b/.test(t)) return opts.length > 1 ? { either: true } : { pick: 0 };
       if (/^(no|nope|neither|none|not interested|not right now|not at this time)\b(?!\s+(?:problem|worries|rush|preference|pref))/.test(t)) return { no: true };
       // The day they name, when it's one that was offered (and the time of day, if they say one, fits).
+      // Not "instead" or a time of their own ("Saturday at 3?"): those are for you to read.
+      if (/\binstead\b|\b(?:at|around|after|before|by|about)\s+\d|\d\s*(?::\d\d|[ap]\.?m\b)/.test(t)) return null;
       const named = new Set();
       DAY_WORDS.forEach((ws, i) => { if (new RegExp('\\b(?:' + ws.join('|') + ')\\b').test(t)) named.add(i); });
       if (/\btomorrow\b/.test(t) && at) named.add(new Date(at + 86400000).getDay());

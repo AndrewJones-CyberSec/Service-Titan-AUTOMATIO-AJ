@@ -132,7 +132,7 @@ with sync_playwright() as p:
         one: P('1'), two: P('2 please'), hash: P('#2'), option: P('Option 1 works'), opt_mid: P('lets do option 2'), first: P('The first one'), second: P('second works'), emoji: P('2 👍'),
         three: P('3'), time: P('2pm works'), clock: P('1:30 is better'), range: P('1 or 2?'), ten: P('10'),
         either: P('Either works'), any: P('any of those is fine'), no: P('No thanks'), neither: P('neither'), noprob: P('no problem'), nopref: P('No preference'),
-        day1: P(wd(d2) + ' works'), day2: P('Can we do ' + wd(d3) + '?'), dayAbbr: P(wd(d3).slice(0, 3) + ' is good'), dayWrongPart: P(wd(d2) + ' morning instead?'),
+        day1: P(wd(d2) + ' works'), day2: P('Can we do ' + wd(d3) + '?'), dayAbbr: P(wd(d3).slice(0, 3) + ' is good'), dayWrongPart: P(wd(d2) + ' morning instead?'), dayAsk: P('Can he come ' + wd(d2) + ' at 3 instead?'), dayTime: P(wd(d2) + ' at 3pm'),
         partOnly: P('the morning one'), sameDayPart: P(wd(d2) + ' afternoon', same), sameDay: P(wd(d2), same), other: P('What about next month?'), call: P('Call me'),
         r_pick: R(['2', 'Thanks!']), r_change: R(['1', 'actually 2']), r_more: R(['1', 'but can he come after 3?']), r_yes2: R(['Yes']), r_yes1: R(['Yes'], [two[0]]), r_no: R(['no thank you']), r_q: R(['How much is it?']),
         w_pref: W('Customer prefers afternoons.'), w_only: W('Mornings only'), w_not: W('No mornings please'), w_until: W('Not home until 2'), w_after5: W('gets off at 5'), w_work: W('call after work'),
@@ -146,6 +146,7 @@ with sync_playwright() as p:
     check(r['either'] == 'either' and r['any'] == 'either', '"either works" / "any of those is fine" is either')
     check(r['no'] == 'no' and r['neither'] == 'no' and r['noprob'] is None and r['nopref'] is None, '"no thanks" / "neither" is a no; "no problem" and "no preference" aren\'t')
     check([r['day1'], r['day2'], r['dayAbbr']] == [0, 1, 1], 'the day they name picks the time offered that day')
+    check(r['dayAsk'] is None and r['dayTime'] is None, 'the day offered with a time of their own ("Saturday at 3 instead?") picks nothing (needs a look)')
     check(r['dayWrongPart'] is None, 'the day offered but another time of day ("morning instead?") picks nothing')
     check(r['partOnly'] == 1 and r['sameDayPart'] == 1 and r['sameDay'] is None, '"the morning one" picks it; two times on one day need the time of day')
     check(r['other'] is None and r['call'] is None, 'anything else picks nothing')

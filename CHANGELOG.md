@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.7.2
+
+- **The whole board never includes phone calls or interviews.** Everywhere the Toolbox adds the whole board, it leaves out PHONE CALL ONLY jobs (a call, not a visit) and interviews (any job type with "interview" in it, such as *Interview - Tech Hire* or *Phone Interview*), on the timeline and in the Unassigned list, and says how many: *📞 Left out 1 phone call and 2 interviews (never part of the whole board)*.
+  - 🔕 Job Notifications: ＋ Whole board, a tech's whole day (＋ A tech's jobs… and clicking a tech's name, with the counts in the list), and 🗂️ By job type (neither is listed, so ⚙️ Apply never touches them).
+  - 📱 Customer Texts: ＋ Everyone on the board, ＋ A department… (its job counts too) and its Unassigned list. Each says only what it left out of what it was adding.
+  - Clicking one on the board, picking it in the Jobs Tray or typing its number still adds it.
+- **Fixed: 📲 Offer times → 📥 Check replies to offers** read *"Can he come Saturday at 3 instead?"* as picking Saturday when Saturday was one of the days offered. A reply that names the day with a time of its own (*at 3*, *3pm*) or says *instead* now goes to ⚠️ Needs a look. *"Can we do Thursday?"* still picks Thursday.
+- Tests: new `tests/test_left_out.py` (＋ Whole board, a tech's count, By job type, ＋ Everyone on the board, ＋ A department… and its Unassigned list, a clicked interview still added). `tests/test_phone_calls.py`: the board's phone call is never added by ＋ Everyone on the board. `tests/test_offers.py`: the day with a time of their own.
+
 ## 2.7.1
 
 - **New in 📱 Customer Texts → 📥 Check replies: ☎️ Talked with them today = confirmed.** A customer we've spoken or chatted with today goes on the **✅ Will confirm** list when their appointment starts within 24 hours, even without a C reply.
