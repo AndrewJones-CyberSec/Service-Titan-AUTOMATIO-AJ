@@ -47,7 +47,7 @@ with sync_playwright() as p:
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(URL + '#/DispatchBoard')
     page.wait_for_selector('a.appointment')
-    page.evaluate("() => { localStorage.clear(); Object.keys(window.CHATS).forEach(k => delete window.CHATS[k]); }")
+    page.evaluate("() => { localStorage.clear(); localStorage.setItem('stCtSpokeToday', '0'); Object.keys(window.CHATS).forEach(k => delete window.CHATS[k]); }")
     page.evaluate(TOOLBOX)
     B(page, 'Customer Texts').click()
     B(page, '✅ Confirm Appt').click()

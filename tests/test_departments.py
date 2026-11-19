@@ -36,7 +36,7 @@ def pick_dept(page, value):
 def open_board(page, query):
     page.goto(URL + query + '#/DispatchBoard')
     page.wait_for_selector('a.appointment')
-    page.evaluate("() => { localStorage.clear(); Object.keys(window.CHATS).forEach(k => delete window.CHATS[k]); }")
+    page.evaluate("() => { localStorage.clear(); localStorage.setItem('stCtSpokeToday', '0'); Object.keys(window.CHATS).forEach(k => delete window.CHATS[k]); }")
     page.evaluate(TOOLBOX)
     B(page, 'Customer Texts').click()
     B(page, '✅ Confirm Appt').click()

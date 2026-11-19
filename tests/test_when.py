@@ -25,7 +25,7 @@ def panel_text(page):
 def open_board(page, saved=None, flag=None):
     page.goto(URL + '#/DispatchBoard')
     page.wait_for_selector('a.appointment')
-    page.evaluate("([s, f]) => { localStorage.clear(); if (s) { localStorage.setItem('stCtFolders', s); localStorage.setItem('stCtAddedFolders', JSON.stringify(['📣 OutReach', '✅ Confirm Appt'])); } if (f) localStorage.setItem('stCtWhenUpdated', f); Object.keys(window.CHATS).forEach(k => delete window.CHATS[k]); }", [saved, flag])
+    page.evaluate("([s, f]) => { localStorage.clear(); localStorage.setItem('stCtSpokeToday', '0'); if (s) { localStorage.setItem('stCtFolders', s); localStorage.setItem('stCtAddedFolders', JSON.stringify(['📣 OutReach', '✅ Confirm Appt'])); } if (f) localStorage.setItem('stCtWhenUpdated', f); Object.keys(window.CHATS).forEach(k => delete window.CHATS[k]); }", [saved, flag])
     page.evaluate(TOOLBOX)
     B(page, 'Customer Texts').click()
 

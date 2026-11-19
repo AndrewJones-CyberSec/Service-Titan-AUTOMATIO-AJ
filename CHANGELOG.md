@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.7.1
+
+- **New in 📱 Customer Texts → 📥 Check replies: ☎️ Talked with them today = confirmed.** A customer we've spoken or chatted with today goes on the **✅ Will confirm** list when their appointment starts within 24 hours, even without a C reply.
+  - Talked means: a call from them of 15 seconds or more, one of our calls of a minute or more (a shorter one of ours is most likely no answer or a voicemail), or any text they sent us today. Read from the customer's call log (`/app/api/customers/searchCalls`) and their conversations, the same thresholds as 📋 Quick Job Info.
+  - The card says how: *☎️ Talked with them today: we called them at 10:42 AM (3 min), they texted at 11:05 AM.*
+  - Looks at customers under No reply yet, Not texted, and Needs a look when they replied with something other than a plain yes (or the confirm text didn't go through). Only their appointments within the next 24 hours are confirmed.
+  - Not when they said STOP or anything about canceling, rescheduling or another day today, or they have an unread text that couldn't be read: those stay under **⚠️ Needs a look** with why.
+  - It's a tick box at the top of Check replies, **on** to start; untick it to go back to C replies only (remembered in this browser, `stCtSpokeToday`). Changing it checks again.
+  - Nothing is confirmed until you press Confirm. **↩ Take off** puts them back where they were. Right before confirming, all of their numbers are looked at again: a new text since the check stops it, and so does an appointment now more than 24 hours away.
+  - If the call log can't be read, texts still count and the report says so.
+- Tests: new `tests/test_talked_today.py`; the fake board answers call-log reads (`CALLS`, `CALLS_DOWN`). The older Check replies suites run with the new choice off.
+
 ## 2.7
 
 - **New in 🔕 Job Notifications: ⚡ Dispatch Pro** (asked for by Kyle). A row at the top picks the switch: **🔔 Job Notifications** or **⚡ Dispatch Pro**. The same list, buttons, 🗂️ By job type, cards and retries work for both.

@@ -35,8 +35,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.7';
+  const VERSION = '2.7.1';
   const WHATS_NEW = {
+    '2.7.1': 'New in 📱 Customer Texts → 📥 Check replies: ☎️ Talked with them today = confirmed. A customer we spoke with on the phone today (they called us, or our call lasted a minute or more) or who texted us today goes on the ✅ Will confirm list when their appointment starts within 24 hours, even without a C, and the card says how ("Talked with them today: we called them at 10:42 AM (3 min)"). Not if they said STOP, or anything about canceling or another day: those go to Needs a look. It\'s on to start; untick it at the top of Check replies to go back to C replies only. Nothing is confirmed until you press Confirm, and ↩ Take off puts anyone back.',
     '2.7': 'New in 🔕 Job Notifications: ⚡ Dispatch Pro. Pick 🔔 Job Notifications or ⚡ Dispatch Pro at the top of the tool, and the same list shows and turns that switch off or on (jobs by type too). Turning Dispatch Pro off or on needs permission to change it in ServiceTitan; without it, the tool says so and changes nothing. Also: new hires and people who left show up by themselves (no need to redo the bookmark), and the Toolbox never runs off the bottom of the screen: it moves up, scrolls inside, and its bottom edge makes it taller or shorter.',
     '2.6.1': 'Fixed: 📱 Customer Texts → ＋ Everyone on the board was also adding the whole Unassigned list, so Unassigned customers got texted. It now adds only jobs on a tech\'s schedule. ＋ Jobs with a tag… in Customer Texts leaves Unassigned out too. To text the Unassigned list on purpose, pick ＋ A department… → Unassigned list. And Check before texting now warns ⚠️ how many customers are UNASSIGNED and marks each one ⚠️ UA, so you can take them off before anything is sent.',
     '2.6': 'New in 📱 Customer Texts: 📲 Offer times. A folder that texts customers on hold a couple of openings to reply 1 or 2 to. List the openings you want filled under 🗓️ Times to offer (a day, a window, how many spots). Each customer gets their own: a time of day their summary asks for ("prefers afternoons", "not home until 2"), a day we\'re already in their town first (and the text says so), and no opening offered to too many at once. Their name and what the hold is ({about}: "your water heater quote") are filled in, and you see every text before it goes: change the times or the words for anyone, or ✕ Leave out. Then 📥 Check replies to offers lists who picked which time ("2", "the first one", "Thursday works"), who needs a look, who said no and who hasn\'t answered. Nothing is booked by the Toolbox: open the job, book it, then ✓ Booked. A hold booked in ServiceTitan leaves the list by itself. Fixed: 💬 Tech Messages → 👥 Choose techs could hide a whole team (like the service techs) with only a count. It now names each hidden team and why (not set up in 🛡️ yet, blocked, or hidden by the board\'s Teams filter), with 🛡️ Allow teams…; a team renamed for a new lead keeps its setting; and ticking (no team) works.',
@@ -6589,7 +6590,8 @@
         if (a == null || !/^\d+$/.test(String(a)) || !/^\d+$/.test(String(j)) || out.has(String(a))) return;
         if (start && !sameDay(start, day)) return;
         if (board.isCanceled(status)) return;
-        out.set(String(a), { apptId: a, jobId: String(j), customer, customerId: customerId || null, confirmed: confirmed === true });
+        const sd = start ? new Date(start) : null;
+        out.set(String(a), { apptId: a, jobId: String(j), customer, customerId: customerId || null, confirmed: confirmed === true, start: sd && !isNaN(sd) ? sd : null });
       };
       snap.appts.forEach(x => take(x.apptId, x.jobId, x.customer, x.customerId, x.confirmed, x.start, x.status));
       const un = await board.unassigned(TOOL, { fresh: true });
@@ -6613,14 +6615,20 @@
       // already confirmed); anything else said to it is read like any other reply.
       const per = [];
       let unreadLeft = '';
+      // For ☎️ Talked with them today: every number's conversation as it is now (to tell later
+      // whether anything new came in) and the texts they sent us today.
+      const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+      const talk = { allSigs: {}, heard: [], heardUnknown: false };
       for (const num of nums) {
         if (!alive()) return null;
         const t = await st.chatThread(num);
+        talk.allSigs[num] = replySig(t);
         if (!t) continue;
         let raw;
-        if (t.ReadStatus === c.unread) { raw = await ctx.readUnread(t, num); if (!raw) { unreadLeft = unreadLeft || num; continue; } }
+        if (t.ReadStatus === c.unread) { raw = await ctx.readUnread(t, num); if (!raw) { unreadLeft = unreadLeft || num; talk.heardUnknown = true; continue; } }
         else raw = await st.chatMessages(t.ThreadId, 60);
         const msgs = asPageMsgs(raw, c).sort((a, b) => timeOf(a) - timeOf(b) || idOf(a) - idOf(b));
+        msgs.forEach(m => { if (m.IsInbound && timeOf(m) >= today0.getTime()) talk.heard.push(m); });
         // A text that names a date counts for that date only (a reminder sent a week ahead, or one
         // for a different appointment), however long ago it went out. So does one that names only
         // the weekday ("Monday", sent Thursday or Saturday): it's for the next one. One that names
@@ -6645,24 +6653,27 @@
         const after = m => first && (timeOf(m) > timeOf(first) || (timeOf(m) === timeOf(first) && idOf(m) > idOf(first)));
         per.push({ num, sig: replySig(t), failed: !first, replies: msgs.filter(m => m.IsInbound && after(m)) });
       }
-      if (!per.length) return unreadLeft ? { kind: 'look', why: 'has an unread message. Read it in the Chat Center', num: unreadLeft } : { kind: 'notTexted', num: nums[0] || '' };
-      const sigs = {};
-      per.forEach(x => { sigs[x.num] = x.sig; });
-      const sent = per.filter(x => !x.failed);
-      if (!sent.length) return { kind: 'look', why: 'the confirm text didn\'t go through', num: per[0].num, sigs };
-      const replies = [].concat.apply([], sent.map(x => x.replies)).sort((a, b) => timeOf(a) - timeOf(b) || idOf(a) - idOf(b));
-      // The number they answered from (the latest reply), else the first one texted.
-      const last = replies[replies.length - 1];
-      const base = { num: last ? sent.find(x => x.replies.indexOf(last) > -1).num : sent[0].num, sigs };
-      if (!replies.length) return Object.assign(base, { kind: 'noReply' });
-      const said = replies.map(m => norm(m.Body) || '(a picture or empty message)');
-      if (optedOut(replies)) return Object.assign(base, { kind: 'look', why: 'replied STOP / Cancel', said });
-      // A yes to any confirm text for the day (Saturday's for Monday, say) stands when all that came
-      // after it is another yes, "already did" or "thanks" (to a newer reminder, say).
-      let saidYes = false;
-      if (replies.every(m => { if (isYes(m.Body)) { saidYes = true; return true; } return saidYes && isAlready(m.Body); })) return Object.assign(base, { kind: 'yes', said });
-      return Object.assign(base, { kind: 'look', why: 'replied', said });
+      return Object.assign(await (async () => {
+        if (!per.length) return unreadLeft ? { kind: 'look', why: 'has an unread message. Read it in the Chat Center', num: unreadLeft } : { kind: 'notTexted', num: nums[0] || '' };
+        const sigs = {};
+        per.forEach(x => { sigs[x.num] = x.sig; });
+        const sent = per.filter(x => !x.failed);
+        if (!sent.length) return { kind: 'look', why: 'the confirm text didn\'t go through', num: per[0].num, sigs };
+        const replies = [].concat.apply([], sent.map(x => x.replies)).sort((a, b) => timeOf(a) - timeOf(b) || idOf(a) - idOf(b));
+        // The number they answered from (the latest reply), else the first one texted.
+        const last = replies[replies.length - 1];
+        const base = { num: last ? sent.find(x => x.replies.indexOf(last) > -1).num : sent[0].num, sigs };
+        if (!replies.length) return Object.assign(base, { kind: 'noReply' });
+        const said = replies.map(m => norm(m.Body) || '(a picture or empty message)');
+        if (optedOut(replies)) return Object.assign(base, { kind: 'look', why: 'replied STOP / Cancel', said });
+        // A yes to any confirm text for the day (Saturday's for Monday, say) stands when all that came
+        // after it is another yes, "already did" or "thanks" (to a newer reminder, say).
+        let saidYes = false;
+        if (replies.every(m => { if (isYes(m.Body)) { saidYes = true; return true; } return saidYes && isAlready(m.Body); })) return Object.assign(base, { kind: 'yes', said });
+        return Object.assign(base, { kind: 'look', why: 'replied', said });
+      })(), talk);
     };
+
     // What the conversation's newest message is, ignoring read/unread (you or a coworker reading
     // the reply in the Chat Center isn't something new). null if it can't be told.
     const replySig = t => {
@@ -6696,8 +6707,45 @@
       return ctx;
     };
 
+    // ☎️ Talked with them today (a choice in 📥 Check replies, on unless you turn it off): a
+    // customer we spoke or texted with today, whose appointment starts within 24 hours, goes on the
+    // Will confirm list too, saying how (a call, or a text from them). Talked means a call from them
+    // of 15 seconds or more, or one of ours of a minute or more (a shorter one of ours is most likely
+    // no answer or a voicemail), the same as 📋 Quick Job Info; or any text they sent us today.
+    // Not when they said STOP, or anything today about canceling or another day, or there's an
+    // unread text from them that couldn't be read: those go to Needs a look. You still see the list
+    // and nothing is confirmed until you press Confirm.
+    const SPOKE_KEY = 'stCtSpokeToday';
+    const spokeOn = () => get(SPOKE_KEY) !== '0';
+    const DAY_MS = 24 * 3600 * 1000;
+    const CHANGE_RE = /\b(cancel\w*|reschedul\w*|resched|postpone\w*|another day|different day|other day|not (be )?home|wont be (home|there)|cant make|cannot make|cant do|need to move|move (it|my|the|our)|push (it )?back|stop)\b/;
+    const saysChange = body => CHANGE_RE.test(norm(body).toLowerCase().replace(/[‘’`´']/g, ''));
+    const clockOf = d => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    // Their appointments not yet confirmed that start within 24 hours from now (and not before today).
+    const soonOf = cu => {
+      const now = Date.now(), t0 = new Date(); t0.setHours(0, 0, 0, 0);
+      return (cu.appts || []).filter(a => !a.confirmed && a.start && a.start.getTime() >= t0.getTime() && a.start.getTime() - now <= DAY_MS);
+    };
+    // How we talked today, from their call log and their texts: { how } (to say on the card), or null.
+    const talkedToday = (calls, heard) => {
+      const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+      const c = (calls && calls.rows ? calls.rows : []).map(x => ({ at: new Date(x.createdOn), secs: Number(x.duration) || 0, theyCalled: x.direction === 0 }))
+        .filter(x => !isNaN(x.at) && x.at.getTime() >= t0.getTime() && (x.theyCalled ? x.secs >= 15 : x.secs >= 60)).sort((a, b) => b.at - a.at)[0];
+      const h = (heard || []).slice().sort((a, b) => timeOf(b) - timeOf(a))[0];
+      const ways = [];
+      if (c) ways.push((c.theyCalled ? 'they called us' : 'we called them') + ' at ' + clockOf(c.at) + ' (' + (c.secs >= 60 ? Math.round(c.secs / 60) + ' min' : c.secs + ' sec') + ')');
+      if (h) ways.push('they texted at ' + clockOf(new Date(timeOf(h))));
+      return ways.length ? { how: 'Talked with them today: ' + ways.join(', ') } : null;
+    };
+
     const vReplies = mkView('replies');
     const repHead = head('📥 Check replies');
+    const spokeBox = check('☎️ Talked with them today = confirmed (appointment within 24 hours)', spokeOn(), v => {
+      set(SPOKE_KEY, v ? '1' : '0');
+      if (!rBusy && views.replies && views.replies.style.display !== 'none' && rPlan) openReplies();
+    });
+    spokeBox.l.title = 'On: a customer we spoke with on the phone today, or who texted us today, goes on the Will confirm list when their appointment starts within 24 hours, even without a C. Not if they said anything about canceling or another day. Nothing is confirmed until you press Confirm.';
+    spokeBox.l.style.marginBottom = '4px';
     const repMsg = el('div', 'font-size:12px;color:var(--st-ink-2);margin-bottom:6px;min-height:16px;white-space:pre-wrap');
     // The report: every customer as a card, in sections (customerCards, shared with other tools).
     const cards = customerCards();
@@ -6707,12 +6755,12 @@
     const repBack = smallBtn('← Back', () => { rCheckId++; sub('main'); renderMain(); });
     const repNav = row();
     repNav.append(repGo, repStop, repCopy, repBack);
-    vReplies.append(repHead, repMsg, cards.box, repNav);
+    vReplies.append(repHead, spokeBox.l, repMsg, cards.box, repNav);
     const jobsOf = cu => Array.from(new Set((cu.appts || []).map(a => a.jobId)));
     // A customer as a card: { customer, phone, jobs, status, said }.
     const item = (cu, status, jobs) => ({ customer: cu.customer || '', phone: cu.num || '', jobs: jobs || jobsOf(cu), status: status || '', said: cu.said || null });
     let rBusy = false, rStop = false, rCheckId = 0, rPlan = null;
-    const showRep = (go, stop) => { repGo.style.display = go ? 'inline-block' : 'none'; repStop.style.display = stop ? 'inline-block' : 'none'; repBack.style.display = stop ? 'none' : 'inline-block'; repCopy.textContent = 'Copy results'; };
+    const showRep = (go, stop) => { spokeBox.c.disabled = !!stop; repGo.style.display = go ? 'inline-block' : 'none'; repStop.style.display = stop ? 'inline-block' : 'none'; repBack.style.display = stop ? 'none' : 'inline-block'; repCopy.textContent = 'Copy results'; };
 
     const openReplies = async () => {
       if (running || rBusy) return;
@@ -6771,6 +6819,50 @@
         } else P[r.kind].push(cu);
       });
       noCust.forEach(a => P.look.push({ customer: a.customer, appts: [a], why: 'no customer on the job' }));
+      spokeBox.c.checked = spokeOn();
+      spokeBox.c.disabled = false;
+      if (spokeOn()) {
+        // Who could be a yes because we talked today: no reply, not texted, or a reply that wasn't a
+        // plain yes (or the confirm text didn't go through), with an appointment within 24 hours.
+        const can = [];
+        ['noReply', 'notTexted', 'look'].forEach(k => P[k].forEach(cu => {
+          if (!cu.kind || !cu.customerId || !cu.allSigs) return;
+          if (k === 'look' && cu.why !== 'replied' && cu.why !== 'the confirm text didn\'t go through') return;
+          if (soonOf(cu).length) can.push({ cu, from: k });
+        }));
+        if (can.length) {
+          repMsg.textContent = 'Reading the call log of ' + s1(can.length, 'customer') + '…';
+          const cr = await st.pool(can, 4, x => st.customerCalls(x.cu.customerId), null, { stop: () => id !== rCheckId });
+          if (id !== rCheckId || cr.stopped) return;
+          if (cr.halted === 'signedOut') { repMsg.textContent = '⚠️ ' + st.SIGNED_OUT + '\n\nNothing was confirmed.'; return; }
+          let noLog = 0;
+          can.forEach((x, i) => {
+            const r = cr[i], cu = x.cu;
+            const calls = r && r !== st.NOT_RUN && !r.error ? r : null;
+            if (!calls) noLog++;
+            const tk = talkedToday(calls, cu.heard);
+            if (!tk) return;
+            const list = P[x.from];
+            const said = (cu.heard || []).map(m => norm(m.Body)).concat(cu.said || []);
+            if (optedOut(cu.heard || []) || said.some(saysChange)) {
+              if (x.from !== 'look') { list.splice(list.indexOf(cu), 1); P.look.push(cu); }
+              cu.why = tk.how + ', but they said something about canceling or another day. Read it';
+              if (!cu.said && cu.heard && cu.heard.length) cu.said = cu.heard.map(m => norm(m.Body) || '(a picture or empty message)');
+              return;
+            }
+            if (cu.heardUnknown) {
+              if (x.from !== 'look') { list.splice(list.indexOf(cu), 1); P.look.push(cu); }
+              cu.why = tk.how + ', but they have an unread message. Read it in the Chat Center';
+              return;
+            }
+            list.splice(list.indexOf(cu), 1);
+            cu.spoke = tk.how; cu.spokeFrom = x.from;
+            cu.todo = soonOf(cu);
+            P.yes.push(cu);
+          });
+          if (noLog) P.spokeNote = 'ℹ️ Couldn\'t read the call log of ' + s1(noLog, 'customer') + ', so only their texts were looked at for ☎️ Talked with them today.';
+        }
+      }
       // The board can be behind (someone confirmed since it loaded), so the yes customers'
       // appointments are read fresh to show which are already confirmed.
       const yesAppts = [];
@@ -6785,6 +6877,7 @@
       }
       rPlan = P;
       P.notes = [];
+      if (P.spokeNote) P.notes.push(P.spokeNote);
       if (ctx.markRead) P.notes.push('ℹ️ ServiceTitan marked a conversation read when its replies were read (…' + ctx.markedNum.slice(-4) + '), so other unread ones were left unread and are under Needs a look.');
       if (!custs.length) P.notes.push('No appointments' + (picked.length ? ' for the jobs you picked' : '') + ' on ' + dayText + '.');
       if (notOnDay.length) P.notes.push('Picked jobs not on ' + dayText + ': #' + notOnDay.join(', #'));
@@ -6806,9 +6899,10 @@
         P[from].splice(i, 1);
         if (to === 'yes') { cu.manual = from; cu.todo = todoOf(cu); P.yes.push(cu); }
         else {
-          // Someone who answered yes and you took off goes to Needs a look, saying so.
-          if (!cu.manual) cu.why = 'Taken off the list by you';
-          delete cu.manual;
+          // Someone who answered yes and you took off goes to Needs a look, saying so. Someone on the
+          // list because we talked today goes back where they were.
+          if (!cu.manual && !cu.spokeFrom) cu.why = 'Taken off the list by you';
+          delete cu.manual; delete cu.spokeFrom; delete cu.spoke;
           P[to].push(cu);
         }
         showPlan(P);
@@ -6825,8 +6919,8 @@
       cards.render([
         { key: 'look', title: '⚠️ Needs a look', tone: 'warn', open: true, items: P.look.map(x => addable('look', x, x.why)) },
         { key: 'yes', title: '✅ Will confirm ' + s1(todo, 'appointment'), tone: 'good', open: true, items: P.yes.map(x => {
-          const it = item(x, (x.manual ? 'Added by you. ' : '') + 'Will be confirmed when you press Confirm', x.todo.map(a => a.jobId));
-          it.actions = [{ label: '↩ Take off', title: x.manual ? 'Puts them back where they were. They won\'t be confirmed.' : 'Takes them off the list (to Needs a look). They won\'t be confirmed.', onClick: () => move(x, 'yes', x.manual || 'look') }];
+          const it = item(x, (x.manual ? 'Added by you. ' : x.spoke ? '☎️ ' + x.spoke + '. ' : '') + 'Will be confirmed when you press Confirm', x.todo.map(a => a.jobId));
+          it.actions = [{ label: '↩ Take off', title: x.manual || x.spokeFrom ? 'Puts them back where they were. They won\'t be confirmed.' : 'Takes them off the list (to Needs a look). They won\'t be confirmed.', onClick: () => move(x, 'yes', x.manual || x.spokeFrom || 'look') }];
           return it;
         }) },
         { key: 'already', title: '☑️ Answered yes, already confirmed', tone: 'done', items: P.already.map(x => item(x, 'Already confirmed')) },
@@ -6850,11 +6944,13 @@
       const total = P.yes.reduce((k, x) => k + x.todo.length, 0);
       const one = async cu => {
         // Anything new in their conversation since the check? Then you read it first.
-        const nums = Object.keys(cu.sigs || {});
-        let changed = !nums.length && !cu.manual, unknown = false;
+        // (Someone on the list because we talked today: every one of their numbers.)
+        const sigs = (cu.spoke ? cu.allSigs : cu.sigs) || {};
+        const nums = Object.keys(sigs);
+        let changed = !nums.length && !cu.manual && !cu.spoke, unknown = false;
         for (const num of nums) {
-          if (!cu.sigs[num]) { unknown = true; continue; }
-          if (replySig(await st.chatThread(num)) !== cu.sigs[num]) changed = true;
+          if (!sigs[num]) { unknown = true; continue; }
+          if (replySig(await st.chatThread(num)) !== sigs[num]) changed = true;
         }
         if (unknown && !changed) { look.push(item(cu, 'Not confirmed: couldn\'t tell whether a new message came in. Read their conversation', cu.todo.map(a => a.jobId))); n += cu.todo.length; return; }
         if (changed) { look.push(item(cu, 'Not confirmed: a new message came in after the check. Read it, then check again', cu.todo.map(a => a.jobId))); n += cu.todo.length; return; }
@@ -6868,6 +6964,7 @@
             if (now.confirmed) { already.push(item(cu, 'Already confirmed', [a.jobId])); continue; }
             const sd = now.start ? new Date(now.start) : null;
             if (sd && !isNaN(sd) && P.day && !sameDay(sd, P.day)) { bad('Not confirmed: it was moved to ' + sd.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + ' after the check'); continue; }
+            if (cu.spoke && sd && !isNaN(sd) && sd.getTime() - Date.now() > DAY_MS) { bad('Not confirmed: it starts more than 24 hours from now'); continue; }
             const s = now.status;
             if (s === 4 || s === 5 || (typeof s === 'string' && /^(done|completed|cancell?ed)$/i.test(norm(s)))) { bad('Not confirmed: the appointment is ' + (s === 4 || /^(done|completed)$/i.test(String(s)) ? 'done' : 'canceled')); continue; }
             await st.setConfirmed(a.apptId, true);

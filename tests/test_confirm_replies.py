@@ -47,7 +47,7 @@ def log_text(page):
 def open_board(page, saved=None, added=None, confirm=None):
     page.goto(URL + '#/DispatchBoard')
     page.wait_for_selector('a.appointment')
-    page.evaluate("([s, a, c]) => { localStorage.clear(); if (s) localStorage.setItem('stCtFolders', s); if (a) localStorage.setItem('stCtAddedFolders', a); if (c) localStorage.setItem('stCtConfirmFolders', c); Object.keys(window.CHATS).forEach(k => delete window.CHATS[k]); }", [saved, added, confirm])
+    page.evaluate("([s, a, c]) => { localStorage.clear(); localStorage.setItem('stCtSpokeToday', '0'); if (s) localStorage.setItem('stCtFolders', s); if (a) localStorage.setItem('stCtAddedFolders', a); if (c) localStorage.setItem('stCtConfirmFolders', c); Object.keys(window.CHATS).forEach(k => delete window.CHATS[k]); }", [saved, added, confirm])
     page.evaluate(TOOLBOX)
     B(page, 'Customer Texts').click()
 

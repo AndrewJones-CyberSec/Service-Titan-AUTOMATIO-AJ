@@ -122,6 +122,15 @@
     if (u.indexOf('/api/cp/settings/special/permission-settings') === 0) return json({ Settings: [] });
     // The customer page's Contact Methods (type 1 = email, 2 = phone, 3 = mobile).
     // CONTACTS_DOWN = true breaks it.
+    // A customer's call log (📥 Check replies → ☎️ Talked with them today). CALLS[customerId] =
+    // [{ createdOn, duration (seconds), direction (0 they called us, 1 we called them) }];
+    // CALLS_DOWN = true breaks it.
+    let cl = /^\/app\/api\/customers\/searchCalls\?customerId=(\d+)/.exec(u);
+    if (cl) {
+      if (window.CALLS_DOWN) return json({}, 500);
+      window.callLogReads = (window.callLogReads || 0) + 1;
+      return json({ data: ((window.CALLS || {})[cl[1]] || []).slice().sort((a, b) => (a.createdOn < b.createdOn ? 1 : -1)), totalCount: ((window.CALLS || {})[cl[1]] || []).length });
+    }
     let cm = /^\/app\/api\/contact-methods\/getContactMethods\?ownerId=(\d+)&ownerType=Customer/.exec(u);
     if (cm) {
       if (window.CONTACTS_DOWN) return json({}, 500);
