@@ -173,6 +173,18 @@ If ServiceTitan changes something a tool relies on, a yellow bar at the top of t
 
 If ServiceTitan signs you out during a run, the run stops and says so. If ServiceTitan is slow or failing, the Toolbox eases off and stops asking after a few failed answers in a row, and the **Stop** button always works right away.
 
+**👁️ Route View** (Beta, under 🧪 Experimental tools)
+See techs' routes for a day, left to right like the board. It only reads.
+
+- **Pick who:** tick a tech in the list (type to find them, or pick a team to narrow it; **＋ All shown** adds everyone listed), or turn on **🖱️ Pick on board** and click their name, or one of their jobs, on the board. Click again to take them off. The first tech picked opens the window by itself; picks are remembered in this browser.
+- **The window** is its own, wide, along the bottom of the screen at first (drag it by its title bar, resize it from its corner; it remembers). It stays open while you use the other tools.
+- **⏱️ Timeline:** each tech a row on an hour ruler with every job at its time, colored by how it stands (🗓️ Scheduled, 🚚 Dispatched, 🔧 Working, ⏸️ Hold, ✅ Done): the time, customer, job type, town, tags, and 👥 who else is on it. Two jobs at the same time stack. Their shift is white, 🌴 time off and 📌 events (meetings) are marked, and a red line shows now. **−** / **+** make the hours narrower or wider.
+- **➡️ In order:** each tech's jobs one after another as numbered stops, with the time between them (*back to back*, *1 hr open*, or *⚠️ overlaps 30 min*), from their shift's start to its end. 📞 Phone calls show but aren't numbered.
+- **Several techs** show one under another, in the board's order, like a small board of just them.
+- **◀ ▶** looks at the days before and after the board's (the same techs); **📅 Board's day** goes back.
+- Click a job for **📋 Quick Job Info**; **🔎** opens it in a new tab. Click a tech's name to find them on the board. **🗺️ Map** opens their stops in Google Maps, in order (phone calls left out, the first 10).
+- It keeps up with the board, and reads it again every 2 minutes while the window is open (**↻** for right now).
+
 ## Adding a report (Quick Job Info)
 
 A CSV report gives the 🔮 chances more holds to learn from, and fills in hold reasons for the 🔎 filters:

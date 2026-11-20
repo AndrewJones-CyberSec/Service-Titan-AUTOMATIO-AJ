@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.8
+
+- **New (Beta, under 🧪 Experimental tools): 👁️ Route View.** Pick one tech (or several) and see their day left to right, like the board, in a wide window of its own.
+  - Pick by ticking names (find box, team filter, **＋ All shown**), or **🖱️ Pick on board**: click a tech's name or one of their jobs. The first pick opens the window; picks are remembered (`stRviewSel`).
+  - **⏱️ Timeline:** an hour ruler, every job at its time and colored by its status for that tech, two at once stacked, shift / 🌴 time off / 📌 events, a red now line, **−** / **+** zoom (`stRviewZoom`).
+  - **➡️ In order:** numbered stops with *back to back*, *open* time or *⚠️ overlaps* between them, shift start and end. 📞 Phone calls aren't numbered.
+  - **◀ ▶** other days (the same techs, read like Tech Router's other days, without touching the board's own data), **📅 Board's day** back.
+  - Click a job for 📋 Quick Job Info, 🔎 to open it, a name to find the tech on the board, 🗺️ Map for their stops in Google Maps in order.
+  - The window starts along the bottom, left of the Toolbox, so the techs' names on the board stay in sight; it can be dragged and resized (remembered, `stRviewBox`), stays open while other tools are used, and closes with the Toolbox.
+  - Kept current from the board's own reads, plus a fresh read every 2 minutes while open. It only reads.
+- Tests: new `tests/test_route_view.py`.
+
 ## 2.7.1
 
 - **New in 📱 Customer Texts → 📥 Check replies: ☎️ Talked with them today = confirmed.** A customer we've spoken or chatted with today goes on the **✅ Will confirm** list when their appointment starts within 24 hours, even without a C reply.

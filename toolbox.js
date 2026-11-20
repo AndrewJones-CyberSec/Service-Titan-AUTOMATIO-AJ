@@ -1,7 +1,7 @@
 /*
   ServiceTitan Toolbox
   ====================
-  One panel with eight tools for the ServiceTitan Dispatch board:
+  One panel with nine tools for the ServiceTitan Dispatch board:
     - Notes: adds a ready-made note (sorted into folders) to a job's customer in one click.
     - Job Notifications: shows whether job notifications (or ⚡ Dispatch Pro) are on or off for the jobs you
       pick (one at a time, a tech's day, a job type, or the whole board), and turns them off or on; job types
@@ -24,6 +24,8 @@
       appointment, address and phone, summary, notes, and the customer's history (other jobs, calls, club,
       lifetime total), with buttons into the other tools. A Holds tab lists the Hold list best to call
       first. It only reads.
+    - Route View (Beta): pick one tech or several and see their day left to right like the board, in a
+      wide window of its own (on an hour ruler, or in order with the open time between jobs). It only reads.
 
   HOW TO RELEASE AN UPDATE
     1. Edit this file on GitHub.
@@ -35,8 +37,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.7.1';
+  const VERSION = '2.8';
   const WHATS_NEW = {
+    '2.8': 'New (Beta, under 🧪 Experimental tools): 👁️ Route View. Tick a tech (or click their name on the board with 🖱️ Pick on board) and their whole day shows left to right in a wide window, like the board: every job with its time, customer, job type, town and tags, colored by how it stands (🗓️ 🚚 🔧 ⏸️ ✅). Tick several to see them one under another. ⏱️ Timeline puts jobs on an hour ruler with their shift, time off, events and a red line for now; ➡️ In order lists them as numbered stops with the open time (or ⚠️ overlap) between. ◀ ▶ shows other days, 🗺️ opens their stops in Google Maps, click a job for 📋 Quick Job Info. It only reads.',
     '2.7.1': 'New in 📱 Customer Texts → 📥 Check replies: ☎️ Talked with them today = confirmed. A customer we spoke with on the phone today (they called us, or our call lasted a minute or more) or who texted us today goes on the ✅ Will confirm list when their appointment starts within 24 hours, even without a C, and the card says how ("Talked with them today: we called them at 10:42 AM (3 min)"). Not if they said STOP, or anything about canceling or another day: those go to Needs a look. It\'s on to start; untick it at the top of Check replies to go back to C replies only. Nothing is confirmed until you press Confirm, and ↩ Take off puts anyone back.',
     '2.7': 'New in 🔕 Job Notifications: ⚡ Dispatch Pro. Pick 🔔 Job Notifications or ⚡ Dispatch Pro at the top of the tool, and the same list shows and turns that switch off or on (jobs by type too). Turning Dispatch Pro off or on needs permission to change it in ServiceTitan; without it, the tool says so and changes nothing. Also: new hires and people who left show up by themselves (no need to redo the bookmark), and the Toolbox never runs off the bottom of the screen: it moves up, scrolls inside, and its bottom edge makes it taller or shorter.',
     '2.6.1': 'Fixed: 📱 Customer Texts → ＋ Everyone on the board was also adding the whole Unassigned list, so Unassigned customers got texted. It now adds only jobs on a tech\'s schedule. ＋ Jobs with a tag… in Customer Texts leaves Unassigned out too. To text the Unassigned list on purpose, pick ＋ A department… → Unassigned list. And Check before texting now warns ⚠️ how many customers are UNASSIGNED and marks each one ⚠️ UA, so you can take them off before anything is sent.',
@@ -1259,12 +1262,17 @@
   const sheet = el('style');
   sheet.id = ID + '-style';
   sheet.textContent = [
-    '#' + ID + '{--st-ink:#141414;--st-ink-2:#4b4f55;--st-ink-3:#7b8087;--st-line:#e2e5e9;--st-ctl:#a6abb1;--st-bg:#ffffff;--st-soft:#f6f7f9;--st-soft-2:#eceff3;' +
+    '#' + ID + ',#st-rview{--st-ink:#141414;--st-ink-2:#4b4f55;--st-ink-3:#7b8087;--st-line:#e2e5e9;--st-ctl:#a6abb1;--st-bg:#ffffff;--st-soft:#f6f7f9;--st-soft-2:#eceff3;' +
       '--st-blue:#0265dc;--st-blue-d:#004491;--st-blue-s:#e8f2fe;--st-green:#1f7a3d;--st-green-d:#145c2c;--st-green-s:#e9f6ee;--st-green-l:#a6d8b6;' +
       '--st-red:#c4200d;--st-red-d:#8e1608;--st-red-s:#fdeceb;--st-red-l:#f2aaa2;--st-amber:#8f5300;--st-amber-s:#fff5e5;--st-amber-l:#f0cd8f;' +
       '--st-purple-s:#f4eefa;--st-purple-l:#cdb6e2;--st-head:#16202e;' +
       'font-family:"Nunito Sans",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}',
     '#' + ID + ' *{box-sizing:border-box}',
+    // 👁️ Route View's own window (outside the Toolbox, so it can be wide).
+    '#st-rview *{box-sizing:border-box}#st-rview button{font-family:inherit}#st-rview button:not(:disabled):hover{filter:brightness(.96)}' +
+      '#st-rview ::-webkit-scrollbar{width:9px;height:9px}#st-rview ::-webkit-scrollbar-thumb{background:#c9ced4;border-radius:8px}#st-rview ::-webkit-scrollbar-track{background:transparent}' +
+      '#st-rview .st-rview-card:hover{box-shadow:0 3px 10px rgba(16,24,40,.22);z-index:6 !important}' +
+      '#st-rview .st-busy::before{content:"";display:inline-block;width:8px;height:8px;margin-right:5px;vertical-align:-1px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:st-tb-spin .7s linear infinite}',
     '#' + ID + ' button{font-family:inherit;transition:background-color .12s,border-color .12s,box-shadow .12s,filter .12s}',
     '#' + ID + ' button:not(:disabled):hover{filter:brightness(.96)}',
     '#' + ID + ' button:focus-visible,#' + ID + ' input:focus-visible,#' + ID + ' select:focus-visible,#' + ID + ' textarea:focus-visible{outline:none;box-shadow:0 0 0 3px #a9d1ff !important;border-color:var(--st-blue) !important}',
@@ -1897,11 +1905,12 @@
   const movesPane = el('div', 'display:none;overflow-y:auto');
   const routerPane = el('div', 'display:none;overflow-y:auto');
   const aiPane = el('div', 'display:none;overflow-y:auto');
-  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane, texts: textsPane, moves: movesPane, router: routerPane, ai: aiPane };
+  const rviewPane = el('div', 'display:none;padding:10px 12px 12px');
+  const views = { menu: menuPane, notes: notesPane, jobs: jobsPane, msgs: msgsPane, biz: bizPane, texts: textsPane, moves: movesPane, router: routerPane, ai: aiPane, rview: rviewPane };
   Object.keys(views).forEach(k => { views[k].classList.add('st-view'); if (k === 'menu') views[k].classList.add('st-view-menu'); });
   news.classList.add('st-bar');
   health.bar.classList.add('st-bar');
-  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts', moves: '🔀 Move Jobs', router: '🧭 Tech Router (Beta)', ai: '📋 Quick Job Info' };
+  const TITLES = { menu: '🧰 Toolbox', notes: '📝 Notes', jobs: '🔕 Job Notifications', msgs: '💬 Tech Messages', biz: '🏢 Business Unit', texts: '📱 Customer Texts', moves: '🔀 Move Jobs', router: '🧭 Tech Router (Beta)', ai: '📋 Quick Job Info', rview: '👁️ Route View (Beta)' };
   const showView = name => {
     Object.keys(views).forEach(k => { views[k].style.display = k === name ? 'block' : 'none'; });
     titleText.textContent = TITLES[name];
@@ -1922,6 +1931,8 @@
     if (name === 'router' && typeof router !== 'undefined') router.refresh();
     if (name !== 'ai' && typeof ai !== 'undefined') ai.leave();
     if (name === 'ai' && typeof ai !== 'undefined') ai.refresh();
+    if (name !== 'rview' && typeof rview !== 'undefined') rview.leave();
+    if (name === 'rview' && typeof rview !== 'undefined') rview.refresh();
   };
 
   // The menu: one tile per tool.
@@ -1933,7 +1944,8 @@
     ['texts', '📱', 'Customer Texts', 'Text customers, confirm appointments', '#e3f5e9'],
     ['moves', '🔀', 'Move Jobs', 'Move, add, unassign or swap techs', '#f3e9fb'],
     ['router', '🧭', 'Tech Router', 'Fill open time, plan and score routes', '#ddf3f0', 'Beta'],
-    ['ai', '📋', 'Quick Job Info', 'Everything about a job or a hold, at a glance', '#fde7f3']
+    ['ai', '📋', 'Quick Job Info', 'Everything about a job or a hold, at a glance', '#fde7f3'],
+    ['rview', '👁️', 'Route View', 'See techs\' routes left to right, one or several', '#dff1f6', 'Beta']
   ];
   const tiles = el('div', 'display:grid;gap:6px');
   // 🧪 Experimental tools: the ones still being built and tested (Beta), below the finished ones,
@@ -1987,7 +1999,7 @@
     if (ch.gone.length) parts.push('no longer on the board: ' + few(ch.gone.map(g => g.name)));
     health.note('👷 Tech list updated (' + parts.join(' · ') + '). The Toolbox and the board show the techs as they are now.', 20000);
   });
-  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane, movesPane, routerPane, aiPane);
+  panel.append(header, news, health.bar, menuPane, notesPane, jobsPane, msgsPane, bizPane, textsPane, movesPane, routerPane, aiPane, rviewPane);
 
   // ===================================================================
   // Tool 1: Notes
@@ -13988,6 +14000,558 @@
   })();
 
   // ===================================================================
+  // Tool 9: 👁️ Route View (Beta)
+  // See techs' routes for a day, left to right like the board. Tick one tech (Brent V, say) and
+  // their day shows in a wide window of its own; tick several and they show one under another,
+  // like a small board of just them. It only reads.
+  //   ⏱️ Timeline: each tech a row on an hour ruler, their jobs placed at their times (two at the
+  //     same time stack), their shift shaded, time off and other events marked, a red line for now.
+  //   ➡️ In order: each tech's jobs one after another as numbered stops, with the open time between
+  //     them (⚠️ where two overlap). Phone calls (PHONE CALL ONLY) show 📞 and aren't numbered.
+  //   ◀ ▶ looks at the days before and after the board's (the same techs); 📅 goes back to it.
+  //   Click a job for 📋 Quick Job Info; 🔎 opens it in a new tab. Click a tech's name to find them
+  //   on the board. 🗺️ opens their stops in Google Maps, in order.
+  //   The window stays open while you use the other tools; the board's own reads keep it current,
+  //   and it reads the board again every 2 minutes while it's open (↻ for right now).
+  // ===================================================================
+  const rview = (() => {
+    const S = x => String(x);
+    const pad = n => String(n).padStart(2, '0');
+    const K = { sel: 'stRviewSel', mode: 'stRviewMode', zoom: 'stRviewZoom', box: 'stRviewBox', team: 'stRviewTeam' };
+    const clock = d => { const h = d.getHours(), m = d.getMinutes(); return (h % 12 || 12) + (m ? ':' + pad(m) : '') + (h < 12 ? ' AM' : ' PM'); };
+    const span = (s, e) => { if (!s) return ''; if (!e) return clock(s); const a = clock(s), b = clock(e); return a.slice(-2) === b.slice(-2) ? a.slice(0, -3) + '–' + b : a + '–' + b; };
+    const mins = m => { m = Math.max(0, Math.round(m)); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' hr' + (m % 60 ? ' ' + (m % 60) + ' min' : ''); };
+    const hourLabel = h => { const x = ((h % 24) + 24) % 24; return (x % 12 || 12) + (x < 12 ? ' AM' : ' PM'); };
+    const PHONE_ONLY = /\bphone call\b/i;
+    const REFRESH_EVERY = 2 * 60000;
+    const NAME_W = 172, CARD_H = 60;
+    // A job's look by how it stands (for the tech in that row): [fill, edge, icon].
+    const LOOK = {
+      scheduled: ['#e8f2fe', '#0265dc', '🗓️'], dispatched: ['#f4eefa', '#6a1b9a', '🚚'], working: ['#fff3dc', '#c27400', '🔧'],
+      arrived: ['#fff3dc', '#c27400', '📍'], hold: ['#fdeceb', '#c4200d', '⏸️'], done: ['#e9f6ee', '#1f7a3d', '✅']
+    };
+    const lookOf = st => LOOK[norm(st).toLowerCase()] || LOOK.scheduled;
+    const addr = a => [a.street, a.city, [a.state, a.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+
+    let selected = [];   // tech ids
+    try { const v = JSON.parse(get(K.sel) || '[]'); if (Array.isArray(v)) selected = v.map(S).filter(x => /^\d+$/.test(x)); } catch (e) {}
+    const save = () => set(K.sel, JSON.stringify(selected));
+    let mode = get(K.mode) === 'order' ? 'order' : 'time';
+    let zoom = Math.min(200, Math.max(40, Number(get(K.zoom)) || 90));   // px per hour on the Timeline
+    let offset = 0;      // days from the board's day
+    let alive = true, picking = false, runId = 0, busy = false, err = '', data = null;
+    const shown = () => rviewPane.style.display !== 'none';
+    const isOpen = () => win.style.display !== 'none';
+    const snapNow = () => board.latest();
+
+    // ===== In the Toolbox: who to see =====
+    const msg = el('div', 'font-size:12px;color:var(--st-ink-2);min-height:16px;margin-bottom:6px');
+    const say = t => { msg.textContent = t; };
+    const pickBtn = smallBtn('🖱️ Pick on board', () => setPicking(!picking), 'flex:1');
+    pickBtn.id = 'st-rview-pick';
+    const allBtn = smallBtn('＋ All shown', () => addShown(), 'flex:none');
+    allBtn.title = 'Add every tech in the list below (pick a team first to add just that team)';
+    const clearBtn = smallBtn('Clear', () => { selected = []; save(); changed(); say('Nobody picked.'); }, 'flex:none;border-color:transparent;background:transparent;color:var(--st-blue)');
+    const topRow = el('div', 'display:flex;gap:6px;margin-bottom:6px');
+    topRow.append(pickBtn, allBtn, clearBtn);
+    const findRow = el('div', 'display:flex;gap:6px;margin-bottom:6px');
+    const find = el('input', 'flex:1;min-width:0;' + FIELD);
+    find.type = 'text'; find.placeholder = 'Type to find a tech'; find.id = 'st-rview-find';
+    find.oninput = () => renderList();
+    const teamSel = el('select', 'flex:1;min-width:0;' + FIELD);
+    teamSel.id = 'st-rview-team';
+    teamSel.onchange = () => { set(K.team, teamSel.value); renderList(); };
+    findRow.append(find, teamSel);
+    const pickedLine = el('div', 'font-size:12px;font-weight:700;margin-bottom:4px;color:var(--st-ink)');
+    const list = el('div', 'max-height:260px;overflow:auto;border:1px solid var(--st-line);border-radius:8px;background:var(--st-bg)');
+    list.id = 'st-rview-list';
+    const openBtn = smallBtn('👁️ Show routes', () => { if (isOpen()) closeWin(); else openWin(); }, FULL + PRIMARY + 'margin-top:8px;padding:7px');
+    openBtn.id = 'st-rview-open';
+    const tip = el('div', 'font-size:11px;color:var(--st-ink-3);margin-top:6px;line-height:1.35',
+      'Tick one tech to see their route, or several to see them one under another. In the window: ⏱️ Timeline or ➡️ In order, ◀ ▶ for other days, click a job for 📋 Quick Job Info. It only reads.');
+    rviewPane.append(msg, topRow, findRow, pickedLine, list, openBtn, tip);
+
+    const jobsOf = (s, id) => ((s && s.byTech.get(S(id))) || []).filter(board.live);
+    const fillTeams = s => {
+      const keep = teamSel.value || get(K.team) || '';
+      teamSel.textContent = '';
+      const o = el('option', '', 'All teams'); o.value = ''; teamSel.appendChild(o);
+      (s ? s.teams : []).forEach(t => { const x = el('option', '', t); x.value = t; teamSel.appendChild(x); });
+      teamSel.value = Array.from(teamSel.options).some(x => x.value === keep) ? keep : '';
+    };
+    const shownTechs = s => {
+      const q = norm(find.value).toLowerCase(), tm = teamSel.value;
+      return s ? s.techs.filter(t => (!tm || t.team === tm) && (!q || t.name.toLowerCase().indexOf(q) > -1)) : [];
+    };
+    const renderList = () => {
+      const s = snapNow();
+      fillTeams(s);
+      list.textContent = '';
+      openBtn.textContent = isOpen() ? '✕ Hide routes' : '👁️ Show routes';
+      if (!onBoard()) { pickedLine.textContent = ''; list.appendChild(el('div', 'padding:8px;font-size:12px;color:var(--st-ink-3)', board.need())); return; }
+      if (!s) { pickedLine.textContent = ''; list.appendChild(el('div', 'padding:8px;font-size:12px;color:var(--st-ink-3)', 'Reading the board…')); return; }
+      const names = selected.map(id => s.techById.get(id)).filter(Boolean);
+      pickedLine.textContent = names.length ? '👁️ ' + names.length + ': ' + names.map(t => t.name).join(', ') : 'Nobody picked yet';
+      const ts = shownTechs(s);
+      if (!ts.length) list.appendChild(el('div', 'padding:8px;font-size:12px;color:var(--st-ink-3)', 'No tech matches.'));
+      let lastTeam = null;
+      ts.forEach(t => {
+        if (!teamSel.value && t.team !== lastTeam) {
+          lastTeam = t.team;
+          list.appendChild(el('div', 'padding:3px 8px;font-size:10.5px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;color:var(--st-ink-3);background:var(--st-soft);border-bottom:1px solid var(--st-line)', t.team || 'No team'));
+        }
+        const on = selected.indexOf(t.id) > -1;
+        const row = el('label', 'display:flex;gap:8px;align-items:center;padding:4px 8px;border-bottom:1px solid var(--st-line);font-size:12px;cursor:pointer;background:' + (on ? 'var(--st-blue-s)' : 'transparent'));
+        row.setAttribute('data-tech', t.id);
+        const cb = el('input');
+        cb.type = 'checkbox'; cb.checked = on;
+        cb.onchange = () => toggle(t.id, cb.checked);
+        const n = jobsOf(s, t.id).length;
+        row.append(cb, el('span', 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:' + (on ? '800' : '600'), t.name),
+          el('span', 'flex:none;font-size:11px;color:var(--st-ink-3)', plural(n, 'job')));
+        list.appendChild(row);
+      });
+    };
+    const changed = () => { renderList(); paint(); if (isOpen()) renderWin(); };
+    const toggle = (id, on) => {
+      id = S(id);
+      const i = selected.indexOf(id);
+      if (on === undefined) on = i < 0;
+      if (on && i < 0) selected.push(id);
+      if (!on && i > -1) selected.splice(i, 1);
+      save();
+      const s = snapNow(), t = s && s.techById.get(id);
+      say((on ? 'Showing ' : 'Took off ') + (t ? t.name : 'tech #' + id) + '.');
+      // The first tech picked opens the window by itself.
+      if (on && !isOpen()) openWin(); else changed();
+    };
+    const addShown = () => {
+      const s = snapNow();
+      if (!s) return say(onBoard() ? 'Reading the board… try again in a moment.' : board.need());
+      const ts = shownTechs(s).filter(t => selected.indexOf(t.id) < 0);
+      if (!ts.length) return say('Everyone in the list is already picked.');
+      ts.forEach(t => selected.push(t.id));
+      save();
+      say('Added ' + plural(ts.length, 'tech') + (teamSel.value ? ' (' + teamSel.value + ')' : '') + '.');
+      if (!isOpen()) openWin(); else changed();
+    };
+
+    // ---- The picked techs, outlined on the board (while this tool is open) ----
+    const style = el('style');   // goes inside the board (board.mount)
+    const paint = () => {
+      style.textContent = shown() && offset === 0 ? board.techsCss(selected, '#0e7490', 'rgba(14,116,144,.12)') : '';
+      if (style.textContent) board.mount(style);
+    };
+
+    // ---- 🖱️ Pick on board: a tech's name, or one of their jobs, adds them (again takes them off) ----
+    const setPicking = on => {
+      picking = !!on;
+      pickBtn.textContent = picking ? '🖱️ Picking: ON' : '🖱️ Pick on board';
+      pickBtn.style.background = picking ? '#0e7490' : '';
+      pickBtn.style.color = picking ? '#fff' : '';
+      pickBtn.style.borderColor = picking ? '#0e7490' : '';
+      if (picking) say(onBoard() ? 'Click a tech\'s name (or one of their jobs) on the board to see their route. Click again to take them off.' : board.need());
+    };
+    const cardTechs = e => {
+      const j = board.clickedJob(e);
+      if (!j || !j.apptId) return null;
+      const s = snapNow(), a = s && s.appts.get(S(j.apptId));
+      return a ? a.techs.slice() : [];
+    };
+    const onClick = e => {
+      if (!picking || !shown() || !onBoard() || panel.contains(e.target) || win.contains(e.target)) return;
+      const t = board.clickedTech(e);
+      const ids = t ? [S(t)] : cardTechs(e);
+      if (!ids) return;
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      if (!ids.length) return say('That job has no tech (or isn\'t in the board\'s data yet).');
+      if (ids.length === 1) return toggle(ids[0]);
+      // A job with two techs: both come on (or off, when both are already showing).
+      const off = ids.every(id => selected.indexOf(id) > -1);
+      ids.forEach(id => { const i = selected.indexOf(id); if (off && i > -1) selected.splice(i, 1); if (!off && i < 0) selected.push(id); });
+      save();
+      say((off ? 'Took off ' : 'Showing ') + plural(ids.length, 'tech') + ' on that job.');
+      if (!off && !isOpen()) openWin(); else changed();
+    };
+    window.addEventListener('click', onClick, true);
+    pickers.push({ active: () => picking && shown(), hit: e => !!(board.clickedTech(e) || cardTechs(e)) });
+
+    // ===== The window: the routes, left to right =====
+    const win = el('div', 'position:fixed;z-index:2147483646;display:none;flex-direction:column;overflow:hidden;resize:both;' +
+      'left:16px;top:64px;width:min(1100px,calc(100vw - 32px));height:min(440px,calc(100vh - 96px));min-width:360px;min-height:160px;max-width:calc(100vw - 8px);max-height:calc(100vh - 8px);' +
+      'background:var(--st-bg);color:var(--st-ink);border:1px solid rgba(16,24,40,.14);border-radius:12px;box-shadow:0 14px 36px rgba(16,24,40,.24),0 2px 6px rgba(16,24,40,.12);font-size:12px;line-height:1.35;text-align:left');
+    win.id = 'st-rview';
+    const HB = 'flex:none;min-height:24px;padding:2px 8px;border:1px solid rgba(255,255,255,.24);border-radius:6px;background:rgba(255,255,255,.08);color:#fff;font:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap';
+    const hBtn = (label, title, fn) => { const b = el('button', HB, label); b.type = 'button'; b.title = title; b.onclick = fn; b.addEventListener('mousedown', e => e.stopPropagation()); return b; };
+    const whead = el('div', 'flex:none;display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 10px;background:var(--st-head);color:#fff;cursor:move;user-select:none');
+    const wtitle = el('span', 'font-weight:800;font-size:13px;margin-right:4px;white-space:nowrap', '👁️ Route View');
+    const prevBtn = hBtn('◀', 'The day before', () => { offset--; load(false); });
+    const dayLbl = el('span', 'font-weight:700;white-space:nowrap;min-width:92px;text-align:center');
+    dayLbl.id = 'st-rview-day';
+    const nextBtn = hBtn('▶', 'The day after', () => { offset++; load(false); });
+    const boardDayBtn = hBtn('📅 Board\'s day', 'Back to the day the board shows', () => { offset = 0; load(false); });
+    const seg = el('div', 'display:flex;border:1px solid rgba(255,255,255,.3);border-radius:7px;overflow:hidden;margin-left:6px');
+    const segBtn = (key, label, title) => {
+      const b = el('button', 'border:0;padding:3px 9px;font:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap', label);
+      b.type = 'button'; b.title = title; b.setAttribute('data-mode', key);
+      b.addEventListener('mousedown', e => e.stopPropagation());
+      b.onclick = () => { mode = key; set(K.mode, key); renderWin(); };
+      return b;
+    };
+    const timeBtn = segBtn('time', '⏱️ Timeline', 'Each job at its time on an hour ruler, like the board');
+    const orderBtn = segBtn('order', '➡️ In order', 'Each tech\'s jobs one after another, with the open time between them');
+    seg.append(timeBtn, orderBtn);
+    const zoomOut = hBtn('−', 'Narrower hours', () => { zoom = Math.max(40, zoom - 20); set(K.zoom, String(zoom)); renderWin(); });
+    const zoomIn = hBtn('+', 'Wider hours', () => { zoom = Math.min(200, zoom + 20); set(K.zoom, String(zoom)); renderWin(); });
+    const reloadBtn = hBtn('↻', 'Read the board again now', () => load(true));
+    const closeBtn = hBtn('✕', 'Close Route View (your picks are kept)', () => closeWin());
+    const spacer = el('span', 'flex:1');
+    whead.append(wtitle, prevBtn, dayLbl, nextBtn, boardDayBtn, seg, spacer, zoomOut, zoomIn, reloadBtn, closeBtn);
+    const wbody = el('div', 'flex:1 1 auto;min-height:0;overflow:auto;position:relative;background:var(--st-soft);overscroll-behavior:contain');
+    wbody.id = 'st-rview-body';
+    const wfoot = el('div', 'flex:none;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px 10px;border-top:1px solid var(--st-line);font-size:11px;color:var(--st-ink-3)');
+    const footMsg = el('span', 'margin-right:auto');
+    wfoot.appendChild(footMsg);
+    [['scheduled', 'Scheduled'], ['dispatched', 'Dispatched'], ['working', 'Working'], ['hold', 'Hold'], ['done', 'Done']].forEach(([k, label]) => {
+      wfoot.appendChild(el('span', 'padding:0 6px;border-radius:5px;border-left:3px solid ' + LOOK[k][1] + ';background:' + LOOK[k][0] + ';color:var(--st-ink-2);font-weight:700', LOOK[k][2] + ' ' + label));
+    });
+    win.append(whead, wbody, wfoot);
+    document.body.appendChild(win);
+
+    // Where it was and how big, remembered in this browser; always on screen.
+    const keepIn = () => {
+      const r = win.getBoundingClientRect();
+      if (r.width > innerWidth - 8) win.style.width = (innerWidth - 8) + 'px';
+      if (r.height > innerHeight - 8) win.style.height = (innerHeight - 8) + 'px';
+      const r2 = win.getBoundingClientRect();
+      win.style.left = Math.max(4, Math.min(r2.left, innerWidth - r2.width - 4)) + 'px';
+      win.style.top = Math.max(4, Math.min(r2.top, innerHeight - r2.height - 4)) + 'px';
+    };
+    const saveBox = () => {
+      if (!isOpen()) return;
+      const r = win.getBoundingClientRect();
+      set(K.box, JSON.stringify({ l: Math.round(r.left), t: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) }));
+    };
+    const restoreBox = () => {
+      try {
+        const b = JSON.parse(get(K.box) || 'null');
+        if (b && b.w > 0 && b.h > 0) { win.style.left = b.l + 'px'; win.style.top = b.t + 'px'; win.style.width = b.w + 'px'; win.style.height = b.h + 'px'; return; }
+      } catch (e) {}
+      // First time: along the bottom of the screen, left of the Toolbox, so the top of the board
+      // (and the techs' names) stays in sight.
+      const pr = panel.getBoundingClientRect();
+      const room = pr.width && pr.left > 500 ? pr.left - 28 : innerWidth - 32;
+      const w = Math.max(420, Math.min(1300, room)), h = Math.max(220, Math.min(460, Math.round(innerHeight * 0.42)));
+      win.style.width = w + 'px'; win.style.height = h + 'px';
+      win.style.left = '16px'; win.style.top = Math.max(4, innerHeight - h - 16) + 'px';
+    };
+    whead.addEventListener('mousedown', e => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const r = win.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+      const move = ev => {
+        win.style.left = Math.min(Math.max(0, ev.clientX - dx), innerWidth - 120) + 'px';
+        win.style.top = Math.min(Math.max(0, ev.clientY - dy), innerHeight - 40) + 'px';
+      };
+      const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); saveBox(); };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+    let sizeTimer = 0, sizeObs = null;
+    try { sizeObs = new ResizeObserver(() => { clearTimeout(sizeTimer); sizeTimer = setTimeout(saveBox, 300); }); sizeObs.observe(win); } catch (e) {}
+    const onWinResize = () => { if (isOpen()) keepIn(); };
+    window.addEventListener('resize', onWinResize);
+
+    const openWin = () => {
+      if (!isOpen()) { restoreBox(); win.style.display = 'flex'; keepIn(); }
+      renderList();
+      renderWin();
+      load(false);
+    };
+    const closeWin = () => { win.style.display = 'none'; renderList(); };
+
+    // ---- Reading the day ----
+    const load = async fresh => {
+      const run = ++runId;
+      if (!onBoard()) { data = null; renderWin(); return; }
+      busy = true; err = '';
+      reloadBtn.classList.add('st-busy');
+      renderWin();
+      try {
+        const base = await board.load(fresh ? { fresh: true } : undefined);
+        let s = base;
+        if (offset) {
+          const d0 = base.day;
+          s = await board.dayData(new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() + offset), fresh ? { fresh: true } : undefined);
+        }
+        if (run !== runId || !alive) return;
+        data = s;
+      } catch (e) {
+        if (run !== runId || !alive) return;
+        err = errText(e);
+      } finally {
+        if (run === runId) { busy = false; reloadBtn.classList.remove('st-busy'); }
+      }
+      if (run !== runId || !alive) return;
+      renderList(); paint(); renderWin();
+    };
+    board.onChange(s => {
+      if (!alive) return;
+      if (offset === 0 && s && s === snapNow()) data = s;
+      if (isOpen()) renderWin();
+      if (shown()) { renderList(); paint(); }
+    });
+    const timer = setInterval(() => { if (alive && isOpen() && onBoard() && !document.hidden && !busy) load(true); }, REFRESH_EVERY);
+
+    // ---- Drawing ----
+    const note = t => el('div', 'padding:18px;font-size:12.5px;color:var(--st-ink-2)', t);
+    const rowData = (s, t) => {
+      const jobs = jobsOf(s, t.id).slice().sort((a, b) => (a.start ? +a.start : Infinity) - (b.start ? +b.start : Infinity));
+      const st = a => (a.techStatus && a.techStatus[t.id]) || a.status;
+      const timed = jobs.filter(a => a.start && a.end && a.end > a.start);
+      const stops = jobs.filter(a => !PHONE_ONLY.test(a.jobType));
+      return { t, jobs, timed, stops, st, done: jobs.filter(a => /^done$/i.test(st(a))).length,
+        calls: jobs.length - stops.length, shifts: (s.shifts && s.shifts.get(t.id)) || [], events: (s.events && s.events.get(t.id)) || [] };
+    };
+    const mapUrl = r => {
+      const out = [];
+      r.timed.forEach(a => { if (PHONE_ONLY.test(a.jobType)) return; const x = addr(a); if (x && out[out.length - 1] !== x) out.push(x); });
+      return out.length ? { url: 'https://www.google.com/maps/dir/' + out.slice(0, 10).map(encodeURIComponent).join('/'), n: out.length } : null;
+    };
+    const openJob = j => { try { window.open(location.href.split('#')[0] + '#/Job/Index/' + j, '_blank'); } catch (e) {} };
+    const jobInfo = j => { setMin(false); showView('ai'); ai.explain(j); };
+    // The tech's name and their day in a few words (left of their row).
+    const nameCell = (r, s) => {
+      const h = el('div', 'position:sticky;left:0;z-index:3;display:grid;gap:2px;align-content:start;padding:6px 8px;min-width:0;background:var(--st-bg);border-right:1px solid var(--st-line);border-bottom:1px solid var(--st-line)');
+      h.setAttribute('data-rv-tech', r.t.id);
+      const nm = el('button', 'all:unset;cursor:pointer;font-weight:800;font-size:12.5px;color:var(--st-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap', r.t.name);
+      nm.title = offset ? r.t.name : 'Find ' + r.t.name + ' on the board';
+      nm.onclick = () => { if (!offset) board.showTech(r.t.id).catch(() => {}); };
+      const first = r.timed[0];
+      const lastEnd = r.timed.reduce((m, a) => (a.end > m ? a.end : m), first ? first.end : null);
+      const bits = [plural(r.stops.length, 'stop')];
+      if (r.calls) bits.push('📞 ' + r.calls);
+      if (r.done) bits.push('✅ ' + r.done);
+      const sub = el('div', 'font-size:10.5px;color:var(--st-ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis', r.t.team || 'No team');
+      const stats = el('div', 'font-size:10.5px;color:var(--st-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis', bits.join(' · '));
+      h.append(nm, sub, stats);
+      if (first) h.appendChild(el('div', 'font-size:10.5px;color:var(--st-ink-2);white-space:nowrap', '🕐 ' + span(first.start, lastEnd)));
+      if (r.shifts.some(x => x.off)) h.appendChild(el('div', 'font-size:10.5px;color:var(--st-red-d);font-weight:700', '🌴 Time off'));
+      const m = mapUrl(r);
+      if (m) {
+        const a = el('a', 'font-size:10.5px;font-weight:700;color:var(--st-blue);text-decoration:none;white-space:nowrap', '🗺️ Map ' + plural(m.n, 'stop'));
+        a.href = m.url; a.target = '_blank'; a.rel = 'noopener';
+        a.title = 'Their stops in Google Maps, in order' + (m.n > 10 ? ' (the first 10)' : '');
+        h.appendChild(a);
+      }
+      return h;
+    };
+    // One job, as a card.
+    const card = (a, r, opts) => {
+      const st = r.st(a), lk = lookOf(st), call = PHONE_ONLY.test(a.jobType);
+      const c = el('div', 'box-sizing:border-box;border:1px solid ' + lk[1] + '40;border-left:4px solid ' + lk[1] + ';border-radius:7px;background:' + lk[0] + ';padding:3px 6px;overflow:hidden;cursor:pointer;' +
+        'display:flex;flex-direction:column;gap:1px;font-size:11px;line-height:1.25;color:#141414;' + (opts.css || ''));
+      c.className = 'st-rview-card';
+      c.setAttribute('data-job', a.jobId);
+      c.setAttribute('data-appt', a.apptId);
+      const top = el('div', 'display:flex;gap:4px;align-items:center;white-space:nowrap;min-width:0');
+      top.appendChild(el('span', 'font-weight:800;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis',
+        (call ? '📞 ' : opts.n ? opts.n + '. ' : '') + lk[2] + ' ' + span(a.start, a.end)));
+      const go = el('button', 'margin-left:auto;flex:none;border:0;background:transparent;cursor:pointer;padding:0 2px;font-size:11px;line-height:1', '🔎');
+      go.type = 'button'; go.title = 'Open job #' + a.jobId + ' in a new tab';
+      go.onclick = e => { e.stopPropagation(); openJob(a.jobId); };
+      top.appendChild(go);
+      c.appendChild(top);
+      c.appendChild(el('div', 'font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis', a.customer || 'Job #' + a.jobId));
+      c.appendChild(el('div', 'color:#4b4f55;white-space:nowrap;overflow:hidden;text-overflow:ellipsis', [a.jobType, a.city].filter(Boolean).join(' · ')));
+      const others = a.techs.filter(id => id !== r.t.id).map(id => board.firstName((data && data.techById.get(id) || {}).name || '')).filter(Boolean);
+      if (a.tags.length || others.length) {
+        const row = el('div', 'display:flex;gap:3px;align-items:center;white-space:nowrap;overflow:hidden');
+        if (others.length) row.appendChild(el('span', 'flex:none;font-size:10.5px;font-weight:700;color:#4b4f55', '👥 ' + others.join(', ')));
+        if (a.tags.length) row.appendChild(tagChips(a.tags, 2));
+        c.appendChild(row);
+      }
+      c.title = [
+        (a.customer || '') + '  ·  job #' + a.jobId,
+        (a.jobType || '') + (a.buName ? '  ·  ' + a.buName : ''),
+        (st || 'Scheduled') + (a.confirmed ? '  ·  ✓ confirmed' : ''),
+        'Booked ' + span(a.start, a.end) + (a.windowStart && a.windowEnd ? '  ·  window ' + span(a.windowStart, a.windowEnd) : ''),
+        addr(a),
+        others.length ? 'Also on it: ' + others.join(', ') : '',
+        a.tags.length ? 'Tags: ' + a.tags.map(t => t.name).join(', ') : '',
+        'Click for 📋 Quick Job Info'
+      ].filter(Boolean).join('\n');
+      c.onclick = () => jobInfo(a.jobId);
+      return c;
+    };
+
+    // ⏱️ Timeline: an hour ruler; each tech a row with their jobs at their times.
+    const drawTimeline = (s, rows) => {
+      const d0 = new Date(s.day.getFullYear(), s.day.getMonth(), s.day.getDate());
+      const hr = x => (x - d0) / 3600000;
+      let lo = 7, hi = 18;
+      const widen = (a, b) => { if (a) lo = Math.min(lo, Math.floor(hr(a))); if (b) hi = Math.max(hi, Math.ceil(hr(b))); };
+      rows.forEach(r => { r.timed.forEach(a => widen(a.start, a.end)); r.shifts.forEach(x => widen(x.start, x.end)); r.events.forEach(x => widen(x.start, x.end)); });
+      lo = Math.max(0, lo); hi = Math.min(24, Math.max(hi, lo + 1));
+      const W = (hi - lo) * zoom;
+      const xOf = d => Math.max(0, Math.min(W, (hr(d) - lo) * zoom));
+      const grid = el('div', 'display:grid;grid-template-columns:' + NAME_W + 'px ' + W + 'px;width:' + (NAME_W + W) + 'px;min-width:100%');
+      grid.id = 'st-rview-grid';
+      // The ruler (stays at the top while scrolling down).
+      grid.appendChild(el('div', 'position:sticky;top:0;left:0;z-index:5;background:var(--st-bg);border-right:1px solid var(--st-line);border-bottom:1px solid var(--st-line);height:22px;font-size:10.5px;color:var(--st-ink-3);padding:4px 8px', plural(rows.length, 'tech')));
+      const ruler = el('div', 'position:sticky;top:0;z-index:4;height:22px;background:var(--st-bg);border-bottom:1px solid var(--st-line)');
+      for (let h = lo; h < hi; h++) {
+        ruler.appendChild(el('div', 'position:absolute;top:0;bottom:0;left:' + ((h - lo) * zoom) + 'px;width:' + zoom + 'px;border-left:1px solid var(--st-line);padding:4px 5px;font-size:10.5px;font-weight:700;color:var(--st-ink-2);white-space:nowrap;overflow:hidden', hourLabel(h)));
+      }
+      grid.appendChild(ruler);
+      const now = new Date();
+      const today = now - d0 >= 0 && now - d0 < 86400000;
+      rows.forEach(r => {
+        // Jobs at the same time stack: each takes the first line it fits on.
+        const lines = [];
+        const placed = r.timed.map(a => {
+          let i = lines.findIndex(end => end <= +a.start);
+          if (i < 0) { i = lines.length; lines.push(0); }
+          lines[i] = +a.end;
+          return { a, i };
+        });
+        const n = Math.max(1, lines.length);
+        grid.appendChild(nameCell(r, s));
+        const lane = el('div', 'position:relative;height:' + (n * (CARD_H + 4) + 6) + 'px;min-height:' + (CARD_H + 10) + 'px;border-bottom:1px solid var(--st-line);background-color:#f1f3f6;' +
+          'background-image:repeating-linear-gradient(to right,var(--st-line) 0 1px,transparent 1px ' + zoom + 'px)');
+        lane.setAttribute('data-rv-lane', r.t.id);
+        // Their shift (white: working hours), time off and other events (meetings…).
+        r.shifts.forEach(x => {
+          const l = xOf(x.start), w = xOf(x.end) - l;
+          if (w <= 0) return;
+          const b = el('div', 'position:absolute;top:0;bottom:0;left:' + l + 'px;width:' + w + 'px;' + (x.off
+            ? 'background:repeating-linear-gradient(135deg,rgba(196,32,13,.10) 0 6px,rgba(196,32,13,.03) 6px 12px);border-left:2px solid rgba(196,32,13,.4)'
+            : 'background:rgba(255,255,255,.85)'));
+          b.title = (x.off ? 'Time off ' : 'Shift ') + span(x.start, x.end);
+          if (x.off) b.appendChild(el('span', 'position:absolute;bottom:2px;left:4px;font-size:10px;font-weight:800;color:#8e1608', '🌴 Time off'));
+          lane.appendChild(b);
+        });
+        r.events.forEach(x => {
+          const l = xOf(x.start), w = xOf(x.end) - l;
+          if (w <= 0) return;
+          const b = el('div', 'position:absolute;top:2px;bottom:2px;left:' + l + 'px;width:' + w + 'px;z-index:1;border-radius:6px;background:repeating-linear-gradient(135deg,#e2e5e9 0 5px,#eceff3 5px 10px);border:1px dashed #a6abb1;overflow:hidden');
+          b.title = 'Event (not a job) ' + span(x.start, x.end);
+          b.appendChild(el('span', 'position:absolute;bottom:2px;left:4px;font-size:10px;font-weight:700;color:#4b4f55;white-space:nowrap', '📌 Event'));
+          lane.appendChild(b);
+        });
+        placed.forEach(({ a, i }) => {
+          const l = xOf(a.start), w = Math.max(26, xOf(a.end) - l - 2);
+          lane.appendChild(card(a, r, { css: 'position:absolute;z-index:2;top:' + (3 + i * (CARD_H + 4)) + 'px;left:' + (l + 1) + 'px;width:' + w + 'px;height:' + CARD_H + 'px' }));
+        });
+        if (!r.jobs.length) lane.appendChild(el('div', 'position:sticky;left:' + (NAME_W + 8) + 'px;display:inline-block;margin:20px 8px;font-size:11.5px;color:var(--st-ink-3);position:relative', 'No jobs this day.'));
+        if (today && hr(now) >= lo && hr(now) <= hi) {
+          const ln = el('div', 'position:absolute;top:0;bottom:0;left:' + xOf(now) + 'px;width:2px;background:#e11d48;z-index:3;pointer-events:none');
+          ln.title = 'Now';
+          lane.appendChild(ln);
+        }
+        grid.appendChild(lane);
+      });
+      wbody.appendChild(grid);
+      // First look: scrolled to the first job (or now, today), not to midnight.
+      const firsts = rows.map(r => r.timed[0]).filter(Boolean).map(a => xOf(a.start));
+      const want = today ? xOf(now) - 120 : firsts.length ? Math.min.apply(null, firsts) - 40 : 0;
+      return Math.max(0, want);
+    };
+
+    // ➡️ In order: each tech's jobs one after another, with the time between them.
+    const gapEl = (p, a) => {
+      let txt = '', tone = 'var(--st-ink-3)';
+      if (p && p.end && a.start) {
+        const g = (a.start - p.end) / 60000;
+        if (g < -1) { txt = '⚠️ overlaps ' + mins(-g); tone = 'var(--st-red-d)'; }
+        else if (g >= 15) { txt = mins(g) + ' open'; tone = 'var(--st-green-d)'; }
+        else txt = 'back to back';
+      }
+      const box = el('div', 'flex:none;width:78px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;font-size:10.5px;font-weight:700;color:' + tone + ';text-align:center;line-height:1.2');
+      box.className = 'st-rview-gap';
+      box.appendChild(el('span', 'font-size:17px;color:var(--st-ink-3);line-height:1', '→'));
+      if (txt) box.appendChild(el('span', '', txt));
+      return box;
+    };
+    const drawOrder = (s, rows) => {
+      const grid = el('div', 'display:grid;grid-template-columns:' + NAME_W + 'px max-content;width:max-content;min-width:100%');
+      grid.id = 'st-rview-grid';
+      rows.forEach(r => {
+        grid.appendChild(nameCell(r, s));
+        const line = el('div', 'display:flex;align-items:stretch;padding:6px 10px;border-bottom:1px solid var(--st-line);background:var(--st-bg);min-height:' + (CARD_H + 14) + 'px');
+        line.setAttribute('data-rv-lane', r.t.id);
+        const shift = r.shifts.filter(x => !x.off)[0];
+        if (!r.jobs.length) line.appendChild(el('div', 'align-self:center;font-size:11.5px;color:var(--st-ink-3)', r.shifts.some(x => x.off) ? '🌴 Time off. No jobs this day.' : 'No jobs this day.'));
+        else if (shift) line.append(el('div', 'flex:none;align-self:center;font-size:10.5px;font-weight:700;color:var(--st-ink-3);text-align:center;width:52px;line-height:1.2', '🏁 Shift ' + clock(shift.start)), gapEl(null, {}));
+        let n = 0, prev = null;
+        r.jobs.forEach(a => {
+          if (prev) line.appendChild(gapEl(prev, a));
+          const call = PHONE_ONLY.test(a.jobType);
+          line.appendChild(card(a, r, { n: call ? 0 : ++n, css: 'flex:none;width:190px;min-height:' + CARD_H + 'px' }));
+          prev = a;
+        });
+        if (r.jobs.length && shift) line.append(gapEl(null, {}), el('div', 'flex:none;align-self:center;font-size:10.5px;font-weight:700;color:var(--st-ink-3);text-align:center;width:52px;line-height:1.2', 'Shift ends ' + clock(shift.end)));
+        grid.appendChild(line);
+      });
+      wbody.appendChild(grid);
+      return 0;
+    };
+
+    const renderWin = () => {
+      if (!isOpen()) return;
+      timeBtn.style.cssText = orderBtn.style.cssText = 'border:0;padding:3px 9px;font:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;background:transparent;color:#fff';
+      (mode === 'order' ? orderBtn : timeBtn).style.cssText += ';background:#fff;color:var(--st-head)';
+      zoomIn.style.display = zoomOut.style.display = mode === 'time' ? '' : 'none';
+      const s = data;
+      const day = s ? s.day : board.day();
+      dayLbl.textContent = day ? board.dayText(day) : '—';
+      boardDayBtn.style.display = offset ? '' : 'none';
+      wtitle.textContent = '👁️ Route View' + (offset ? ' · not the board\'s day' : '');
+      const keepX = wbody.scrollLeft, keepY = wbody.scrollTop, again = wbody.getAttribute('data-shown') === (mode + '|' + offset + '|' + (day ? board.iso(day) : ''));
+      wbody.textContent = '';
+      footMsg.textContent = '';
+      if (!onBoard()) { wbody.appendChild(note(board.need())); return; }
+      if (!s) { wbody.appendChild(note(err ? '⚠️ Couldn\'t read the board: ' + err + '. Press ↻ to try again.' : 'Reading the board…')); return; }
+      const techs = s.techs.filter(t => selected.indexOf(t.id) > -1);
+      const missing = selected.filter(id => !s.techById.has(id)).length;
+      if (!techs.length) {
+        wbody.appendChild(note(selected.length ? 'The techs you picked aren\'t on the board for this day (or its filters hide them).' : 'Pick a tech in the Toolbox (tick their name, or 🖱️ Pick on board) to see their route here.'));
+        return;
+      }
+      const rows = techs.map(t => rowData(s, t));
+      const startX = (mode === 'order' ? drawOrder : drawTimeline)(s, rows);
+      wbody.setAttribute('data-shown', mode + '|' + offset + '|' + board.iso(day));
+      // Redrawn for the same view: stay where you were. A new view: start at the first job.
+      if (again) { wbody.scrollLeft = keepX; wbody.scrollTop = keepY; } else { wbody.scrollLeft = startX; wbody.scrollTop = 0; }
+      const all = rows.reduce((m, r) => m + r.stops.length, 0), done = rows.reduce((m, r) => m + r.done, 0);
+      footMsg.textContent = plural(rows.length, 'tech') + ' · ' + plural(all, 'stop') + (done ? ' · ' + done + ' done' : '') +
+        (missing ? ' · ' + plural(missing, 'picked tech isn\'t', 'picked techs aren\'t') + ' on this day\'s board' : '') + (busy ? ' · reading…' : err ? ' · ⚠️ ' + err : '');
+    };
+
+    const refresh = () => {
+      renderList();
+      paint();
+      if (!onBoard()) say(board.need());
+      else if (!msg.textContent || /^(Open the Dispatch|Switch the Dispatch|Wait for the Dispatch)/.test(msg.textContent)) say(selected.length ? 'Tick or untick techs; the window shows their routes.' : 'Tick a tech (or 🖱️ Pick on board) to see their route.');
+      if (onBoard()) board.load().then(() => { if (alive && shown()) { renderList(); paint(); } }).catch(e => say('⚠️ Couldn\'t read the board: ' + errText(e)));
+    };
+    return {
+      refresh,
+      leave: () => { setPicking(false); style.textContent = ''; },
+      isOpen,
+      cleanup: () => {
+        alive = false; runId++;
+        clearInterval(timer); clearTimeout(sizeTimer);
+        window.removeEventListener('click', onClick, true);
+        window.removeEventListener('resize', onWinResize);
+        if (sizeObs) sizeObs.disconnect();
+        board.unmount(style);
+        win.remove();
+      }
+    };
+  })();
+
+  // ===================================================================
   // Dragging, closing, and starting up
   // ===================================================================
   header.addEventListener('mousedown', e => {
@@ -14114,6 +14678,7 @@
     moves.cleanup();
     router.cleanup();
     ai.cleanup();
+    rview.cleanup();
     board.stop();
     if (keepObs) keepObs.disconnect();
     window.removeEventListener('resize', onWinResize);
@@ -14168,6 +14733,6 @@
   document.body.appendChild(panel);
   if (get('stMin') === '1') setMin(true);
   const startView = get('stView');
-  showView(['notes', 'jobs', 'msgs', 'biz', 'texts', 'moves', 'router', 'ai'].indexOf(startView) > -1 ? startView : 'menu');
+  showView(['notes', 'jobs', 'msgs', 'biz', 'texts', 'moves', 'router', 'ai', 'rview'].indexOf(startView) > -1 ? startView : 'menu');
   health.checkBoard(false);
 })();
