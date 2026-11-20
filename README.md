@@ -18,6 +18,8 @@ Version 2.0 works on ServiceTitan's new Dispatch board, on its **Day** view. On 
 
 ## Tools
 
+**New to the Toolbox?** Press **📖 Guide** in its title bar for a one-minute tour, or **❔ Help** (the same button, inside any tool) for how that tool works, with **▶ Walk me through it**. You can leave either at any time with ✕ or Esc.
+
 **📝 Notes**
 Ready-made notes sorted into folders: **📞 Updates** (no answer, left a voicemail and so on), **🚚 Techs** (tech on the way, tech arrived) and **📅 Reschedule**. Open a folder, then click a job on the Dispatch board and click a note (or pick the note first, then click the job). The Toolbox opens that job's customer, clicks **Add Note** and types the note in. It stops there so you can check it and click **Add Note** to save.
 

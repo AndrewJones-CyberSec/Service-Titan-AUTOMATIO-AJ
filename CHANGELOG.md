@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.9
+
+- **New: 📖 Guide and ❔ Help**, a button in the title bar, for people new to the Toolbox.
+  - **On the menu, 📖 Guide:** a one-minute tour (16 steps). Each part of the Toolbox lights up in turn (the title bar, the board's day, every tool, 🧪 Experimental tools, 🖱️ picking on the board, 🩺 Check) with a card beside it: **← Back**, **Next →**, **✕** to leave at any time; **←** / **→** and **Esc** work too. The rest is dimmed but still works, so you can try things as you go. Nothing on the board changes.
+  - **In a tool, ❔ Help:** a card at the top of the tool with what it does, its steps in order and a tip or two, plus **▶ Walk me through it** (that tool's own short walk-through, lighting up its real controls) and **📖 Toolbox tour**. Press the button again (or ✕) to close it; it also goes when you leave the tool, and so does a walk-through.
+  - **Never forced:** nothing opens by itself. A new user sees a small *👋 New here? A one-minute tour* line on the menu until they open the tour or press ✕ (`stGuideSeen`).
+- **Fixed: 👁️ Route View had no ← Menu button** to get back to the other tools.
+- Tests: new `tests/test_guide.py` (every tool's walk-through has to light up a real control on each step).
+
 ## 2.8
 
 - **New (Beta, under 🧪 Experimental tools): 👁️ Route View.** Pick one tech (or several) and see their day left to right, like the board, in a wide window of its own.

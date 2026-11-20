@@ -37,8 +37,9 @@
   so updates never wipe them.
 */
 (() => {
-  const VERSION = '2.8';
+  const VERSION = '2.9';
   const WHATS_NEW = {
+    '2.9': 'New: 📖 Guide and ❔ Help, in the title bar. On the menu, 📖 Guide is a one-minute tour of the Toolbox: it lights up each part with a card beside it (Back, Next, ✕ to leave any time; ← → and Esc work too) and you can click things as you go. Inside a tool the button is ❔ Help: what the tool does and how, in a few steps, with ▶ Walk me through it. Nothing starts by itself: new users just see a small "New here?" line on the menu.',
     '2.8': 'New (Beta, under 🧪 Experimental tools): 👁️ Route View. Tick a tech (or click their name on the board with 🖱️ Pick on board) and their whole day shows left to right in a wide window, like the board: every job with its time, customer, job type, town and tags, colored by how it stands (🗓️ 🚚 🔧 ⏸️ ✅). Tick several to see them one under another. ⏱️ Timeline puts jobs on an hour ruler with their shift, time off, events and a red line for now; ➡️ In order lists them as numbered stops with the open time (or ⚠️ overlap) between. ◀ ▶ shows other days, 🗺️ opens their stops in Google Maps, click a job for 📋 Quick Job Info. It only reads.',
     '2.7.1': 'New in 📱 Customer Texts → 📥 Check replies: ☎️ Talked with them today = confirmed. A customer we spoke with on the phone today (they called us, or our call lasted a minute or more) or who texted us today goes on the ✅ Will confirm list when their appointment starts within 24 hours, even without a C, and the card says how ("Talked with them today: we called them at 10:42 AM (3 min)"). Not if they said STOP, or anything about canceling or another day: those go to Needs a look. It\'s on to start; untick it at the top of Check replies to go back to C replies only. Nothing is confirmed until you press Confirm, and ↩ Take off puts anyone back.',
     '2.7': 'New in 🔕 Job Notifications: ⚡ Dispatch Pro. Pick 🔔 Job Notifications or ⚡ Dispatch Pro at the top of the tool, and the same list shows and turns that switch off or on (jobs by type too). Turning Dispatch Pro off or on needs permission to change it in ServiceTitan; without it, the tool says so and changes nothing. Also: new hires and people who left show up by themselves (no need to redo the bookmark), and the Toolbox never runs off the bottom of the screen: it moves up, scrolls inside, and its bottom edge makes it taller or shorter.',
@@ -1262,7 +1263,7 @@
   const sheet = el('style');
   sheet.id = ID + '-style';
   sheet.textContent = [
-    '#' + ID + ',#st-rview{--st-ink:#141414;--st-ink-2:#4b4f55;--st-ink-3:#7b8087;--st-line:#e2e5e9;--st-ctl:#a6abb1;--st-bg:#ffffff;--st-soft:#f6f7f9;--st-soft-2:#eceff3;' +
+    '#' + ID + ',#st-rview,#st-guide{--st-ink:#141414;--st-ink-2:#4b4f55;--st-ink-3:#7b8087;--st-line:#e2e5e9;--st-ctl:#a6abb1;--st-bg:#ffffff;--st-soft:#f6f7f9;--st-soft-2:#eceff3;' +
       '--st-blue:#0265dc;--st-blue-d:#004491;--st-blue-s:#e8f2fe;--st-green:#1f7a3d;--st-green-d:#145c2c;--st-green-s:#e9f6ee;--st-green-l:#a6d8b6;' +
       '--st-red:#c4200d;--st-red-d:#8e1608;--st-red-s:#fdeceb;--st-red-l:#f2aaa2;--st-amber:#8f5300;--st-amber-s:#fff5e5;--st-amber-l:#f0cd8f;' +
       '--st-purple-s:#f4eefa;--st-purple-l:#cdb6e2;--st-head:#16202e;' +
@@ -1693,7 +1694,11 @@
   };
   const minBtn = headBtn('–', 'Fold the Toolbox down to its title bar');
   const closeX = headBtn('✕', 'Close');
-  header.append(titleWrap, minBtn, closeX);
+  // 📖 Guide (on the menu) / ❔ Help (in a tool): see guide, below.
+  const guideBtn = el('button', 'flex:none;height:26px;padding:0 9px;border:1px solid rgba(255,255,255,.28);border-radius:13px;background:rgba(255,255,255,.08);color:#fff;cursor:pointer;font:inherit;font-size:11.5px;font-weight:800;white-space:nowrap', '📖 Guide');
+  guideBtn.type = 'button'; guideBtn.className = 'st-hbtn'; guideBtn.id = 'st-guide-btn';
+  guideBtn.addEventListener('mousedown', e => e.stopPropagation());
+  header.append(titleWrap, guideBtn, minBtn, closeX);
   // Folded down (remembered in this browser): only the title bar shows, so the board is free.
   const setMin = (on, animate) => {
     const from = animate && motionOK() && panel.isConnected ? panel.getBoundingClientRect().height : null;
@@ -1933,6 +1938,7 @@
     if (name === 'ai' && typeof ai !== 'undefined') ai.refresh();
     if (name !== 'rview' && typeof rview !== 'undefined') rview.leave();
     if (name === 'rview' && typeof rview !== 'undefined') rview.refresh();
+    if (typeof guide !== 'undefined') guide.onView(name);
   };
 
   // The menu: one tile per tool.
@@ -1963,7 +1969,7 @@
   expShow(get('stExpOpen') === '1');
   TOOLS.forEach(([key, icon, name, desc, tint, badge]) => {
     const b = el('button', 'display:flex;gap:10px;align-items:center;width:100%;text-align:left;padding:8px 10px;border:1px solid var(--st-line);border-radius:10px;background:var(--st-bg);cursor:pointer;color:var(--st-ink);font:inherit');
-    b.type = 'button'; b.className = 'st-tile';
+    b.type = 'button'; b.className = 'st-tile'; b.setAttribute('data-tool', key);
     const ic = el('span', 'flex:none;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;font-size:17px;background:' + tint, icon);
     const tx = el('span', 'display:grid;gap:1px;min-width:0');
     const nameLine = el('span', 'font-weight:800;font-size:13px;display:flex;gap:6px;align-items:center', name);
@@ -1975,8 +1981,9 @@
     b.onclick = () => showView(key);
     (badge ? expBox : tiles).appendChild(b);
   });
+  const checkBtn = smallBtn('🩺 Check', () => health.checkBoard(true));
   const checkRow = el('div', 'display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px');
-  checkRow.append(el('span', 'font-size:11px;color:var(--st-ink-3)', 'Works on the Dispatch board\'s Day view.'), smallBtn('🩺 Check', () => health.checkBoard(true)));
+  checkRow.append(el('span', 'font-size:11px;color:var(--st-ink-3)', 'Works on the Dispatch board\'s Day view.'), checkBtn);
   menuPane.append(menuMsg, tiles);
   if (expN) menuPane.append(expHead, expBox);
   menuPane.append(checkRow);
@@ -14069,7 +14076,9 @@
     openBtn.id = 'st-rview-open';
     const tip = el('div', 'font-size:11px;color:var(--st-ink-3);margin-top:6px;line-height:1.35',
       'Tick one tech to see their route, or several to see them one under another. In the window: ⏱️ Timeline or ➡️ In order, ◀ ▶ for other days, click a job for 📋 Quick Job Info. It only reads.');
-    rviewPane.append(msg, topRow, findRow, pickedLine, list, openBtn, tip);
+    const bottomRow = el('div', 'display:flex;gap:6px;margin-top:8px');
+    bottomRow.appendChild(smallBtn('← Menu', () => showView('menu')));
+    rviewPane.append(msg, topRow, findRow, pickedLine, list, openBtn, tip, bottomRow);
 
     const jobsOf = (s, id) => ((s && s.byTech.get(S(id))) || []).filter(board.live);
     const fillTeams = s => {
@@ -14552,6 +14561,311 @@
   })();
 
   // ===================================================================
+  // 📖 Guide and ❔ Help (2.9)
+  // The button in the title bar: 📖 Guide on the menu (a quick tour of the whole Toolbox), ❔ Help
+  // on a tool (how that tool works, in a few steps, with ▶ Walk me through it). Never starts by
+  // itself: the menu just shows a small "New here?" line until the tour has been opened once.
+  // A tour lights up one part of the Toolbox at a time (the rest is dimmed, but everything still
+  // works, so you can try it as you go) with a card beside it: Back, Next, ✕ to leave at any time.
+  // ← → and Esc work too. Nothing on the board is changed by the tour.
+  // ===================================================================
+  const guide = (() => {
+    const DONE = 'stGuideSeen';
+    // Where a step points: '#id' (in the Toolbox, or the page), a RegExp (a visible button or
+    // label in the open tool, by its words), a function, or a list of these (the first found).
+    // Nothing found: the whole tool.
+    const vis = e => !!(e && e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
+    const openView = () => views[Object.keys(views).find(k => views[k].style.display !== 'none') || 'menu'];
+    const find = spec => {
+      if (!spec) return null;
+      if (Array.isArray(spec)) { for (const s of spec) { const x = find(s); if (x) return x; } return null; }
+      if (typeof spec === 'function') { const x = spec(); return vis(x) ? x : null; }
+      if (spec instanceof RegExp) return Array.from(openView().querySelectorAll('button,label,select')).find(e => vis(e) && spec.test(norm(e.textContent))) || null;
+      const x = panel.querySelector(spec) || document.getElementById(spec.replace(/^#/, ''));
+      return vis(x) ? x : null;
+    };
+    const tile = k => () => panel.querySelector('.st-tile[data-tool="' + k + '"]');
+    const T = (title, text, target, view, prep) => ({ title, text, target, view, prep });
+
+    // ---- 📖 The Toolbox tour (from the menu) ----
+    const TOUR = [
+      T('👋 Welcome to the Toolbox', 'Shortcuts for the Dispatch board, all in this one panel. This tour takes about a minute. Press Next, or ✕ to leave at any time. Nothing on the board changes during the tour.', () => panel, 'menu'),
+      T('The title bar', 'Drag it to move the Toolbox. – folds it down to just this bar (the board is free), ✕ closes it. Drag its left edge, bottom edge or corner to make it bigger. The v number is the version: it updates itself every time you click the bookmark.', () => header, 'menu'),
+      T('📅 The board\'s day', 'Every tool works on the day and branches the Dispatch board shows, in its Day view. Change the day on the board and the tools follow.', () => menuMsg, 'menu'),
+      T('📝 Notes', 'Ready-made notes in folders. Pick a note, click a job, and it\'s typed on the customer for you to check and save.', tile('notes'), 'menu'),
+      T('🔕 Job Notifications', 'See whether job notifications (or ⚡ Dispatch Pro) are on or off for the jobs you pick, and turn them off or on in one go.', tile('jobs'), 'menu'),
+      T('💬 Tech Messages', 'Send Good Morning, an ETA or your own message to the techs you pick.', tile('msgs'), 'menu'),
+      T('🏢 Business Unit', 'Switch jobs to a branch (Mendenhall Branch by default). Check first, change, and Put back if needed.', tile('biz'), 'menu'),
+      T('📱 Customer Texts', 'Text customers a saved message: holds, tech updates, reschedules, confirmations. 📥 Check replies confirms everyone who answered C.', tile('texts'), 'menu'),
+      T('🔀 Move Jobs', 'Move, add, unassign or swap techs without dragging, or move a day to another day. Review shows what will happen first; ↩ Put back undoes it.', tile('moves'), 'menu'),
+      T('📋 Quick Job Info', 'Click any job (or type its number) for everything about it on one card: what to do next, watch-outs, phones, notes and history.', tile('ai'), 'menu'),
+      T('🧪 Experimental tools', 'Tools still being built and tested live down here. Click this line to fold them open or shut.', () => expHead, 'menu', () => expShow(true)),
+      T('🧭 Tech Router', 'Suggests where jobs should go: the best tech for a job, jobs to fill open time, a plan for the Unassigned list, a better route order. It only reads; changes go through Move Jobs.', tile('router'), 'menu', () => expShow(true)),
+      T('👁️ Route View', 'Pick a tech (or several) to see their day left to right, like the board, in a wide window.', tile('rview'), 'menu', () => expShow(true)),
+      T('🖱️ Picking on the board', 'Most tools have 🖱️ Pick on board. While it\'s on, clicking a job or a tech\'s name on the board adds it to the tool instead of opening it. Click again to take it off.', () => panel, 'menu'),
+      T('🩺 Check', 'Something not working? 🩺 Check tests that the board and the Toolbox still understand each other. A yellow bar at the top also tells you if ServiceTitan changed something.', () => checkBtn, 'menu'),
+      T('❔ Help on every tool', 'This button is 📖 Guide here on the menu. Inside a tool it becomes ❔ Help: how that tool works, with ▶ Walk me through it. That\'s the tour. Open any tool to get started.', () => guideBtn, 'menu')
+    ];
+
+    // ---- ❔ Help for each tool, and its walk-through ----
+    const HELP = {
+      notes: {
+        what: 'Adds a ready-made note to a job\'s customer in a couple of clicks.',
+        steps: ['Pick a folder (📞 Updates, 🚚 Techs, 📅 Reschedule or one of your own).', 'Pick the note, then click the job on the board (the job first works too).', 'The note is typed on the customer for you. Check it and press Save.'],
+        tips: ['✏️ Edit folders adds, renames or removes folders and notes. They\'re kept in this browser, so updates never wipe them.'],
+        tour: [
+          T('Folders', 'Notes are sorted into folders. Pick one to see its notes.', /Updates|Techs|Reschedule/),
+          T('Pick a note, then a job', 'Pick the note, then click the job on the board. It\'s typed on the customer for you to check and Save; nothing is saved by itself.', null),
+          T('Your own notes', '✏️ Edit folders (or ✏️ Edit notes inside a folder) adds your own notes and folders.', /Edit folders|Edit notes/)
+        ]
+      },
+      jobs: {
+        what: 'Shows whether job notifications (or ⚡ Dispatch Pro) are on or off for jobs, and turns them off or on.',
+        steps: ['Pick 🔔 Job Notifications or ⚡ Dispatch Pro at the top.', 'Add jobs: 🖱️ Pick on board and click them, type job numbers, ＋ Whole board, ＋ A tech\'s jobs, or ＋ Jobs with a tag. Each shows 🔔 on or 🔕 off.', 'Press the button to turn them off (or on). Only the jobs that need it are changed; any problem gets its own card with Try again.'],
+        tips: ['🗂️ By job type: set which job types should be on or off, then apply it to the whole day in one run.', 'Only logins with permission can change these switches.'],
+        tour: [
+          T('Which switch', '🔔 Job Notifications or ⚡ Dispatch Pro. The rest of the tool works the same for both.', /Job Notifications|Dispatch Pro/),
+          T('Add jobs', 'Turn on 🖱️ Pick on board and click jobs, or type job numbers below. Each job shows 🔔 on or 🔕 off as it\'s added.', /Pick on board|Picking/),
+          T('Add a lot at once', '＋ Whole board adds every job on the day; ＋ A tech\'s jobs adds one tech\'s day.', [/Whole board/, '#st-notify-tech']),
+          T('🗂️ By job type', 'Set job types to 🔔 or 🔕 once, then ⚙️ Apply to the day in one run.', '#st-notify-types-head')
+        ]
+      },
+      msgs: {
+        what: 'Sends a saved message to the techs you pick.',
+        steps: ['First time only: 🛡️ Who can be messaged. Tick the teams it\'s OK to message. Nothing sends until this is set.', 'Pick a message (☀️ Good Morning, ⏱️ ETA, or ✏️ Edit messages for your own).', 'Pick techs: 👥 Choose techs, or 🖱️ Pick on board and click their names.', 'Type only fills each message and you press Send; Auto-send sends to everyone after you review and confirm.', 'Press Start.'],
+        tips: ['A tech on the never-message list or a blocked team can\'t be picked.'],
+        tour: [
+          T('🛡️ Safety first', 'Who can be messaged: the teams it\'s OK to message, and anyone never to message. Set it up once.', /Who can be messaged/),
+          T('The message', 'Pick a saved message. ✏️ Edit messages adds your own.', /Good Morning|ETA/),
+          T('Who gets it', '👥 Choose techs from a list, or 🖱️ Pick on board and click their names.', [/Choose techs/, /Pick on board|Picking/]),
+          T('Type only or Auto-send', 'Type only: you press Send for each person. Auto-send: it sends to everyone picked, after you confirm.', /Type only/),
+          T('Start', 'Press Start. You can Stop at any time.', /^Start|Review and send/)
+        ]
+      },
+      biz: {
+        what: 'Switches jobs to a branch (Mendenhall Branch by default).',
+        steps: ['Pick the branch.', 'Add the jobs (🖱️ Pick on board, + Tray page, type numbers, or a tag).', 'Check jobs (changes nothing) shows what would change.', 'Press Change to … to switch them. Put back undoes it.'],
+        tips: ['Locked jobs and errors are listed with why.'],
+        tour: [
+          T('The branch', 'The branch the jobs go to.', '#st-biz-branch'),
+          T('The jobs', '🖱️ Pick on board and click jobs, + Tray page, or type job numbers.', /Pick on board|Picking/),
+          T('Check first', 'Check jobs reads each job and changes nothing.', /Check jobs/),
+          T('Change', 'Then Change to … switches them. Put back undoes it.', /Change to/)
+        ]
+      },
+      texts: {
+        what: 'Texts customers a saved message: holds, tech updates, reschedules, confirmations, outreach.',
+        steps: ['Pick a folder (⏸️ Holds, 🚚 Tech Updates, ✅ Confirm Appt…), then the message.', 'Pick who: the Hold list, or 🖱️ Jobs I pick (click jobs, ＋ Everyone on the board, ＋ A department…).', 'Type only (you press Send for each) or Auto-send (sends to everyone after you review).', 'Press Start. PHONE CALL ONLY jobs and anyone who texted STOP are never texted.', 'In ✅ Confirm Appt, 📥 Check replies confirms everyone who answered C and lists the rest.'],
+        tips: ['✏️ Edit messages and 📁 Edit folders for your own texts; ⚙️ Settings for the late-job cut-off and other rules.'],
+        tour: [
+          T('Folders', 'Each folder holds texts for one job: holds, tech updates, reschedules, confirmations, outreach.', /Holds|Tech Updates|Confirm Appt/),
+          T('Who to text', 'The Hold list, or 🖱️ Jobs I pick: click jobs on the board, or ＋ Everyone on the board / ＋ A department….', [/Jobs I pick/, /Hold list/]),
+          T('Type only or Auto-send', 'Type only: you press Send for each customer. Auto-send: it sends to everyone in the list after you review and confirm.', /Type only/),
+          T('Start', 'Press Start. Nobody who said STOP, and no PHONE CALL ONLY job, is ever texted.', /^Start/),
+          T('Your own texts', '✏️ Edit messages, 📁 Edit folders and ⚙️ Settings.', /Edit messages|Settings/)
+        ]
+      },
+      moves: {
+        what: 'Moves, adds, unassigns or swaps techs on jobs without dragging, or moves a day to another day.',
+        steps: ['Pick what to do (➡️ Move to a tech, ➕ Add, ⬅️ Unassign, 🔄 / 🔁 Swap, 📅 to another day).', 'Pick the tech in To (type to find them).', 'Add the jobs: 🖱️ Pick on board, + Tray page, type numbers, or ＋ All Unassigned.', 'Press Review (changes nothing). It warns about skills, double-booking and other branches.', 'Press Go. ↩ Put back undoes it exactly.'],
+        tips: ['A job unassigned while it isn\'t in Mendenhall Branch goes to its own branch\'s Unassigned list; the review warns you.'],
+        tour: [
+          T('What to do', 'Move to a tech, add one, unassign, swap two jobs or two whole days, or move to another day.', /Move to a tech/),
+          T('The tech', 'Who the jobs go to. Type to find them.', '#st-move-to'),
+          T('The jobs', '🖱️ Pick on board and click jobs, + Tray page, type numbers, or ＋ All Unassigned.', /Pick on board|Picking/),
+          T('Review, then Go', 'Review changes nothing: it shows each change and warns about skills, double-booking and branches. Then Go. ↩ Put back undoes it.', /^Review/)
+        ]
+      },
+      router: {
+        what: 'Beta. Suggests where jobs should go. It only reads; changes go through 🔀 Move Jobs.',
+        steps: ['🎯 Place: click a job for the best techs to put it on, or whether to RS it and to which day.', '📞 Fill: pick a tech to find jobs for their open time, with the customer\'s number to call.', '🗺️ Plan: a tech and a route for every Unassigned job (8-12s first).', '✨ Optimize: scores a tech\'s route 0-100% and shows a better order.', '🔎 Closest: the techs closest to a zip or a job.'],
+        tips: ['➡️ hands a suggestion to Move Jobs, where nothing changes until you Review and Go.'],
+        tour: [
+          T('Five tabs', '🎯 Place, 📞 Fill, 🗺️ Plan, ✨ Optimize and 🔎 Closest. Each one does one job.', /Place/),
+          T('Pick the tech or job', 'Most tabs start with a tech (from the list or by clicking their name with 🖱️) or a job you click.', ['#st-router-tech', /🖱️/]),
+          T('Only reads', 'Every suggestion goes to Move Jobs with ➡️, where nothing changes until you Review and Go.', null)
+        ]
+      },
+      ai: {
+        what: 'Everything about a job or a hold on one card. It only reads.',
+        steps: ['Click any job on the board (🖱️ is on when it opens), or type a job number and 🔎 Look up.', 'Read the card: what to do next, watch-outs (🚫 don\'t call, 📵 hard to reach…), the appointment, phones, notes and history.', 'Its buttons open Customer Texts, Move Jobs or Tech Router with the job; 📋 Copy job info copies the card.', '⏸️ Holds lists the Hold list, best to call first.'],
+        tips: ['Works for jobs on other days and old jobs too, by number.'],
+        tour: [
+          T('Click a job', '🖱️ is on: click any job on the board (or a row in the Jobs Tray) and its card shows here.', '#st-ai-pick'),
+          T('Or type its number', 'Type a job number and press 🔎 Look up.', ['#st-ai-input', '#st-ai-go']),
+          T('⏸️ Holds', 'The Hold list, best to call first, with filters.', '#st-ai-holds-go')
+        ]
+      },
+      rview: {
+        what: 'Beta. See techs\' routes left to right, like the board. It only reads.',
+        steps: ['Tick a tech (or 🖱️ Pick on board and click their name or one of their jobs). The window opens by itself.', 'Tick more techs to see them one under another.', 'In the window: ⏱️ Timeline or ➡️ In order, ◀ ▶ for other days, 🗺️ Map for their stops in Google Maps.', 'Click a job for 📋 Quick Job Info; drag the window by its title bar, resize it from its corner.'],
+        tips: ['＋ All shown adds everyone in the list; pick a team first to add just that team.'],
+        tour: [
+          T('Pick techs', 'Tick the techs whose routes you want. Type to find one, or pick a team.', '#st-rview-list'),
+          T('Or click them on the board', '🖱️ Pick on board, then click a tech\'s name (or one of their jobs).', '#st-rview-pick'),
+          T('Show routes', 'Opens (or hides) the wide window with their day left to right.', '#st-rview-open')
+        ]
+      }
+    };
+
+    // ---- The spotlight and the card ----
+    const ring = el('div', 'position:fixed;z-index:2147483647;pointer-events:none;display:none;border:3px solid #ffb020;border-radius:10px;' +
+      'box-shadow:0 0 0 4000px rgba(16,24,40,.30),0 0 0 6px rgba(255,176,32,.35)');
+    ring.id = 'st-guide-ring';
+    const card = el('div', 'position:fixed;z-index:2147483647;display:none;width:300px;max-width:calc(100vw - 16px);box-sizing:border-box;padding:12px 14px 10px;' +
+      'background:var(--st-bg);color:var(--st-ink);border:1px solid rgba(16,24,40,.16);border-radius:12px;box-shadow:0 14px 36px rgba(16,24,40,.30);font-size:12.5px;line-height:1.45;text-align:left');
+    card.id = 'st-guide';
+    const cTop = el('div', 'display:flex;align-items:center;gap:8px;margin-bottom:4px');
+    const cCount = el('span', 'font-size:11px;font-weight:800;color:var(--st-ink-3);flex:1');
+    const cX = el('button', 'border:0;background:transparent;color:var(--st-ink-3);font:inherit;font-size:14px;cursor:pointer;padding:0 2px;line-height:1', '✕');
+    cX.type = 'button'; cX.title = 'Leave the tour (Esc)';
+    cTop.append(cCount, cX);
+    const cBar = el('div', 'height:3px;border-radius:3px;background:var(--st-soft-2);margin-bottom:8px;overflow:hidden');
+    const cFill = el('div', 'height:100%;background:#ffb020;width:0;transition:width .2s');
+    cBar.appendChild(cFill);
+    const cTitle = el('div', 'font-weight:800;font-size:14px;margin-bottom:3px');
+    const cText = el('div', 'color:var(--st-ink-2)');
+    const cBtns = el('div', 'display:flex;gap:6px;justify-content:flex-end;margin-top:10px');
+    const backB = smallBtn('← Back', () => go(i - 1));
+    const nextB = smallBtn('Next →', () => go(i + 1), PRIMARY);
+    backB.id = 'st-guide-back'; nextB.id = 'st-guide-next';
+    cBtns.append(backB, nextB);
+    card.append(cTop, cBar, cTitle, cText, cBtns);
+
+    let steps = null, i = 0, timer = 0, target = null, name = '';
+    const active = () => !!steps;
+    const place = () => {
+      if (!steps) return;
+      const t = target && target.isConnected && vis(target) ? target : panel;
+      const r = t.getBoundingClientRect(), P = 5;
+      Object.assign(ring.style, { left: (r.left - P) + 'px', top: (r.top - P) + 'px', width: (r.width + P * 2) + 'px', height: (r.height + P * 2) + 'px' });
+      const w = card.offsetWidth, h = card.offsetHeight, pr = panel.getBoundingClientRect();
+      let x, y;
+      if (pr.left - w - 16 >= 8) { x = pr.left - w - 16; y = r.top; }
+      else if (innerWidth - pr.right - w - 16 >= 8) { x = pr.right + 16; y = r.top; }
+      else { x = r.left; y = r.bottom + h + 20 < innerHeight ? r.bottom + 12 : r.top - h - 12; }
+      card.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) + 'px';
+      card.style.top = Math.max(8, Math.min(y, innerHeight - h - 8)) + 'px';
+    };
+    const go = n => {
+      if (!steps) return;
+      if (n >= steps.length) return stop(true);
+      i = Math.max(0, n);
+      const s = steps[i];
+      setMin(false);
+      if (s.view && views[s.view].style.display === 'none') showView(s.view);
+      if (s.prep) { try { s.prep(); } catch (e) {} }
+      target = find(s.target) || openView();
+      try { if (target !== panel) target.scrollIntoView({ block: 'nearest' }); } catch (e) {}
+      cCount.textContent = (name ? name + ' · ' : '') + (i + 1) + ' of ' + steps.length;
+      cFill.style.width = Math.round((i + 1) / steps.length * 100) + '%';
+      cTitle.textContent = s.title;
+      cText.textContent = s.text;
+      backB.style.visibility = i ? 'visible' : 'hidden';
+      nextB.textContent = i === steps.length - 1 ? 'Done ✓' : 'Next →';
+      ring.style.display = card.style.display = 'block';
+      place();
+      try { nextB.focus({ preventScroll: true }); } catch (e) {}
+    };
+    const start = (list, label) => {
+      helpBox.style.display = 'none';
+      document.body.append(ring, card);   // above the Toolbox (it's added to the page after this)
+      set(DONE, '1'); hintRow.style.display = 'none';
+      steps = list; name = label || '';
+      clearInterval(timer);
+      timer = setInterval(place, 250);   // the Toolbox can move or grow while a step shows
+      go(0);
+    };
+    const stop = finished => {
+      if (!steps) return;
+      steps = null; target = null;
+      clearInterval(timer);
+      ring.style.display = card.style.display = 'none';
+      set(DONE, '1');
+      hintRow.style.display = 'none';
+      if (finished && name === '') health.note('📖 That\'s the tour. Press ❔ Help inside any tool for how it works.', 8000);
+    };
+    cX.onclick = () => stop(false);
+    const onKey = e => {
+      if (!steps) return;
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '');
+      if (e.key === 'Escape') { e.preventDefault(); stop(false); }
+      else if (!typing && e.key === 'ArrowRight') { e.preventDefault(); go(i + 1); }
+      else if (!typing && e.key === 'ArrowLeft') { e.preventDefault(); go(i - 1); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    addEventListener('resize', place);
+
+    // ---- ❔ Help: a card at the top of the open tool ----
+    const helpBox = el('div', 'display:none;padding:10px 12px 12px;background:var(--st-blue-s);color:var(--st-ink);font-size:12px;line-height:1.45;border-bottom:1px solid var(--st-line)');
+    helpBox.id = 'st-help';
+    helpBox.classList.add('st-bar');
+    const showHelp = k => {
+      const H = HELP[k];
+      if (!H) return;
+      helpBox.textContent = '';
+      const top = el('div', 'display:flex;align-items:center;gap:6px;margin-bottom:3px');
+      top.appendChild(el('span', 'flex:1;font-weight:800;font-size:13px;color:var(--st-blue-d)', '❔ ' + TITLES[k].replace(/\s*\(Beta\)$/, '') + ': how to use it'));
+      const x = el('button', 'border:0;background:transparent;color:var(--st-ink-3);font:inherit;font-size:13px;cursor:pointer;padding:0 2px;line-height:1', '✕');
+      x.type = 'button'; x.title = 'Close help'; x.onclick = () => { helpBox.style.display = 'none'; };
+      top.appendChild(x);
+      helpBox.append(top, el('div', 'color:var(--st-ink-2);margin-bottom:6px', H.what));
+      const ol = el('ol', 'margin:0 0 6px;padding-left:20px;display:grid;gap:3px');
+      H.steps.forEach(s => ol.appendChild(el('li', '', s)));
+      helpBox.appendChild(ol);
+      (H.tips || []).forEach(t => helpBox.appendChild(el('div', 'font-size:11.5px;color:var(--st-ink-3);margin-bottom:3px', '💡 ' + t)));
+      const row = el('div', 'display:flex;gap:6px;flex-wrap:wrap;margin-top:8px');
+      const walk = smallBtn('▶ Walk me through it', () => start(H.tour.map(s => Object.assign({}, s, { view: k })), TITLES[k].replace(/\s*\(Beta\)$/, '')), PRIMARY);
+      walk.id = 'st-help-walk';
+      row.append(walk, smallBtn('📖 Toolbox tour', () => { helpBox.style.display = 'none'; start(TOUR); }));
+      helpBox.appendChild(row);
+      helpBox.style.display = 'block';
+      helpBox.scrollTop = 0;
+    };
+    const current = () => Object.keys(views).find(k => views[k].style.display !== 'none') || 'menu';
+    guideBtn.onclick = () => {
+      if (steps) return stop(false);
+      const k = current();
+      if (k === 'menu' || !HELP[k]) return start(TOUR);
+      if (helpBox.style.display !== 'none') helpBox.style.display = 'none'; else showHelp(k);
+    };
+    // The button's words follow the view: 📖 Guide on the menu, ❔ Help in a tool.
+    const onView = k => {
+      const tool = k !== 'menu' && !!HELP[k];
+      guideBtn.textContent = tool ? '❔ Help' : '📖 Guide';
+      guideBtn.title = tool ? 'How this tool works (with a walk-through)' : 'A quick tour of the Toolbox';
+      if (!steps || !steps[i] || steps[i].view !== k) helpBox.style.display = 'none';
+      if (steps && steps[i] && steps[i].view && steps[i].view !== k) stop(false);   // you went somewhere else: the tour ends
+    };
+
+    // ---- "New here?" on the menu, until the tour has been opened once ----
+    const hintRow = el('div', 'display:none;align-items:center;gap:6px;margin-bottom:8px;padding:6px 8px;border-radius:8px;background:#fff6e0;border:1px solid #f3d38b;font-size:12px;color:#7a4b00');
+    hintRow.id = 'st-guide-hint';
+    const hintGo = smallBtn('📖 Take the tour', () => start(TOUR), 'margin-left:auto;padding:2px 8px;min-height:24px');
+    const hintX = el('button', 'border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;padding:0 2px;opacity:.7', '✕');
+    hintX.type = 'button'; hintX.title = 'Hide this';
+    hintX.onclick = () => { set(DONE, '1'); hintRow.style.display = 'none'; };
+    hintRow.append(el('span', '', '👋 New here? A one-minute tour.'), hintGo, hintX);
+    menuMsg.after(hintRow);
+    if (get(DONE) !== '1') hintRow.style.display = 'flex';
+
+    return {
+      helpBox, onView, active,
+      tour: () => start(TOUR),
+      help: showHelp,
+      cleanup: () => {
+        stop(false);
+        clearInterval(timer);
+        document.removeEventListener('keydown', onKey, true);
+        removeEventListener('resize', place);
+        ring.remove(); card.remove();
+      }
+    };
+  })();
+  panel.insertBefore(guide.helpBox, menuPane);
+  guide.onView(get('stView') || 'menu');
+
+  // ===================================================================
   // Dragging, closing, and starting up
   // ===================================================================
   header.addEventListener('mousedown', e => {
@@ -14679,6 +14993,7 @@
     router.cleanup();
     ai.cleanup();
     rview.cleanup();
+    guide.cleanup();
     board.stop();
     if (keepObs) keepObs.disconnect();
     window.removeEventListener('resize', onWinResize);

@@ -202,7 +202,7 @@ with sync_playwright() as p:
     check(btn_text(page, '🔕 Turn off').endswith('[disabled]') and btn_text(page, '🔔 Turn on').endswith('[disabled]'), 'turn buttons off without permission')
     time.sleep(0.5)
     check(page.evaluate("() => window.noPermCalls") <= 4, 'stops asking after the first "no permission" (%d asked)' % page.evaluate("() => window.noPermCalls"))
-    check(not any(c in page.locator('#st-toolbox').inner_text() for c in ['⏳', '❔']), 'no ⏳ / ❔ marks on a list it can\'t read')
+    check(not any(c in page.evaluate("() => Array.from(document.querySelectorAll('#st-toolbox > .st-view')).map(v => v.innerText).join('')") for c in ['⏳', '❔']), 'no ⏳ / ❔ marks on a list it can\'t read')
     page.evaluate("() => { window.noPermCalls = 0; }")
     add_typed(page, '901003')
     time.sleep(1)
